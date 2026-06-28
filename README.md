@@ -2,7 +2,9 @@
 
 A real-time GPU-accelerated physics simulator built with **Vulkan compute shaders** and **XPBD (Extended Position Based Dynamics)**. Supports cloth, fluid (PBF), smoke, and bidirectional cloth-fluid coupling, all running entirely on the GPU.
 
-<div><video controls src="assets/sample.mp4" muted="false"></video></div>
+
+https://github.com/user-attachments/assets/4624d11b-232e-4ae7-b0ee-4083ab36d1b6
+
 
 ---
 

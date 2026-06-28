@@ -2,7 +2,7 @@
 
 A real-time GPU-accelerated physics simulator built with **Vulkan compute shaders** and **XPBD (Extended Position Based Dynamics)**. Supports cloth, fluid (PBF), smoke, and bidirectional cloth-fluid coupling, all running entirely on the GPU.
 
-<video src="assets/sample.mp4" autoplay loop muted playsinline width="100%"></video>
+<div><video controls src="assets/sample.mp4" muted="false"></video></div>
 
 ---
 
@@ -65,6 +65,7 @@ tests/           doctest unit tests
 brew install shaderc vulkan-headers vulkan-loader molten-vk glfw glm go-task
 
 # Ubuntu
+sudo apt update
 sudo apt install shaderc vulkan-headers vulkan-loader glfw3 libglm-dev golang-go
 ```
 

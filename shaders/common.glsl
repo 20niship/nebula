@@ -52,6 +52,9 @@ layout(push_constant) uniform PC {
     float smokeRiseAccel;   // 煙の浮力加速度 [m/s²] (typeFlag==4)
     float smokeDamping;     // 煙の速度減衰係数 [1/s] (typeFlag==4)
     uint  pinnedTargetIdx;  // アニメーションピン目標位置バッファ (ClothSceneEngine 専用)
+    // 吸収ポート (fluid_absorb 専用; 他シェーダーは宣言のみで不使用)
+    uint  absorberBufIdx;   // 吸収形状バッファの bindless index (8 floats × absorberCount)
+    uint  absorberCount;    // 有効な吸収形状数 (0 = 吸収パスをスキップ)
 } pc;
 
 // ── vec4 読み書き（FP32, MoltenVK 関数化バグ回避のためマクロ）────

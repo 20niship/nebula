@@ -37,3 +37,9 @@ struct SphereSource : public Source {
     return source;
   }
 };
+
+// XY 平面上の楕円領域に粒子を生成するソース (rejection sampling)
+struct EllipseSource : public Source {
+  float semi_a = 1.0f; // X 方向の半径 [m]
+  float semi_b = 1.0f; // Y 方向の半径 [m]
+};

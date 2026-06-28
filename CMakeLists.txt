@@ -80,6 +80,7 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/zero_cells.comp
     ${SHADER_SRC_DIR}/zero_lambdas.comp
     ${SHADER_SRC_DIR}/move_pins.comp
+    ${SHADER_SRC_DIR}/fluid_absorb.comp
 )
 
 set(SHADER_SPV)
@@ -204,6 +205,19 @@ add_sim_example(fluid_pbf
     examples/fluid_pbf.cpp
 )
 target_link_libraries(fluid_pbf PRIVATE tinyobjloader)
+
+# ── fluid_absorb: 楕円水たまり + 移動円柱吸収ポート ────────────────────────────
+add_sim_example(fluid_absorb
+    src/core/VulkanContext.cpp
+    src/core/AttributeBuffer.cpp
+    src/core/ComputePipeline.cpp
+    src/graphics/GraphicsPipeline.cpp
+    src/engine/FluidEngine.cpp
+    src/engine/BoundaryParticles.cpp
+    src/App.cpp
+    examples/fluid_absorb.cpp
+)
+target_link_libraries(fluid_absorb PRIVATE tinyobjloader)
 
 # ── fluid_sphere: 球体容器内 PBF 流体 (UI なし自動スポーン) ──────────────────
 add_sim_example(fluid_sphere

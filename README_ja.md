@@ -2,8 +2,7 @@
 
 **Vulkan コンピュートシェーダー** と **XPBD（拡張位置ベース動力学）** で実装した、リアルタイム GPU 物理シミュレータです。布・流体（PBF）・煙・布↔流体の双方向連成をすべて GPU 上で動作させます。
 
-<div><video controls src="assets/sample.mp4" muted="false"></video></div>
-
+https://github.com/user-attachments/assets/4624d11b-232e-4ae7-b0ee-4083ab36d1b6
 
 ---
 

@@ -1,0 +1,75 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "common.glsl"
+
+layout(local_size_x = 256) in;
+
+// 吸収バッファ: 1 形状 = 8 floats
+//   [0]       type  (0=Sphere, 1=CylinderZ, 2=Box, 3=CapsuleZ)  ← uint で解釈
+//   [1,2,3]   cx, cy, cz  (中心座標 [m])
+//   [4]       p0  (Sphere:radius / CylZ:radius / Box:halfX / Capsule:radius)
+//   [5]       p1  (CylZ:halfHeight / Box:halfY / Capsule:halfLength)
+//   [6]       p2  (Box:halfZ)
+//   [7]       rate (吸収確率 per substep [0.0, 1.0])
+
+// 粒子の SDF を返す。負値 = 形状内部。
+float sdf(uint atype, vec3 ac, float ap0, float ap1, float ap2, vec3 p) {
+    if (atype == 0u) {
+        // 球
+        return length(p - ac) - ap0;
+    } else if (atype == 1u) {
+        // XY 断面円 × Z 高さの有限円柱 (CylinderZ)
+        vec2 d = vec2(length(p.xy - ac.xy) - ap0, abs(p.z - ac.z) - ap1);
+        return min(max(d.x, d.y), 0.0) + length(max(d, vec2(0.0)));
+    } else if (atype == 2u) {
+        // 軸整合ボックス (Box)
+        vec3 q = abs(p - ac) - vec3(ap0, ap1, ap2);
+        return length(max(q, vec3(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0);
+    } else {
+        // Z 軸方向カプセル (CapsuleZ)
+        float cz = clamp(p.z - ac.z, -ap1, ap1);
+        return length(p - vec3(ac.xy, ac.z + cz)) - ap0;
+    }
+}
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.particleCount) return;
+
+    // 流体粒子 (typeFlag==1) のみ対象
+    if (readUint(pc.typeFlagIdx, i) != 1u) return;
+
+    vec3 p = readVec4(pc.posIdx, i).xyz;
+
+    for (uint a = 0u; a < pc.absorberCount; ++a) {
+        uint  base  = a * 8u;
+        uint  atype = uint(readFloat(pc.absorberBufIdx, base));
+        float acx   = readFloat(pc.absorberBufIdx, base + 1u);
+        float acy   = readFloat(pc.absorberBufIdx, base + 2u);
+        float acz   = readFloat(pc.absorberBufIdx, base + 3u);
+        float ap0   = readFloat(pc.absorberBufIdx, base + 4u);
+        float ap1   = readFloat(pc.absorberBufIdx, base + 5u);
+        float ap2   = readFloat(pc.absorberBufIdx, base + 6u);
+        float rate  = readFloat(pc.absorberBufIdx, base + 7u);
+
+        // 形状内部判定 (SDF < particleRadius)
+        if (sdf(atype, vec3(acx, acy, acz), ap0, ap1, ap2, p) >= pc.particleRadius) continue;
+
+        // 吸収確率チェック: 粒子インデックスと吸収器インデックスをハッシュ
+        if (rate < 1.0) {
+            uint h = i * 2654435761u ^ (a * 7654321u) ^ floatBitsToUint(pc.dt * 997.0);
+            h ^= (h >> 16u); h *= 0x45d9f3bu; h ^= (h >> 16u);
+            float rnd = float(h & 0xFFFFu) / 65535.0;
+            if (rnd > rate) continue;
+        }
+
+        // 粒子を「墓場」へ移動（graveyard pattern）
+        float gr = pc.worldMin + pc.particleRadius;
+        writeUint(pc.typeFlagIdx,  i, 0u);
+        writeVec4(pc.invMassIdx,   i, vec4(0.0));
+        writeVec4(pc.posIdx,       i, vec4(gr, gr, gr, 0.0));
+        writeVec4(pc.predPIdx,     i, vec4(gr, gr, gr, 0.0));
+        writeVec4(pc.velIdx,       i, vec4(0.0));
+        return;
+    }
+}

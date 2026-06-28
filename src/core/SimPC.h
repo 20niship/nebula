@@ -58,5 +58,9 @@ struct SimPC {
   float smokeRiseAccel;      // 煙の浮力加速度 [m/s²] (typeFlag==4 に適用)
   float smokeDamping;        // 煙の速度減衰係数 [1/s] (typeFlag==4 に適用)
   uint32_t pinnedTargetIdx;  // アニメーションピン目標位置バッファ (vec4 × N; ClothSceneEngine 専用)
+
+  // ── 吸収ポート (fluid_absorb 専用; 他シェーダーは宣言のみで不使用) ──────
+  uint32_t absorberBufIdx; // 吸収形状バッファの bindless index (8 floats × absorberCount)
+  uint32_t absorberCount;  // 有効な吸収形状数 (0 = 吸収パスをスキップ)
 };
-static_assert(sizeof(SimPC) == 160, "SimPC must be 160 bytes");
+static_assert(sizeof(SimPC) == 168, "SimPC must be 168 bytes");

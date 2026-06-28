@@ -39,15 +39,16 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   // vec4 系は FP16 packed（8 bytes/粒子）でメモリ帯域幅を半減
   posIdx         = attrBuf_.addAttribute("P", sizeof(glm::vec4), cfg_.nTotalMax());
   velIdx         = attrBuf_.addAttribute("v", sizeof(glm::vec4), cfg_.nTotalMax());
-  predPIdx_      = attrBuf_.addAttribute("predP", sizeof(glm::vec4), cfg_.nTotalMax());
-  invMassIdx_    = attrBuf_.addAttribute("invMass", sizeof(glm::vec4), cfg_.nTotalMax());
-  typeFlagIdx_   = attrBuf_.addAttribute("typeFlag", sizeof(uint32_t), cfg_.nTotalMax());
+  predPIdx       = attrBuf_.addAttribute("predP", sizeof(glm::vec4), cfg_.nTotalMax());
+  invMassIdx     = attrBuf_.addAttribute("invMass", sizeof(glm::vec4), cfg_.nTotalMax());
+  typeFlagIdx    = attrBuf_.addAttribute("typeFlag", sizeof(uint32_t), cfg_.nTotalMax());
   cellCountIdx_  = attrBuf_.addAttribute("cellCnt", sizeof(uint32_t), cfg_.totalCells());
   cellOffsetIdx_ = attrBuf_.addAttribute("cellOff", sizeof(uint32_t), cfg_.totalCells() + N_GROUPS);
   sortedIdxIdx_  = attrBuf_.addAttribute("sorted", sizeof(uint32_t), cfg_.nTotalMax());
   densityIdx_    = attrBuf_.addAttribute("density", sizeof(float), cfg_.nTotalMax());
   lambdaPbfIdx_  = attrBuf_.addAttribute("lambdaPbf", sizeof(float), cfg_.nTotalMax());
   omegaIdx_      = attrBuf_.addAttribute("omega", sizeof(glm::vec4), cfg_.nTotalMax());
+  absorberBufIdx_= attrBuf_.addAttribute("absorbers", sizeof(float), MAX_ABSORBERS * 8u);
 
   nFluid_ = 0;
   sources_.clear();
@@ -68,6 +69,7 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   load(kZeroCells_, "zero_cells.comp");
   load(kVorticityOmega_, "pbf_vorticity_omega.comp");
   load(kVorticityForce_, "pbf_vorticity_force.comp");
+  load(kAbsorb_, "fluid_absorb.comp");
 
   descriptorSetLayout = attrBuf_.descriptorSetLayout;
   descriptorSet       = attrBuf_.descriptorSet;
@@ -164,6 +166,16 @@ void FluidEngine::clearBoundary() {
   boundaryTriVerts_.clear();
 }
 
+// ── 吸収ポート登録 ────────────────────────────────────────────────────────────
+
+void FluidEngine::setAbsorbers(const std::vector<AbsorberDesc>& absorbers) {
+  uint32_t n = static_cast<uint32_t>(std::min(absorbers.size(), size_t(MAX_ABSORBERS)));
+  absorberCount_ = n;
+  if(n == 0) return;
+  static_assert(sizeof(AbsorberDesc) == 8 * sizeof(float), "AbsorberDesc must be 8 floats");
+  attrBuf_.upload("absorbers", absorbers.data(), n * sizeof(AbsorberDesc), cmdPool_, queue_);
+}
+
 // ── ソース管理 ───────────────────────────────────────────────────────────────
 
 void FluidEngine::addSource(std::shared_ptr<Source> src) {
@@ -213,6 +225,18 @@ void FluidEngine::emitSources(float dt) {
         float theta = dtheta(sourceRng_);
         float phi   = dphi(sourceRng_);
         pos[j]      = glm::vec4(sphere->center.x + r * std::sin(theta) * std::cos(phi), sphere->center.y + r * std::sin(theta) * std::sin(phi), sphere->center.z + r * std::cos(theta), 1.0f);
+      }
+    } else if(auto* ell = dynamic_cast<EllipseSource*>(&src)) {
+      // rejection sampling: バウンディングボックス内の一様乱数を楕円内に制限
+      std::uniform_real_distribution<float> dx(-ell->semi_a, ell->semi_a);
+      std::uniform_real_distribution<float> dy(-ell->semi_b, ell->semi_b);
+      for(int j = 0; j < nNew; ++j) {
+        float ex, ey;
+        do {
+          ex = dx(sourceRng_);
+          ey = dy(sourceRng_);
+        } while((ex * ex) / (ell->semi_a * ell->semi_a) + (ey * ey) / (ell->semi_b * ell->semi_b) > 1.0f);
+        pos[j] = glm::vec4(ell->center.x + ex, ell->center.y + ey, ell->center.z, 1.0f);
       }
     } else {
       for(int j = 0; j < nNew; ++j)
@@ -268,6 +292,7 @@ void FluidEngine::cleanup() {
   kZeroCells_.cleanup();
   kVorticityOmega_.cleanup();
   kVorticityForce_.cleanup();
+  kAbsorb_.cleanup();
   attrBuf_.cleanup();
 }
 
@@ -362,9 +387,9 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     SimPC pc{};
     pc.posIdx            = posIdx;
     pc.velIdx            = velIdx;
-    pc.predPIdx          = predPIdx_;
-    pc.invMassIdx        = invMassIdx_;
-    pc.typeFlagIdx       = typeFlagIdx_;
+    pc.predPIdx          = predPIdx;
+    pc.invMassIdx        = invMassIdx;
+    pc.typeFlagIdx       = typeFlagIdx;
     pc.cellCountIdx      = cellCountIdx_;
     pc.cellOffsetIdx     = cellOffsetIdx_;
     pc.sortedIdxIdx      = sortedIdxIdx_;
@@ -401,6 +426,9 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     // 煙・粉体パラメータ
     pc.smokeRiseAccel   = smokeRiseAccel;
     pc.smokeDamping     = smokeDamping;
+    // 吸収ポート（absorberCount_==0 の場合は kAbsorb_ をディスパッチしない）
+    pc.absorberBufIdx   = absorberBufIdx_;
+    pc.absorberCount    = absorberCount_;
     // pc.powderFriction → SimPC では pinnedTargetIdx に転用。FluidEngine では未使用 (0のまま)。
 
     // ① Predict + SDF 壁衝突 (merged: 1 dispatch instead of 2)
@@ -467,7 +495,14 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
 
     // ⑧ XSPH 粘性 (1 回のみ; 境界粒子は typeFlag チェックで除外)
     kPbfViscosity_.dispatch(cmd, ds, pc, nFluid_);
-    // 次の substep がある場合のみバリアが必要（次の kPredictSdf_ が vel を読む）
+
+    // ⑨ 吸収パス（absorberCount_==0 のとき完全スキップ）
+    if(absorberCount_ > 0) {
+      computeBarrier(cmd);
+      kAbsorb_.dispatch(cmd, ds, pc, nFluid_);
+    }
+
+    // 次の substep がある場合のみバリアが必要（次の kPredictSdf_ が vel/pos を読む）
     if(sub < numSubsteps - 1) {
       computeBarrier(cmd);
     }

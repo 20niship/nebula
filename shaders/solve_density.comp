@@ -1,0 +1,76 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "common.glsl"
+
+// Jacobi粒子間衝突: 各粒子が近傍27セルを探索し、重なりがあれば predP を押し出す
+// hash_sort後 cellOffset[cid] = original_start + cellCount[cid] なので
+// start = cellOffset[cid] - cellCount[cid] で開始インデックスを復元
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.particleCount) return;
+
+    // ピン留め頂点 (invMass=0) は自己衝突で動かさない
+    float wi = readVec4(pc.invMassIdx, i).x;
+    if (wi == 0.0) return;
+
+    vec4 pp = readVec4(pc.predPIdx, i);
+    vec3 pi = pp.xyz;
+    uint fi = readUint(pc.typeFlagIdx, i);
+
+    float r = pc.particleRadius;
+
+    ivec3 gi = ivec3(clamp((pi - pc.worldMin) / pc.cellSize,
+                            vec3(0.0), vec3(float(pc.gridRes) - 1.0)));
+
+    vec3 correction = vec3(0.0);
+
+    for (int dz = -1; dz <= 1; ++dz)
+    for (int dy = -1; dy <= 1; ++dy)
+    for (int dx = -1; dx <= 1; ++dx) {
+        ivec3 nc = gi + ivec3(dx, dy, dz);
+        if (any(lessThan(nc, ivec3(0))) ||
+            any(greaterThanEqual(nc, ivec3(int(pc.gridRes))))) continue;
+
+        uint cid   = uint(nc.x) + uint(nc.y) * pc.gridRes
+                                 + uint(nc.z) * pc.gridRes * pc.gridRes;
+        uint cnt   = readUint(pc.cellCountIdx,  cid);
+        uint start = readUint(pc.cellOffsetIdx, cid) - cnt;
+
+        uint kEnd = start + min(cnt, 48u);
+        for (uint k = start; k < kEnd; ++k) {
+            uint j = readUint(pc.sortedIdxIdx, k);
+            if (j == i) continue;
+
+            uint fj = readUint(pc.typeFlagIdx, j);
+
+            // 布-布自己衝突は閾値を布スペーシングの半分程度に絞る。
+            // particleRadius = cellSize/2 ≈ 0.078m > 布スペーシング 0.065m なので
+            // そのまま使うと隣接頂点が常時「衝突中」になり全体が押し出される。
+            float colDiam = (fi == 2u && fj == 2u)
+                            ? r * 0.5          // 布-布: diameter ≈ 0.039m (スペーシング未満)
+                            : r * 2.0;         // 砂-砂 / 砂-布
+            float colDiam2 = colDiam * colDiam;
+
+            vec3 pj = readVec4(pc.predPIdx, j).xyz;
+            vec3 d  = pi - pj;
+            float d2 = dot(d, d);
+
+            if (d2 < colDiam2 && d2 > 1e-8) {
+                float dist = sqrt(d2);
+                float wj   = readVec4(pc.invMassIdx, j).x;
+                float wt   = wi + wj;
+                if (wt < 1e-6) continue;
+                // 質量比に応じた押し出し (ピン留め相手には全量移動)
+                correction += ((colDiam - dist) * (wi / wt) / dist) * d;
+            }
+        }
+    }
+
+    pp.xyz = clamp(pi + correction,
+                   vec3(pc.worldMin + r),
+                   vec3(pc.worldMax - r));
+    writeVec4(pc.predPIdx, i, pp);
+}

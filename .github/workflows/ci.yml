@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Vulkan SDK + build deps
+        run: |
+          # LunarG Vulkan SDK PPA — provides glslc (shaderc), headers, loader
+          wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | \
+            sudo tee /etc/apt/trusted.gpg.d/lunarg.asc
+          . /etc/os-release
+          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan.list \
+            "https://packages.lunarg.com/vulkan/lunarg-vulkan-${VERSION_CODENAME}.list"
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            vulkan-sdk \
+            libglm-dev \
+            libglfw3-dev \
+            mesa-vulkan-drivers
+
+      - name: Configure CMake
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DVULKAN_SDK=/usr
+
+      - name: Build (tests only)
+        run: cmake --build build --target vulkan_tests -j$(nproc)
+
+      - name: Run tests
+        run: |
+          # Use Mesa lavapipe (CPU software Vulkan) — no discrete GPU required
+          ICD=$(find /usr/share/vulkan/icd.d/ -name "lvp_icd*.json" 2>/dev/null | head -1)
+          echo "Using ICD: ${ICD:-NOT FOUND}"
+          export VK_ICD_FILENAMES="$ICD"
+          ctest --test-dir build --output-on-failure

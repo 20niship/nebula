@@ -1,0 +1,35 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "common.glsl"
+
+// Pass 2b-1: グループサムの exclusive prefix scan のみ実行
+// スキャン結果を cellOffset[totalCells + lid] に書き戻す
+// kHashAddBase_ が担当セルへの並列加算を行う（旧: このカーネルが 256 writes/thread を逐次実行）
+// local_size: 1024 で 1 workgroup dispatch
+
+layout(local_size_x = 1024) in;
+
+shared uint sgrp[1024];
+
+void main() {
+    uint lid        = gl_LocalInvocationID.x;
+    uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    uint nGroups    = (totalCells + 255u) / 256u;
+
+    uint gsum = (lid < nGroups) ? buffers[pc.cellOffsetIdx].data[totalCells + lid] : 0u;
+    sgrp[lid] = gsum;
+    barrier();
+
+    // Hillis-Steele inclusive scan
+    for (uint stride = 1u; stride < 1024u; stride <<= 1u) {
+        uint src = (lid >= stride) ? sgrp[lid - stride] : 0u;
+        barrier();
+        sgrp[lid] += src;
+        barrier();
+    }
+
+    // exclusive prefix を書き戻す（kHashAddBase_ が base として読む）
+    if (lid < nGroups) {
+        buffers[pc.cellOffsetIdx].data[totalCells + lid] = (lid > 0u) ? sgrp[lid - 1u] : 0u;
+    }
+}

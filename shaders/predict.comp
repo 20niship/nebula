@@ -1,0 +1,42 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "common.glsl"
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.particleCount) return;
+
+    float invM = readVec4(pc.invMassIdx, i).x;
+
+    // invMass == 0 のピン留め頂点は位置を固定して終了
+    if (invM == 0.0) {
+        writeVec4(pc.predPIdx, i, readVec4(pc.posIdx, i));
+        return;
+    }
+
+    vec4 p = readVec4(pc.posIdx, i);
+    vec4 v = readVec4(pc.velIdx, i);
+
+    // 重力 (Z-up)
+    v.z += pc.gravity * pc.dt;
+
+    // 布頂点 (typeFlag == 2) には風力を追加 (水平面 = XY)
+    uint flag = readUint(pc.typeFlagIdx, i);
+    if (flag == 2u) {
+        v.x += pc.windX * pc.dt;
+        v.y += pc.windZ * pc.dt;
+    }
+
+    // CFL クランプ: 布スペーシングの 0.5 倍/substep に制限 (cellSize > spacing なので補正)
+    // cellSize = worldSize/gridRes ≈ 0.156m, 布spacing ≈ 0.065m → 係数 0.4
+    float maxSpeed = pc.cellSize * 0.4 / pc.dt;
+    float speed    = length(v.xyz);
+    if (speed > maxSpeed) v.xyz *= (maxSpeed / speed);
+
+    vec4 predP = p + vec4(v.xyz * pc.dt, 0.0);
+
+    writeVec4(pc.velIdx,   i, v);
+    writeVec4(pc.predPIdx, i, predP);
+}

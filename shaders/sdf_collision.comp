@@ -1,0 +1,36 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "common.glsl"
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.particleCount) return;
+
+    vec4 predP = readVec4(pc.predPIdx, i);
+    vec4 v     = readVec4(pc.velIdx,   i);
+
+    float r   = pc.particleRadius;
+    float lo  = pc.worldMin + r;
+    float hi  = pc.worldMax - r;
+
+    // X軸
+    if (predP.x < lo) { predP.x = lo; v.x = abs(v.x) * pc.restitution; }
+    if (predP.x > hi) { predP.x = hi; v.x = -abs(v.x) * pc.restitution; }
+    // Y軸 (壁)
+    if (predP.y < lo) { predP.y = lo; v.y = abs(v.y) * pc.restitution; }
+    if (predP.y > hi) { predP.y = hi; v.y = -abs(v.y) * pc.restitution; }
+    // Z軸 (床・天井, Z-up)
+    if (predP.z < lo) {
+        predP.z = lo;
+        v.z = abs(v.z) * pc.restitution;
+        // 床摩擦: XY 速度を減衰
+        v.x *= (1.0 - pc.friction);
+        v.y *= (1.0 - pc.friction);
+    }
+    if (predP.z > hi) { predP.z = hi; v.z = -abs(v.z) * pc.restitution; }
+
+    writeVec4(pc.predPIdx, i, predP);
+    writeVec4(pc.velIdx,   i, v);
+}

@@ -1,0 +1,22 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "common.glsl"
+
+// Pass 2b-2: グループ別 exclusive prefix を各担当セルに並列加算
+// dispatch: (N_GROUPS, 1, 1) = ((totalCells+255)/256, 1, 1)
+// local_size_x = 256 → 1 thread per cell
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint grp        = gl_WorkGroupID.x;
+    uint lid        = gl_LocalInvocationID.x;
+    uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    uint c          = grp * 256u + lid;
+
+    if (c >= totalCells) return;
+
+    // グループ grp の exclusive prefix を読んで cellOffset[c] に加算
+    uint base = buffers[pc.cellOffsetIdx].data[totalCells + grp];
+    buffers[pc.cellOffsetIdx].data[c] += base;
+}

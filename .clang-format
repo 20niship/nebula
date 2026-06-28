@@ -1,0 +1,55 @@
+# デフォルト設定
+BasedOnStyle: LLVM
+# BasedOnStyle: 'Google'
+
+# インデント
+IndentWidth: 2
+TabWidth: 2
+AccessModifierOffset: -2
+UseTab: 'Never'
+NamespaceIndentation: 'None'  # Namespaceでインデントを追加しない
+ConstructorInitializerIndentWidth: 2
+ContinuationIndentWidth: 2
+IndentCaseLabels: true
+IndentWrappedFunctionNames: false # 関数の宣言か定義で型名の後に改行された場合インデントしない
+
+# 言語
+Language: Cpp
+Standard: Auto
+# Standard: 'Cpp11'
+
+# 1行あたりの
+ColumnLimit: 300
+
+# 改行コード
+UseCRLF: false
+# AllowShortBlocksOnASingleLine : true
+
+AllowShortCaseLabelsOnASingleLine: true  # case: のやつで改行しない
+AllowShortEnumsOnASingleLine : true  # enum
+AllowShortFunctionsOnASingleLine: true
+AllowShortIfStatementsOnASingleLine : true
+AllowShortLambdasOnASingleLine : true
+AllowShortLoopsOnASingleLine: true
+AlwaysBreakAfterDefinitionReturnType: false  # 関数定義の返り値の型定義の後に改行しない
+AlwaysBreakBeforeMultilineStrings: false   # 複数行の文字列リテラルの場合に改行しない
+AlwaysBreakTemplateDeclarations: false
+# AlignEscapedNewlinesLeft: true # エスケープされた改行文字を左側に表示
+KeepEmptyLinesAtTheStartOfBlocks: true
+MaxEmptyLinesToKeep: 3  # 連続する空行の最大数。
+
+# スペースキー
+SpaceBeforeAssignmentOperators: true # 代入演算子の前
+SpaceBeforeParens: 'Never' # 開始カッコ ( の前にスペースを入れる
+SpaceInEmptyParentheses: false # 空のカッコの中にスペースいれない
+SpacesBeforeTrailingComments: 1
+SpacesInAngles: false
+SpacesInCStyleCastParentheses: false
+SpacesInParentheses: false
+
+AlignConsecutiveAssignments: true # 変数宣言とかを=とかで揃える
+AlignTrailingComments: true # 末尾のコメント行を揃えます。
+ConstructorInitializerAllOnOneLineOrOnePerLine: true
+
+# DerivePointerBinding: true
+PointerAlignment: 'Left'

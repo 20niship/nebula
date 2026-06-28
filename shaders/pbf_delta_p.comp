@@ -1,0 +1,94 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "common.glsl"
+
+// Phase 4 PBF: λ_i から位置補正 ΔP_i を計算して predP に加算
+// 人工圧力 s_corr で Tensile Instability を抑制
+// pc.stretchCompliance = ρ_0
+// pc.cellSize          = h
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.particleCount) return;
+
+    uint fi = readUint(pc.typeFlagIdx, i);
+    if (fi != 1u && fi != 5u) return; // 流体・粉体のみ
+
+    vec4 pi4  = readVec4(pc.predPIdx, i);
+    vec3 pi   = pi4.xyz;
+    float h   = pc.cellSize;
+    float h2  = h * h;
+    float rho0 = pc.stretchCompliance;
+    float lambda_i = readFloat(pc.lambdaPbfIdx, i);
+
+    float spiky_coeff = 45.0 / (3.14159265 * h2 * h2 * h2);
+    float poly6_coeff = 315.0 / (64.0 * 3.14159265 * h2 * h2 * h2 * h2 * h);
+
+    // 人工圧力 s_corr = -k (W(r)/W(Δq))^n  (Macklin&Müller 式13, n=4)
+    // k = pc.scorrK (エンジンから設定; 0 で無効)。λ のスケールに合わせて要調整。
+    const float k_corr  = pc.scorrK;
+    const float dq      = 0.2 * h;
+    const float dq2     = dq * dq;
+    float hr2_dq = h2 - dq2;
+    float W_dq   = poly6_coeff * hr2_dq * hr2_dq * hr2_dq;
+
+    vec3 deltaP = vec3(0.0);
+
+    ivec3 gi = ivec3(clamp((pi - vec3(pc.worldMin)) / pc.cellSize,
+                           vec3(0.0), vec3(float(pc.gridRes) - 1.0)));
+
+    for (int dz = -1; dz <= 1; ++dz)
+    for (int dy = -1; dy <= 1; ++dy)
+    for (int dx = -1; dx <= 1; ++dx) {
+        ivec3 nc = gi + ivec3(dx, dy, dz);
+        if (any(lessThan(nc, ivec3(0))) ||
+            any(greaterThanEqual(nc, ivec3(int(pc.gridRes))))) continue;
+
+        uint cid   = mortonExpand(uint(nc.x)) | (mortonExpand(uint(nc.y)) << 1u)
+                                              | (mortonExpand(uint(nc.z)) << 2u);
+        uint cnt   = readUint(pc.cellCountIdx, cid);
+        uint start = readUint(pc.cellOffsetIdx, cid) - cnt;
+
+        for (uint k = start; k < start + cnt; ++k) {
+            uint j  = readUint(pc.sortedIdxIdx, k);
+            if (j == i) continue;
+            uint fj = readUint(pc.typeFlagIdx, j);
+            if (fj != 1u && fj != 3u && fj != 5u) continue; // 流体・境界・粉体
+
+            vec3 pj = readVec4(pc.predPIdx, j).xyz;
+            vec3 r  = pi - pj;
+            float r2 = dot(r, r);
+            if (r2 >= h2 || r2 < 1e-12) continue;
+
+            float rlen = sqrt(r2);
+            float hr   = h - rlen;
+            // Spiky グラジエント: ∇_{p_i} W = -45/(π h^6) (h-r)^2 r̂_{ji}
+            // r = pi - pj (j→i 方向)、負符号でグラジエントは i→j 方向になる
+            vec3 grad_w = -(spiky_coeff * hr * hr / rlen) * r;
+
+            // 境界粒子の λ_j = 0 (固定)。粉体は流体と同様に λ を使用。
+            float lambda_j = (fj == 1u || fj == 5u) ? readFloat(pc.lambdaPbfIdx, j) : 0.0;
+
+            // 人工圧力 s_corr = -k * (W(r)/W(Δq))^4
+            float hr2  = h2 - r2;
+            float W_ij = poly6_coeff * hr2 * hr2 * hr2;
+            float ratio = (W_dq > 1e-30) ? (W_ij / W_dq) : 0.0;
+            float s_corr = -k_corr * ratio * ratio * ratio * ratio;
+
+            deltaP += (lambda_i + lambda_j + s_corr) * grad_w;
+        }
+    }
+
+    deltaP /= rho0;
+
+    // Clamp deltaP to h/4 per iteration to prevent violent explosions from
+    // underdense corner particles (which have only ~7 neighbors instead of 26)
+    float dpLen = length(deltaP);
+    float maxDP = pc.cellSize * 0.25;
+    if (dpLen > maxDP) deltaP *= maxDP / dpLen;
+
+    vec4 newP = vec4(pi + deltaP, pi4.w);
+    writeVec4(pc.predPIdx, i, newP);
+}

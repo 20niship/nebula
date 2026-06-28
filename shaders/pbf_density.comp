@@ -1,0 +1,88 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "common.glsl"
+
+// Phase 4 PBF: SPH 密度 ρ_i と PBF ラグランジュ乗数 λ_i を同時計算
+// pc.stretchCompliance = ρ_0  (目標密度、FluidEngine から設定)
+// pc.cellSize          = h    (SPH 平滑化長)
+// pc.cfmEpsilon        = ε    (CFM 緩和項; Macklin&Müller 式11、エンジンから設定)
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.particleCount) return;
+
+    uint fi = readUint(pc.typeFlagIdx, i);
+    if (fi != 1u && fi != 5u) return;  // 流体・粉体のみ処理
+
+    vec4 pi4  = readVec4(pc.predPIdx, i);
+    vec3 pi   = pi4.xyz;
+    float h   = pc.cellSize;
+    float h2  = h * h;
+    float h9  = h2 * h2 * h2 * h2 * h;
+    float rho0 = pc.stretchCompliance;
+
+    float poly6_coeff = 315.0 / (64.0 * 3.14159265 * h9);
+    float spiky_coeff = 45.0  / (3.14159265 * h2 * h2 * h2); // 正値; 方向は手動で調整
+
+    float rho = 0.0;
+    vec3  grad_ci = vec3(0.0); // ∇_{p_i} C_i = (1/ρ_0) Σ_j ∇W_{ij}
+    float sum_grad_sq = 0.0;   // Σ_{j≠i} |∇_{p_j} C_i|^2 / ρ_0^2
+
+    ivec3 gi = ivec3(clamp((pi - vec3(pc.worldMin)) / pc.cellSize,
+                           vec3(0.0), vec3(float(pc.gridRes) - 1.0)));
+
+    for (int dz = -1; dz <= 1; ++dz)
+    for (int dy = -1; dy <= 1; ++dy)
+    for (int dx = -1; dx <= 1; ++dx) {
+        ivec3 nc = gi + ivec3(dx, dy, dz);
+        if (any(lessThan(nc, ivec3(0))) ||
+            any(greaterThanEqual(nc, ivec3(int(pc.gridRes))))) continue;
+
+        // Morton符号で cid を計算（common.glsl の cellId と一致させる）
+        uint cid   = mortonExpand(uint(nc.x)) | (mortonExpand(uint(nc.y)) << 1u)
+                                              | (mortonExpand(uint(nc.z)) << 2u);
+        uint cnt   = readUint(pc.cellCountIdx, cid);
+        uint start = readUint(pc.cellOffsetIdx, cid) - cnt;
+
+        for (uint k = start; k < start + cnt; ++k) {
+            uint j  = readUint(pc.sortedIdxIdx, k);
+            uint fj = readUint(pc.typeFlagIdx, j);
+            if (fj != 1u && fj != 2u && fj != 3u && fj != 5u) continue; // 流体・布・境界・粉体
+
+            vec3 pj = readVec4(pc.predPIdx, j).xyz;
+            vec3 r  = pi - pj;
+            float r2 = dot(r, r);
+            if (r2 >= h2) continue;
+
+            // Poly6 カーネルで密度に加算
+            float hr2 = h2 - r2;
+            rho += poly6_coeff * hr2 * hr2 * hr2;
+
+            // 境界粒子は λ 計算のグラジエント和には含めない
+            if (j == i || (fj != 1u && fj != 5u)) continue;
+
+            // Spiky グラジエント: ∇_{p_i} W_{ij}
+            float rlen = sqrt(r2);
+            if (rlen < 1e-6) continue;
+            float hr = h - rlen;
+            vec3 grad_w = (spiky_coeff * hr * hr / rlen) * r; // 正値係数 × r̂_{ji}
+            // 注: r = p_i - p_j で符号が正なので外向き
+
+            grad_ci    += grad_w;
+            sum_grad_sq += dot(grad_w, grad_w) / (rho0 * rho0);
+        }
+    }
+
+    // 密度制約 C_i = ρ_i/ρ_0 - 1
+    float C = rho / rho0 - 1.0;
+
+    // λ_i = -C_i / (|∇_{p_i} C_i|^2 + Σ_{j≠i}|∇_{p_j} C_i|^2 + ε)   (式11)
+    // ε = pc.cfmEpsilon。勾配項は既に ρ_0² で正規化済みなので ε もそのスケール。
+    float denom = dot(grad_ci, grad_ci) / (rho0 * rho0) + sum_grad_sq + pc.cfmEpsilon;
+    float lambda = -C / denom;
+
+    writeFloat(pc.densityIdx,   i, rho);
+    writeFloat(pc.lambdaPbfIdx, i, lambda);
+}

@@ -1,0 +1,48 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "common.glsl"
+
+// XPBD 距離拘束 (Stretch / Bend 共用)
+// 1スレッド = 1エッジ。同色バッチ内は頂点非共有 → 競合なし
+// batchEdgeStart / batchEdgeEnd : C++ 側で毎バッチ push_constants を更新
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint edgeIdx = pc.batchEdgeStart + gl_GlobalInvocationID.x;
+    if (edgeIdx >= pc.batchEdgeEnd) return;
+
+    // エッジデータ: stride=3 uints [p, q, floatBitsToUint(restLen)]
+    uint base     = edgeIdx * 3u;
+    uint p        = readUint(pc.stretchEdgesIdx, base);
+    uint q        = readUint(pc.stretchEdgesIdx, base + 1u);
+    float restLen = uintBitsToFloat(readUint(pc.stretchEdgesIdx, base + 2u));
+
+    vec4 pp = readVec4(pc.predPIdx, p);
+    vec4 pq = readVec4(pc.predPIdx, q);
+    float wp = readVec4(pc.invMassIdx, p).x;
+    float wq = readVec4(pc.invMassIdx, q).x;
+
+    vec3 d    = pp.xyz - pq.xyz;
+    float dist = length(d);
+    if (dist < 1e-6 || (wp == 0.0 && wq == 0.0)) return;
+
+    float C = dist - restLen;
+
+    // XPBD 補正量: dλ = (-C - α̃λ) / (w1 + w2 + α̃)
+    float alpha   = pc.stretchCompliance / (pc.dt * pc.dt);
+    float lam     = readFloat(pc.lambdasIdx, edgeIdx);
+    float dLambda = (-C - alpha * lam) / (wp + wq + alpha);
+
+    writeFloat(pc.lambdasIdx, edgeIdx, lam + dLambda);
+
+    vec3 n = d / dist;
+    if (wp > 0.0) {
+        vec4 np = pp; np.xyz += dLambda * wp * n;
+        writeVec4(pc.predPIdx, p, np);
+    }
+    if (wq > 0.0) {
+        vec4 nq = pq; nq.xyz -= dLambda * wq * n;
+        writeVec4(pc.predPIdx, q, nq);
+    }
+}

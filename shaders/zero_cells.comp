@@ -1,0 +1,15 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "common.glsl"
+
+// cellCount バッファをゼロクリア (空間ハッシュ構築前に実行)
+// vkCmdFillBuffer の代替: blit エンコーダー遷移を排除して MoltenVK 高速化
+// セル総数 = pc.gridRes^3
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.gridRes * pc.gridRes * pc.gridRes) return;
+    writeUint(pc.cellCountIdx, i, 0u);
+}

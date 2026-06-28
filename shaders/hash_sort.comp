@@ -1,0 +1,19 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "common.glsl"
+
+// Pass 3: cellOffset を消費しながら sortedIdx を埋める
+// cellOffset はこの pass で破壊されるが、次フレームで再計算されるので問題なし
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.particleCount) return;
+
+    vec4 predP = readVec4(pc.predPIdx, i);
+    uint cid   = cellId(predP.xyz);
+
+    uint slot = atomicAdd(buffers[pc.cellOffsetIdx].data[cid], 1u);
+    buffers[pc.sortedIdxIdx].data[slot] = i;
+}

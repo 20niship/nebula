@@ -1,0 +1,43 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "common.glsl"
+
+// Hillis-Steele workgroup-local inclusive prefix sum
+// 各 workgroup が 256 セルを担当し、スキャン後の総和を
+// cellOffset[] の先頭 N_GROUPS 要素に書き込む (pass 2b が使う)
+layout(local_size_x = 256) in;
+
+shared uint sdata[256];
+
+void main() {
+    uint lid  = gl_LocalInvocationID.x;
+    uint gid  = gl_GlobalInvocationID.x;
+    uint grp  = gl_WorkGroupID.x;
+
+    uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    uint val = 0u;
+    if (gid < totalCells)
+        val = buffers[pc.cellCountIdx].data[gid];
+
+    sdata[lid] = val;
+    barrier();
+
+    // Hillis-Steele inclusive scan
+    for (uint stride = 1u; stride < 256u; stride <<= 1u) {
+        uint src = lid >= stride ? sdata[lid - stride] : 0u;
+        barrier();
+        sdata[lid] += src;
+        barrier();
+    }
+
+    // exclusive scan: shift right (offset[i] = sum of count[0..i-1])
+    uint excl = lid > 0u ? sdata[lid - 1u] : 0u;
+
+    if (gid < totalCells)
+        buffers[pc.cellOffsetIdx].data[gid] = excl;
+
+    // グループ内の総和 = sdata[255] を cellOffset の末尾領域に保存
+    // cellOffset[totalCells + grp] に格納 (Phase 2b が読む)
+    if (lid == 255u)
+        buffers[pc.cellOffsetIdx].data[totalCells + grp] = sdata[255];
+}

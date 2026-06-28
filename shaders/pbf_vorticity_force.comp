@@ -1,0 +1,74 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "common.glsl"
+
+// Phase 4 PBF: 渦度閉じ込め補正力 (Macklin&Müller 式16)
+//   η = ∇|ω|_i = Σ_j |ω_j| ∇W_spiky(p_i - p_j, h)
+//   N = η / |η|
+//   f_i = ε (N × ω_i)
+//   v_i += f_i * dt
+// pbf_vorticity_omega の直後に実行する。pc.vorticityEpsilon = ε。
+// 減衰で失われたエネルギーを渦のある所だけに戻す（Fedkiw 2001 と同じく非正規化 ω を使用）。
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.particleCount) return;
+
+    uint fi = readUint(pc.typeFlagIdx, i);
+    if (fi != 1u) return; // 流体粒子のみ
+
+    vec3 pi    = readVec4(pc.posIdx,   i).xyz;
+    vec3 omega_i = readVec4(pc.omegaIdx, i).xyz;
+
+    float h  = pc.cellSize;
+    float h2 = h * h;
+    float spiky_coeff = 45.0 / (3.14159265 * h2 * h2 * h2);
+
+    vec3 eta = vec3(0.0); // ∇|ω|
+
+    ivec3 gi = ivec3(clamp((pi - vec3(pc.worldMin)) / pc.cellSize,
+                           vec3(0.0), vec3(float(pc.gridRes) - 1.0)));
+
+    for (int dz = -1; dz <= 1; ++dz)
+    for (int dy = -1; dy <= 1; ++dy)
+    for (int dx = -1; dx <= 1; ++dx) {
+        ivec3 nc = gi + ivec3(dx, dy, dz);
+        if (any(lessThan(nc, ivec3(0))) ||
+            any(greaterThanEqual(nc, ivec3(int(pc.gridRes))))) continue;
+
+        uint cid   = mortonExpand(uint(nc.x)) | (mortonExpand(uint(nc.y)) << 1u)
+                                              | (mortonExpand(uint(nc.z)) << 2u);
+        uint cnt   = readUint(pc.cellCountIdx, cid);
+        uint start = readUint(pc.cellOffsetIdx, cid) - cnt;
+
+        for (uint k = start; k < start + cnt; ++k) {
+            uint j = readUint(pc.sortedIdxIdx, k);
+            if (j == i) continue;
+            if (readUint(pc.typeFlagIdx, j) != 1u) continue; // 流体のみ
+
+            vec3 pj = readVec4(pc.posIdx, j).xyz;
+            vec3 r  = pi - pj;
+            float r2 = dot(r, r);
+            if (r2 >= h2 || r2 < 1e-12) continue;
+
+            float rlen = sqrt(r2);
+            float hr   = h - rlen;
+            vec3 grad_w = (spiky_coeff * hr * hr / rlen) * r;
+
+            float omega_j_mag = length(readVec4(pc.omegaIdx, j).xyz);
+            eta += omega_j_mag * grad_w;
+        }
+    }
+
+    float etaLen = length(eta);
+    if (etaLen < 1e-12) return; // 渦勾配がなければ何もしない
+
+    vec3 N = eta / etaLen;
+    vec3 f = pc.vorticityEpsilon * cross(N, omega_i);
+
+    vec4 vi4 = readVec4(pc.velIdx, i);
+    vi4.xyz += f * pc.dt;
+    writeVec4(pc.velIdx, i, vi4);
+}

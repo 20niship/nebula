@@ -1,0 +1,176 @@
+version: "3"
+
+vars:
+  BUILD_DIR: build
+  BUILD_TYPE: Release
+  # ローカル開発は ~/VulkanSDK を優先、CI は /opt/homebrew を使う
+  VULKAN_SDK:
+    sh: |
+      if [ -d "$HOME/VulkanSDK/1.3.280.1/macOS" ]; then
+        echo "$HOME/VulkanSDK/1.3.280.1/macOS"
+      else
+        echo "/opt/homebrew"
+      fi
+  JOBS:
+    sh: sysctl -n hw.logicalcpu 2>/dev/null || nproc
+
+tasks:
+  # ── 依存関係インストール ────────────────────────────────────────────────────
+  setup:
+    desc: "Homebrew で Vulkan 依存パッケージをインストール"
+    cmds:
+      - brew install shaderc vulkan-headers vulkan-loader molten-vk glfw glm
+    platforms: [darwin]
+
+  setup:submodules:
+    desc: "git submodule を初期化・更新"
+    cmds:
+      - git submodule update --init --recursive
+
+  # ── CMake 設定 ──────────────────────────────────────────────────────────────
+  configure:
+    desc: "CMake を構成する (BUILD_TYPE={{.BUILD_TYPE}})"
+    cmds:
+      - |
+        cmake -B {{.BUILD_DIR}} \
+          -DCMAKE_BUILD_TYPE={{.BUILD_TYPE}} \
+          -DVULKAN_SDK={{.VULKAN_SDK}}
+    env:
+      VULKAN_SDK: "{{.VULKAN_SDK}}"
+    sources:
+      - CMakeLists.txt
+      - tests/CMakeLists.txt
+    generates:
+      - "{{.BUILD_DIR}}/CMakeCache.txt"
+
+  # ── ビルド ──────────────────────────────────────────────────────────────────
+  build:
+    desc: "全ターゲットをビルド"
+    deps: [configure]
+    cmds:
+      - cmake --build {{.BUILD_DIR}} -j{{.JOBS}}
+
+  build:tests:
+    desc: "テスト用バイナリのみビルド"
+    deps: [configure]
+    cmds:
+      - cmake --build {{.BUILD_DIR}} --target vulkan_tests -j{{.JOBS}}
+
+  build:fluid:
+    desc: "fluid_pbf をビルド"
+    deps: [configure]
+    cmds:
+      - cmake --build {{.BUILD_DIR}} --target fluid_pbf -j{{.JOBS}}
+
+  build:multi:
+    desc: "multi_physics (Phase 6) をビルド"
+    deps: [configure]
+    cmds:
+      - cmake --build {{.BUILD_DIR}} --target multi_physics -j{{.JOBS}}
+
+  build:cloth:
+    desc: "cloth_3d をビルド"
+    deps: [configure]
+    cmds:
+      - cmake --build {{.BUILD_DIR}} --target cloth_3d -j{{.JOBS}}
+
+  build:smoke:
+    desc: "smoke をビルド"
+    deps: [configure]
+    cmds:
+      - cmake --build {{.BUILD_DIR}} --target smoke -j{{.JOBS}}
+
+  build:cloth-scene:
+    desc: "cloth_scene (TC5/TC7) をビルド"
+    deps: [configure]
+    cmds:
+      - cmake --build {{.BUILD_DIR}} --target cloth_scene -j{{.JOBS}}
+
+  # ── シェーダーのみ再コンパイル ─────────────────────────────────────────────
+  shaders:
+    desc: "シェーダーのみ再コンパイル"
+    deps: [configure]
+    cmds:
+      - cmake --build {{.BUILD_DIR}} --target shaders -j{{.JOBS}}
+
+  # ── テスト ──────────────────────────────────────────────────────────────────
+  test:
+    desc: "全テストを実行 (build:tests に依存)"
+    deps: [build:tests]
+    cmds:
+      - ctest --test-dir {{.BUILD_DIR}} --output-on-failure
+    env:
+      MVK_CONFIG_LOG_LEVEL: "2"
+      MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS: "0"
+
+  test:verbose:
+    desc: "テストを詳細ログ付きで実行"
+    deps: [build:tests]
+    cmds:
+      - ctest --test-dir {{.BUILD_DIR}} --output-on-failure --verbose
+    env:
+      MVK_CONFIG_LOG_LEVEL: "3"
+      MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS: "0"
+
+  test:filter:
+    desc: "テスト名でフィルタして実行 (例: task test:filter -- -k pbf)"
+    deps: [build:tests]
+    cmds:
+      - "{{.BUILD_DIR}}/tests/vulkan_tests {{.CLI_ARGS}}"
+    env:
+      MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS: "0"
+
+  # ── クリーン ────────────────────────────────────────────────────────────────
+  clean:
+    desc: "ビルドディレクトリを削除"
+    cmds:
+      - rm -rf {{.BUILD_DIR}}
+    prompt: "build/ を削除します。よろしいですか？"
+
+  clean:shaders:
+    desc: "コンパイル済みシェーダー (.spv) のみ削除"
+    cmds:
+      - find {{.BUILD_DIR}}/shaders -name "*.spv" -delete 2>/dev/null || true
+
+  # ── アプリ起動 ──────────────────────────────────────────────────────────────
+  run:multi:
+    desc: "multi_physics (Phase 6) を起動"
+    deps: [build:multi]
+    cmds:
+      - "{{.BUILD_DIR}}/multi_physics"
+    env:
+      MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS: "0"
+
+  run:fluid:
+    desc: "fluid_pbf を起動"
+    deps: [build:fluid]
+    cmds:
+      - "{{.BUILD_DIR}}/fluid_pbf"
+
+  run:cloth:
+    desc: "cloth_3d を起動"
+    deps: [build:cloth]
+    cmds:
+      - "{{.BUILD_DIR}}/cloth_3d"
+
+  # ── 動画生成 ────────────────────────────────────────────────────────────────
+  capture:
+    desc: "テストケース別シミュレーションを実行してグリッド動画を生成 (sim_captures/simulation_results.mp4)"
+    deps: [build:fluid, build:cloth, build:smoke, build:cloth-scene]
+    cmds:
+      - /opt/homebrew/bin/python3 capture_sim.py
+    env:
+      MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS: "0"
+
+  capture:clean:
+    desc: "キャプチャ済みフレームと動画を削除"
+    cmds:
+      - rm -rf sim_captures
+    prompt: "sim_captures/ を削除します。よろしいですか？"
+
+  # ── デフォルト ──────────────────────────────────────────────────────────────
+  default:
+    desc: "タスク一覧を表示"
+    cmds:
+      - task --list
+    silent: true

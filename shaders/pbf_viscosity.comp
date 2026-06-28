@@ -1,0 +1,68 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "common.glsl"
+
+// Phase 4 PBF: XSPH 粘性 - ソルバーループ終了後に1回だけ実行する速度平滑化
+// v_i ← v_i + c * Σ_j (v_j - v_i) * W_poly6(|x_i - x_j|, h)
+// pc.bendCompliance = c  (XSPH 粘性係数、FluidEngine から設定)
+// pc.cellSize       = h
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.particleCount) return;
+
+    uint fi = readUint(pc.typeFlagIdx, i);
+    if (fi != 1u) return;
+
+    // update_velocity 後: posIdx = 最終位置、velIdx = 更新済み速度
+    vec4 pi4 = readVec4(pc.posIdx, i);
+    vec3 pi  = pi4.xyz;
+    vec4 vi4 = readVec4(pc.velIdx, i);
+    vec3 vi  = vi4.xyz;
+
+    float h  = pc.cellSize;
+    float h2 = h * h;
+    float c  = pc.bendCompliance; // XSPH 粘性係数
+    float poly6_coeff = 315.0 / (64.0 * 3.14159265 * h2 * h2 * h2 * h2 * h);
+
+    vec3 vel_corr = vec3(0.0);
+
+    ivec3 gi = ivec3(clamp((pi - vec3(pc.worldMin)) / pc.cellSize,
+                           vec3(0.0), vec3(float(pc.gridRes) - 1.0)));
+
+    for (int dz = -1; dz <= 1; ++dz)
+    for (int dy = -1; dy <= 1; ++dy)
+    for (int dx = -1; dx <= 1; ++dx) {
+        ivec3 nc = gi + ivec3(dx, dy, dz);
+        if (any(lessThan(nc, ivec3(0))) ||
+            any(greaterThanEqual(nc, ivec3(int(pc.gridRes))))) continue;
+
+        uint cid   = mortonExpand(uint(nc.x)) | (mortonExpand(uint(nc.y)) << 1u)
+                                              | (mortonExpand(uint(nc.z)) << 2u);
+        uint cnt   = readUint(pc.cellCountIdx, cid);
+        uint start = readUint(pc.cellOffsetIdx, cid) - cnt;
+
+        for (uint k = start; k < start + cnt; ++k) {
+            uint j  = readUint(pc.sortedIdxIdx, k);
+            if (j == i) continue;
+            uint fj = readUint(pc.typeFlagIdx, j);
+            if (fj != 1u && fj != 3u) continue; // 流体 + 運動学的境界 (TC8)
+
+            vec3 pj = readVec4(pc.posIdx, j).xyz;
+            vec3 r  = pi - pj;
+            float r2 = dot(r, r);
+            if (r2 >= h2) continue;
+
+            float hr2 = h2 - r2;
+            float w   = poly6_coeff * hr2 * hr2 * hr2;
+            vec3 vj   = readVec4(pc.velIdx, j).xyz;
+            vel_corr += (vj - vi) * w;
+        }
+    }
+
+    // ρ₀ で割って正規化: Σ W_ij ≈ ρ₀ のため、c の意味が正しい XSPH 係数になる
+    vi4.xyz = vi + c * vel_corr / pc.stretchCompliance;
+    writeVec4(pc.velIdx, i, vi4);
+}

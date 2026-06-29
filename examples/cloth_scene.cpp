@@ -33,6 +33,18 @@ struct SceneArgs : public argparse::Args {
 
 // ── ヘルパー ──────────────────────────────────────────────────────────────────
 
+// ClothMesh の全頂点を pivot 周りに Z 軸で angle 回転 (XY 平面内で回転)
+static void rotateClothAroundZ(ClothMesh& mesh, const glm::vec3& pivot, float angle) {
+  float c = glm::cos(angle);
+  float s = glm::sin(angle);
+  for(auto& pos : mesh.positions) {
+    float dx = pos.x - pivot.x;
+    float dy = pos.y - pivot.y;
+    pos.x = pivot.x + dx * c - dy * s;
+    pos.y = pivot.y + dx * s + dy * c;
+  }
+}
+
 // point を pivot 周りに Y 軸で angle 回転 (XZ 平面内で回転)
 // 左端 (dx<0) は +Z 方向、右端 (dx>0) は -Z 方向へ — 布の絞り動作
 static glm::vec3 rotateAroundY(const glm::vec3& point, const glm::vec3& pivot, float angle) {
@@ -83,13 +95,21 @@ private:
   std::vector<std::vector<uint32_t>> meshTriIndices_;
 
   void buildScene5() {
-    float sp = worldSize_ / float(clothN_ + 1) * 0.85f;
+    // sp × 0.60: 45°回転後の対角線幅 (side×√2) がワールド内に収まるよう抑制
+    float sp = worldSize_ / float(clothN_ + 1) * 0.60f;
     float cx = worldSize_ * 0.5f;
     float cy = worldSize_ * 0.5f;
 
     ClothMesh m1, m2;
-    m1.build((int)clothN_, sp, cx, cy, worldSize_ * 0.80f);
-    m2.build((int)clothN_, sp, cx, cy, worldSize_ * 0.55f);
+    // Z 位置をワールド中央寄りに配置 (旧: 0.80/0.55 → 新: 0.65/0.40)
+    m1.build((int)clothN_, sp, cx, cy, worldSize_ * 0.65f);
+    m2.build((int)clothN_, sp, cx, cy, worldSize_ * 0.40f);
+
+    // Z 軸周りに 45° 回転して斜め配置
+    const glm::vec3 pivot(cx, cy, 0.0f);
+    const float     angle45 = glm::quarter_pi<float>();
+    rotateClothAroundZ(m1, pivot, angle45);
+    rotateClothAroundZ(m2, pivot, angle45);
 
     uint32_t off1 = engine_.addCloth(m1);
     uint32_t off2 = engine_.addCloth(m2);

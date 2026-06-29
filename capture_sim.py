@@ -89,8 +89,8 @@ SIMS = [
         "exe": "cloth_scene",
         "title": "TC5: Two-Cloth Collision",
         "env": {},
-        "extra_args": ["--scene", "5", "--cloth-n", "32"],
-        "params": "verts=2×1024 | top-row pinned | cloth-cloth SDF",
+        "extra_args": ["--scene", "5", "--cloth-n", "32", "--world-size", "15"],
+        "params": "verts=2×1024 | top-row pinned | 45° rotated | cloth-cloth SDF",
     },
     {
         "id": "tc6",

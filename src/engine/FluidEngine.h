@@ -98,10 +98,41 @@ public:
 
   uint32_t nBoundary = 0;
 
+  // ── 吸収形状ディスクリプタ ───────────────────────────────────────────────────
+  // type: 0=Sphere, 1=CylinderZ, 2=Box, 3=CapsuleZ
+  // 各フィールドは float (type も float として格納; シェーダーで uint() キャスト)
+  struct AbsorberDesc {
+    float type;        // 0=Sphere, 1=CylinderZ, 2=Box, 3=CapsuleZ
+    float cx, cy, cz;  // 中心座標 [m]
+    float p0, p1, p2;  // 形状パラメータ: Sphere→(r), CylZ→(r,halfH), Box→(hx,hy,hz), Capsule→(r,halfL)
+    float rate;        // 吸収確率 per substep [0.0, 1.0]
+
+    static AbsorberDesc Sphere(float cx_, float cy_, float cz_, float r, float rate_ = 1.0f) {
+      return {0.0f, cx_, cy_, cz_, r, 0.0f, 0.0f, rate_};
+    }
+    static AbsorberDesc CylinderZ(float cx_, float cy_, float cz_, float r, float halfH, float rate_ = 1.0f) {
+      return {1.0f, cx_, cy_, cz_, r, halfH, 0.0f, rate_};
+    }
+    static AbsorberDesc Box(float cx_, float cy_, float cz_, float hx, float hy, float hz, float rate_ = 1.0f) {
+      return {2.0f, cx_, cy_, cz_, hx, hy, hz, rate_};
+    }
+    static AbsorberDesc CapsuleZ(float cx_, float cy_, float cz_, float r, float halfL, float rate_ = 1.0f) {
+      return {3.0f, cx_, cy_, cz_, r, halfL, 0.0f, rate_};
+    }
+  };
+  static constexpr uint32_t MAX_ABSORBERS = 32;
+
+  // 吸収形状を登録（毎フレーム step() の前に呼ぶ; absorbers が空なら吸収パスをスキップ）
+  void setAbsorbers(const std::vector<AbsorberDesc>& absorbers);
+
   VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
   VkDescriptorSet descriptorSet             = VK_NULL_HANDLE;
   uint32_t posIdx                           = 0;
   uint32_t velIdx                           = 0;
+  // 外部シェーダー（fluid_absorb.comp 等）からも参照されるバッファインデックス
+  uint32_t predPIdx    = 0;
+  uint32_t invMassIdx  = 0;
+  uint32_t typeFlagIdx = 0;
 
   VkBuffer getPositionBuffer() const;
 
@@ -125,15 +156,16 @@ private:
 
   AttributeBuffer attrBuf_;
 
-  uint32_t predPIdx_      = 0;
-  uint32_t invMassIdx_    = 0;
-  uint32_t typeFlagIdx_   = 0;
   uint32_t cellCountIdx_  = 0;
   uint32_t cellOffsetIdx_ = 0;
   uint32_t sortedIdxIdx_  = 0;
   uint32_t densityIdx_    = 0;
   uint32_t lambdaPbfIdx_  = 0;
   uint32_t omegaIdx_      = 0; // 渦度 ω バッファ (vec4 × N)
+
+  // 吸収パス用プライベートメンバー
+  uint32_t absorberBufIdx_ = 0; // absorbers バッファの bindless index
+  uint32_t absorberCount_  = 0; // 現フレームの有効吸収形状数
 
   ComputePipeline kPredictSdf_;
   ComputePipeline kSdfCollision_;
@@ -145,13 +177,11 @@ private:
   ComputePipeline kPbfDeltaP_;
   ComputePipeline kPbfViscosity_;
   ComputePipeline kUpdateVelocity_;
-  // ゼロクリア用 (FillBuffer 代替で blit エンコーダー遷移を排除)
   ComputePipeline kZeroCells_;
-  // hash_scan_global 後に 1024 wg × 256 threads でベース加算を並列化
   ComputePipeline kHashAddBase_;
-  // 渦度閉じ込め (式15-16): ω 計算 → 補正力 の 2 パス
   ComputePipeline kVorticityOmega_;
   ComputePipeline kVorticityForce_;
+  ComputePipeline kAbsorb_; // 吸収パス（fluid_absorb.comp; absorberCount_>0 のときのみ使用）
 
   // ── kinematic staging (TC8) ──────────────────────────────────────────────
   static constexpr uint32_t MAX_CONCURRENT_FRAMES = 2;

@@ -13,6 +13,7 @@
   TC5: 布2枚 + ボックスSDF・布-布衝突                 cloth_scene --scene 5
   TC6: 煙パーティクルシミュレーション                  smoke
   TC7: 4隅アニメーションピン・布ねじれ                cloth_scene --scene 7
+  TC9: 楕円水たまり + 移動円柱吸収ポート              fluid_absorb
 """
 
 import subprocess
@@ -114,6 +115,14 @@ SIMS = [
         "env": {},
         "extra_args": ["--ang-vel", "2.0", "--viscosity", "0.01"],
         "params": "N~27K | screw ω=2rad/s | visc=0.01",
+    },
+    {
+        "id": "tc9",
+        "exe": "fluid_absorb",
+        "title": "TC9: Fluid Absorb",
+        "env": {},
+        "extra_args": [],
+        "params": "N~1.4K | ellipse puddle a=5m b=3m | moving cylinder absorber r=1.2m rate=0.8",
     },
 ]
 

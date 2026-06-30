@@ -74,3 +74,6 @@ Testing/
 imgui.ini
 
 .DS_Store
+
+.venv/
+venv/

@@ -1,0 +1,54 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+
+#include "mpm_common.glsl"
+
+// Dense float SDF 境界条件 (mpm_grid_update の後、mpm_g2p の前に実行)
+// pc.nanoVDBIdx に float[totalCells] の SDF バッファを指定する (Morton インデックス)
+// SDF 値は世界座標 [m] 単位。負値 = 障害物内部。
+// MoltenVK 制約: buffers[] は関数内で使えないため、readFloat マクロで直接アクセス。
+//
+// dispatch: (totalCells + 255) / 256
+
+layout(local_size_x = 256) in;
+
+// グリッド座標からインデックス空間での SDF を取得するマクロ
+// ix, iy, iz がグリッド外なら背景値 (大正値) を返す
+#define SAMPLE_SDF(ix_, iy_, iz_) \
+    ( ((ix_) < 0 || (iy_) < 0 || (iz_) < 0 || \
+       (ix_) >= int(pc.gridRes) || (iy_) >= int(pc.gridRes) || (iz_) >= int(pc.gridRes)) \
+      ? 1e6 \
+      : readFloat(pc.nanoVDBIdx, mortonEncodeI(ivec3((ix_), (iy_), (iz_)))) )
+
+void main() {
+    if (pc.nanoVDBIdx == 0u) return;
+
+    uint gid = gl_GlobalInvocationID.x;
+    if (gid >= pc.gridRes * pc.gridRes * pc.gridRes) return;
+
+    float mass = readFloat(pc.gridMassIdx, gid);
+    if (mass < 1e-10) return;
+
+    ivec3 ijk = mortonDecodeI(gid);
+    float sdf = SAMPLE_SDF(ijk.x, ijk.y, ijk.z);
+
+    if (sdf < 0.0) {
+        writeVec4(pc.gridMomIdx, gid, vec4(0.0));
+    } else if (sdf < pc.cellSize * 1.5) {
+        vec3 v = readVec4(pc.gridMomIdx, gid).xyz;
+
+        // 有限差分で SDF 勾配 (≒ 表面法線)
+        float sdx = SAMPLE_SDF(ijk.x + 1, ijk.y, ijk.z) - SAMPLE_SDF(ijk.x - 1, ijk.y, ijk.z);
+        float sdy = SAMPLE_SDF(ijk.x, ijk.y + 1, ijk.z) - SAMPLE_SDF(ijk.x, ijk.y - 1, ijk.z);
+        float sdz = SAMPLE_SDF(ijk.x, ijk.y, ijk.z + 1) - SAMPLE_SDF(ijk.x, ijk.y, ijk.z - 1);
+
+        vec3 gn  = vec3(sdx, sdy, sdz);
+        float gl = length(gn);
+        if (gl > 1e-6) {
+            vec3  n  = gn / gl;
+            float vn = dot(v, n);
+            if (vn < 0.0) v -= vn * n;
+        }
+        writeVec4(pc.gridMomIdx, gid, vec4(v, 0.0));
+    }
+}

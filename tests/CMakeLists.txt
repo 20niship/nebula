@@ -16,11 +16,13 @@ add_executable(vulkan_tests
     ${PLATFORM_WRAPPERS}
     helpers/PhysicsHarness.cpp
     helpers/PBFHarness.cpp
+    helpers/MPMHarness.cpp
     test_string2d.cpp
     test_string3d.cpp
     test_fluid.cpp
     test_pbf_fluid.cpp
     test_pbf.cpp
+    test_mpm.cpp
     # 共通シミュレーションコード (メインアプリと共有)
     ${CMAKE_SOURCE_DIR}/src/core/AttributeBuffer.cpp
     ${CMAKE_SOURCE_DIR}/src/core/ComputePipeline.cpp

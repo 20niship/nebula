@@ -81,6 +81,10 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/zero_lambdas.comp
     ${SHADER_SRC_DIR}/move_pins.comp
     ${SHADER_SRC_DIR}/fluid_absorb.comp
+    # ── XPBD Soft Body シェーダー ────────────────────────────────────────
+    ${SHADER_SRC_DIR}/sb_solve_volume.comp
+    ${SHADER_SRC_DIR}/sb_zero_vol_lambdas.comp
+    ${SHADER_SRC_DIR}/sb_particle_collision.comp
 )
 
 set(SHADER_SPV)
@@ -269,6 +273,17 @@ add_sim_example(cloth_scene
     src/engine/ClothSceneEngine.cpp
     src/App.cpp
     examples/cloth_scene.cpp
+)
+
+# ── xpbd_softbody: XPBD 四面体ソフトボディシミュレーション ──────────────────
+add_sim_example(xpbd_softbody
+    src/core/VulkanContext.cpp
+    src/core/AttributeBuffer.cpp
+    src/core/ComputePipeline.cpp
+    src/graphics/GraphicsPipeline.cpp
+    src/engine/SoftBodyEngine.cpp
+    src/App.cpp
+    examples/xpbd_softbody.cpp
 )
 
 # ── multi_physics: Phase 5 布×流体 双方向連成 ────────────────────────────────

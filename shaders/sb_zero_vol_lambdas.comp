@@ -1,0 +1,16 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "common.glsl"
+
+// 四面体 λ バッファをゼロクリア (サブステップ毎)
+// SimPC エイリアス:
+//   clothVertexCount → tetLambdaIdx (λ バッファのバインドレスインデックス)
+//   boundaryStart    → tetCount     (全四面体数)
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.boundaryStart) return;
+    writeFloat(pc.clothVertexCount, i, 0.0);
+}

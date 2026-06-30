@@ -1,0 +1,87 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "mpm_common.glsl"
+
+// MPM P2G: グリッドノード単位 gather（Race condition なし、atomic float 不要）
+//
+// ノード規約: cell ix のセンター = (ix + 0.5) * cellSize + worldMin
+// 各ノードが担当する近傍セル: ±1 の 3×3×3 = 27 セル（B-spline support = 1.5*h）
+// 蓄積量: グリッド運動量 = Σ_p [w * m_p * v_p - dt * V_p * τ_p * ∇_xp w]
+//         グリッド質量   = Σ_p  w * m_p
+//
+// 応力はバッファ w レーンから readStressW で読む
+// dispatch: (totalCells + 255) / 256
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    if (gid >= totalCells) return;
+
+    ivec3 nijk = mortonDecodeI(gid);
+    vec3 xi = (vec3(nijk) + 0.5) * pc.cellSize + pc.worldMin;
+
+    float totalMass = 0.0;
+    vec3  totalMom  = vec3(0.0);
+
+    // 近傍 3×3×3 セルを走査
+    for (int dz = -1; dz <= 1; dz++)
+    for (int dy = -1; dy <= 1; dy++)
+    for (int dx = -1; dx <= 1; dx++) {
+        ivec3 cijk = nijk + ivec3(dx, dy, dz);
+        if (any(lessThan(cijk, ivec3(0))) ||
+            any(greaterThanEqual(cijk, ivec3(pc.gridRes)))) continue;
+
+        uint cid   = mortonEncodeI(cijk);
+        uint cnt   = readUint(pc.cellCountIdx, cid);
+        uint start = readUint(pc.cellOffsetIdx, cid) - cnt;
+
+        for (uint k = start; k < start + cnt; k++) {
+            uint p  = readUint(pc.sortedIdxIdx, k);
+            vec4 pp = readVec4(pc.posIdx, p);
+            vec3 xp = pp.xyz;
+            float Vp = pp.w;
+            vec4 vp4 = readVec4(pc.velIdx, p);
+            vec3 vp  = vp4.xyz;
+            // per-particle rho0 (MoltenVK: buffers[] は main() でのみアクセス可)
+            uint  mat_pid  = floatBitsToUint(vp4.w);
+            float mat_rho0;
+            if (pc.materialCount > 0u) {
+                mat_pid  = min(mat_pid, pc.materialCount - 1u);
+                mat_rho0 = uintBitsToFloat(buffers[pc.materialsIdx].data[mat_pid * 16u + 2u]);
+            } else {
+                mat_rho0 = pc.rho0;
+            }
+            float mp = mat_rho0 * Vp;
+
+            vec3 d = (xp - xi) / pc.cellSize;
+            float wx = bspline2(d.x), wy = bspline2(d.y), wz = bspline2(d.z);
+            float w  = wx * wy * wz;
+            if (w < 1e-12) continue;
+
+            vec3 dw = vec3(bspline2g(d.x) * wy * wz,
+                           wx * bspline2g(d.y) * wz,
+                           wx * wy * bspline2g(d.z)) / pc.cellSize;
+
+            // APIC: v_eff = v_p + (4/h²) * B_p * (x_i - x_p)
+            // 2次 B-spline: D_p = (h²/4)*I → D_inv = 4/h²
+            mat3 Bp = mat3(0.0);
+            if (pc.flip_ratio < -0.5) {
+                Bp = readMat3(p, pc.B0Idx, pc.B1Idx, pc.B2Idx);
+            }
+            float D_inv = 4.0 / (pc.cellSize * pc.cellSize);
+            vec3 v_eff  = vp + D_inv * (Bp * (xi - xp));
+
+            // Kirchhoff 応力を w レーンから読む
+            mat3 tau = readStressW(p);
+
+            totalMass += w * mp;
+            totalMom  += w * mp * v_eff;
+            totalMom  -= pc.dt * Vp * (tau * dw);
+        }
+    }
+
+    writeVec4(pc.gridMomIdx, gid, vec4(totalMom, 0.0));
+    writeFloat(pc.gridMassIdx, gid, totalMass);
+}

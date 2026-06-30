@@ -35,9 +35,9 @@ N_FRAMES = 600  # 各シムの保存フレーム数
 SHOT_SECS = 30.0  # 何シム秒分を録る
 VIDEO_FPS = 60  # 出力動画FPS
 THUMB_W = 640
-THUMB_H = 360
-GRID_COLS = 3
-GRID_ROWS = 3  # 3×3 = 9セル
+THUMB_H = 480
+GRID_COLS = 4
+GRID_ROWS = 3  # 4×3 = 12セル (TC1〜TC10 + 空き2)
 
 # テストケース定義
 SIMS = [
@@ -123,6 +123,14 @@ SIMS = [
         "env": {},
         "extra_args": [],
         "params": "N~1.4K | ellipse puddle a=5m b=3m | moving cylinder absorber r=1.2m rate=0.8",
+    },
+    {
+        "id": "tc10",
+        "exe": "xpbd_softbody",
+        "title": "TC10: XPBD Softbody",
+        "env": {},
+        "extra_args": [],
+        "params": "bunny + cube | XPBD volumetric | substeps=15",
     },
 ]
 
@@ -259,7 +267,7 @@ def encode_video(frame_dir, out_path):
             "-preset",
             "fast",
             "-vf",
-            "scale=1920:-1",
+            "scale=1920:-2",
             str(out_path),
         ]
         subprocess.run(cmd, check=True)

@@ -77,3 +77,7 @@ imgui.ini
 
 .venv/
 venv/
+
+# Generated/temporary files
+_skipped.face
+_skipped.node

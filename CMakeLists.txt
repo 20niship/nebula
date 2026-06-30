@@ -85,6 +85,8 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/sb_solve_volume.comp
     ${SHADER_SRC_DIR}/sb_zero_vol_lambdas.comp
     ${SHADER_SRC_DIR}/sb_particle_collision.comp
+    ${SHADER_SRC_DIR}/sb_wire.vert
+    ${SHADER_SRC_DIR}/sb_wire.frag
 )
 
 set(SHADER_SPV)

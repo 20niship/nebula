@@ -6,7 +6,8 @@
 
 class GraphicsPipeline {
 public:
-  void init(VkDevice device, VkRenderPass renderPass, VkDescriptorSetLayout bindlessLayout, const std::string& vertPath, const std::string& fragPath);
+  void init(VkDevice device, VkRenderPass renderPass, VkDescriptorSetLayout bindlessLayout, const std::string& vertPath, const std::string& fragPath,
+            VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST);
   void cleanup();
 
   void draw(VkCommandBuffer cmd, VkDescriptorSet bindlessSet, const SimPC& pc, uint32_t particleCount);

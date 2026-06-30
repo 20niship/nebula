@@ -34,9 +34,11 @@ public:
     // Renderer インターフェース (mpm_elastic.cpp と同パターン)
     VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
     VkDescriptorSet       descriptorSet       = VK_NULL_HANDLE;
-    uint32_t posIdx = 0;
-    uint32_t velIdx = 0;
+    uint32_t posIdx      = 0;
+    uint32_t velIdx      = 0;
+    uint32_t edgeDataIdx = 0;  // ワイヤーフレーム描画用
     uint32_t totalParticleCount() const { return totalCount_; }
+    uint32_t totalEdgeCount()    const { return totalEdgeCount_; }
 
     // ImGui から直接書き換え可能
     float gravity           = -9.8f;

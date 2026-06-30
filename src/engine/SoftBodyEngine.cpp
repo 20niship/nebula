@@ -312,7 +312,7 @@ void SoftBodyEngine::initGPUBuffers(VkCommandPool cmdPool, VkQueue queue) {
     invMassIdx_   = attrBuf_.addAttribute("invMass",    sizeof(glm::vec4), N);
     typeFlagIdx_  = attrBuf_.addAttribute("typeFlag",   sizeof(uint32_t),  N);
 
-    edgeDataIdx_   = attrBuf_.addAttribute("edgeData",   sizeof(uint32_t), E * 3);
+    edgeDataIdx = edgeDataIdx_ = attrBuf_.addAttribute("edgeData",   sizeof(uint32_t), E * 3);
     edgeLambdaIdx_ = attrBuf_.addAttribute("edgeLambda", sizeof(float),    E);
     tetDataIdx_    = attrBuf_.addAttribute("tetData",    sizeof(uint32_t), T * 4);
     tetLambdaIdx_  = attrBuf_.addAttribute("tetLambda",  sizeof(float),    T);

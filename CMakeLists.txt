@@ -23,8 +23,31 @@ find_program(GLSLC glslc HINTS "${VULKAN_SDK}/bin" REQUIRED)
 
 # ── Homebrew packages ──────────────────────────────────────────────────────
 list(APPEND CMAKE_PREFIX_PATH "/opt/homebrew")
-find_package(glfw3 REQUIRED)
-find_package(glm   REQUIRED)
+find_package(glfw3   REQUIRED)
+find_package(glm     REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+# ── NanoVDB (header-only, OpenVDB submodule の nanovdb/ のみ) ────────────
+set(NANOVDB_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/third_party/openvdb/nanovdb)
+list(APPEND CMAKE_PREFIX_PATH ${NANOVDB_INCLUDE_DIR})
+
+# Mac (MoltenVK): shaderFloat64=false → PNanoVDB.h の double を float に自動パッチ
+if(APPLE)
+    file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/nanovdb_glsl)
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/cmake/patch_pnanovdb.py
+                ${NANOVDB_INCLUDE_DIR}/nanovdb/PNanoVDB.h
+                ${CMAKE_BINARY_DIR}/nanovdb_glsl/PNanoVDB.h
+        RESULT_VARIABLE _patch_result
+    )
+    if(NOT _patch_result EQUAL 0)
+        message(WARNING "patch_pnanovdb.py failed: NanoVDB GLSL shaders may not compile on MoltenVK")
+    endif()
+    set(PNANOVDB_GLSL_INCLUDE ${CMAKE_BINARY_DIR}/nanovdb_glsl)
+else()
+    set(PNANOVDB_GLSL_INCLUDE ${NANOVDB_INCLUDE_DIR}/nanovdb)
+endif()
 
 # ── VulkanMemoryAllocator (header-only) ───────────────────────────────────
 add_subdirectory(third_party/VulkanMemoryAllocator)
@@ -81,6 +104,20 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/zero_lambdas.comp
     ${SHADER_SRC_DIR}/move_pins.comp
     ${SHADER_SRC_DIR}/fluid_absorb.comp
+    # ── XPBD Soft Body シェーダー ────────────────────────────────────────
+    ${SHADER_SRC_DIR}/sb_solve_volume.comp
+    ${SHADER_SRC_DIR}/sb_zero_vol_lambdas.comp
+    ${SHADER_SRC_DIR}/sb_particle_collision.comp
+    ${SHADER_SRC_DIR}/sb_wire.vert
+    ${SHADER_SRC_DIR}/sb_wire.frag
+    # ── MPM シェーダー ────────────────────────────────────────────────────
+    ${SHADER_SRC_DIR}/mpm_hash_count.comp
+    ${SHADER_SRC_DIR}/mpm_hash_sort.comp
+    ${SHADER_SRC_DIR}/mpm_zero_grid.comp
+    ${SHADER_SRC_DIR}/mpm_p2g.comp
+    ${SHADER_SRC_DIR}/mpm_grid_update.comp
+    ${SHADER_SRC_DIR}/mpm_g2p.comp
+    ${SHADER_SRC_DIR}/mpm_nanovdb_bc.comp
 )
 
 set(SHADER_SPV)
@@ -91,8 +128,11 @@ foreach(SHADER ${SHADER_SOURCES})
         OUTPUT  ${SPV}
         COMMAND ${GLSLC} --target-env=vulkan1.2
                          -I ${SHADER_SRC_DIR}
+                         -I ${PNANOVDB_GLSL_INCLUDE}
                          -o ${SPV} ${SHADER}
         DEPENDS ${SHADER} ${SHADER_SRC_DIR}/common.glsl
+                ${SHADER_SRC_DIR}/mpm_common.glsl ${SHADER_SRC_DIR}/collider_common.glsl
+                ${PNANOVDB_GLSL_INCLUDE}/PNanoVDB.h
         COMMENT "Compiling shader ${FNAME}"
     )
     list(APPEND SHADER_SPV ${SPV})
@@ -110,6 +150,7 @@ set(SIM_INCLUDE_DIRS
     ${IMGUI_DIR}/backends
     third_party/VulkanMemoryAllocator/include
     third_party/argparse/include
+    ${NANOVDB_INCLUDE_DIR}  # NanoVDB: #include <nanovdb/NanoVDB.h>
 )
 set(SIM_LINK_LIBS
     Vulkan::Vulkan
@@ -271,6 +312,17 @@ add_sim_example(cloth_scene
     examples/cloth_scene.cpp
 )
 
+# ── xpbd_softbody: XPBD 四面体ソフトボディシミュレーション ──────────────────
+add_sim_example(xpbd_softbody
+    src/core/VulkanContext.cpp
+    src/core/AttributeBuffer.cpp
+    src/core/ComputePipeline.cpp
+    src/graphics/GraphicsPipeline.cpp
+    src/engine/SoftBodyEngine.cpp
+    src/App.cpp
+    examples/xpbd_softbody.cpp
+)
+
 # ── multi_physics: Phase 5 布×流体 双方向連成 ────────────────────────────────
 add_sim_example(multi_physics
     src/core/VulkanContext.cpp
@@ -282,4 +334,98 @@ add_sim_example(multi_physics
     src/engine/MultiPhysicsEngine.cpp
     src/App.cpp
     examples/multi_physics.cpp
+)
+
+# ── mpm_elastic: GPU MPM 弾性/塑性シミュレーション ─────────────────────────
+add_sim_example(mpm_elastic
+    src/core/VulkanContext.cpp
+    src/core/AttributeBuffer.cpp
+    src/core/ComputePipeline.cpp
+    src/graphics/GraphicsPipeline.cpp
+    src/engine/MPMEngine.cpp
+    src/App.cpp
+    examples/mpm_elastic.cpp
+)
+# Apple libc++ (SDK 14) は std::atomic_ref を未実装のため、
+# NanoVDB Util.h が C++20 ブランチに入らないよう MPMEngine.cpp のみ C++17 でコンパイル。
+if(APPLE)
+    set_source_files_properties(src/engine/MPMEngine.cpp
+        PROPERTIES COMPILE_OPTIONS "-std=c++17")
+endif()
+
+# ── mpm_granular: Drucker-Prager 砂柱崩壊 ────────────────────────────────
+add_sim_example(mpm_granular
+    src/core/VulkanContext.cpp
+    src/core/AttributeBuffer.cpp
+    src/core/ComputePipeline.cpp
+    src/graphics/GraphicsPipeline.cpp
+    src/engine/MPMEngine.cpp
+    src/App.cpp
+    examples/mpm_granular.cpp
+)
+
+# ── mpm_multimaterial: 弾性体 + 砂 混在シミュレーション ─────────────────
+add_sim_example(mpm_multimaterial
+    src/core/VulkanContext.cpp
+    src/core/AttributeBuffer.cpp
+    src/core/ComputePipeline.cpp
+    src/graphics/GraphicsPipeline.cpp
+    src/engine/MPMEngine.cpp
+    src/App.cpp
+    examples/mpm_multimaterial.cpp
+)
+
+# ── mpm_fountain: コライダー + ソースエミッタ (Phase 3/4) ────────────────
+add_sim_example(mpm_fountain
+    src/core/VulkanContext.cpp
+    src/core/AttributeBuffer.cpp
+    src/core/ComputePipeline.cpp
+    src/graphics/GraphicsPipeline.cpp
+    src/engine/MPMEngine.cpp
+    src/App.cpp
+    examples/mpm_fountain.cpp
+)
+
+# ── mpm_avalanche: 山岳地形 + Drucker-Prager 雪崩 (~80K 粒子) ───────────
+add_sim_example(mpm_avalanche
+    src/core/VulkanContext.cpp
+    src/core/AttributeBuffer.cpp
+    src/core/ComputePipeline.cpp
+    src/graphics/GraphicsPipeline.cpp
+    src/engine/MPMEngine.cpp
+    src/App.cpp
+    examples/mpm_avalanche.cpp
+)
+
+# ── mpm_stl_drop: 任意 STL 障害物 SDF + 上部からパーティクル落下 ──────────
+add_sim_example(mpm_stl_drop
+    src/core/VulkanContext.cpp
+    src/core/AttributeBuffer.cpp
+    src/core/ComputePipeline.cpp
+    src/graphics/GraphicsPipeline.cpp
+    src/engine/MPMEngine.cpp
+    src/App.cpp
+    examples/mpm_stl_drop.cpp
+)
+
+# ── mpm_geolayer: 地層崩壊 (複数マテリアル) ──────────────────────────────────
+add_sim_example(mpm_geolayer
+    src/core/VulkanContext.cpp
+    src/core/AttributeBuffer.cpp
+    src/core/ComputePipeline.cpp
+    src/graphics/GraphicsPipeline.cpp
+    src/engine/MPMEngine.cpp
+    src/App.cpp
+    examples/mpm_geolayer.cpp
+)
+
+# ── mpm_snow_impact: 移動箱 SDF による雪衝突 ─────────────────────────────────
+add_sim_example(mpm_snow_impact
+    src/core/VulkanContext.cpp
+    src/core/AttributeBuffer.cpp
+    src/core/ComputePipeline.cpp
+    src/graphics/GraphicsPipeline.cpp
+    src/engine/MPMEngine.cpp
+    src/App.cpp
+    examples/mpm_snow_impact.cpp
 )

@@ -1,0 +1,69 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "common.glsl"
+
+// XPBD 四面体体積制約 — 1スレッド = 1四面体 (同色バッチ内は頂点非共有)
+//
+// SimPC フィールドの soft body 用エイリアス:
+//   couplingForceIdx  → tetDataIdx    (四面体頂点インデックスバッファ)
+//   clothVertexCount  → tetLambdaIdx  (XPBD λ per tet)
+//   densityIdx        → batchTetStart (現色バッチの開始四面体番号)
+//   lambdaPbfIdx      → batchTetEnd   (現色バッチの終了四面体番号)
+//   boundaryStart     → tetCount      (全四面体数、ゼロクリア用)
+//   bendCompliance    → volCompliance (体積拘束コンプライアンス)
+//   omegaIdx          → tetRestVolIdx (静止体積バッファ)
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint ti = pc.densityIdx + gl_GlobalInvocationID.x;
+    if (ti >= pc.lambdaPbfIdx) return;
+
+    // 四面体の4頂点インデックス (stride=4)
+    uint base = ti * 4u;
+    uint i0 = readUint(pc.couplingForceIdx, base);
+    uint i1 = readUint(pc.couplingForceIdx, base + 1u);
+    uint i2 = readUint(pc.couplingForceIdx, base + 2u);
+    uint i3 = readUint(pc.couplingForceIdx, base + 3u);
+
+    vec3 p0 = readVec4(pc.predPIdx, i0).xyz;
+    vec3 p1 = readVec4(pc.predPIdx, i1).xyz;
+    vec3 p2 = readVec4(pc.predPIdx, i2).xyz;
+    vec3 p3 = readVec4(pc.predPIdx, i3).xyz;
+
+    float w0 = readVec4(pc.invMassIdx, i0).x;
+    float w1 = readVec4(pc.invMassIdx, i1).x;
+    float w2 = readVec4(pc.invMassIdx, i2).x;
+    float w3 = readVec4(pc.invMassIdx, i3).x;
+    if (w0 == 0.0 && w1 == 0.0 && w2 == 0.0 && w3 == 0.0) return;
+
+    vec3 e1 = p1 - p0;
+    vec3 e2 = p2 - p0;
+    vec3 e3 = p3 - p0;
+
+    // 符号付き体積 V = (1/6) det[e1, e2, e3]
+    float V     = dot(e1, cross(e2, e3)) / 6.0;
+    float Vrest = readFloat(pc.omegaIdx, ti);
+    float C     = V - Vrest;
+
+    // XPBD 勾配: ∂V/∂p_i = 対面の法線ベクトル / 6
+    vec3 g1 = cross(e2, e3) / 6.0;
+    vec3 g2 = cross(e3, e1) / 6.0;
+    vec3 g3 = cross(e1, e2) / 6.0;
+    vec3 g0 = -(g1 + g2 + g3);
+
+    float alpha = pc.bendCompliance / (pc.dt * pc.dt);
+    float lam   = readFloat(pc.clothVertexCount, ti);
+
+    float denom = w0 * dot(g0, g0) + w1 * dot(g1, g1)
+                + w2 * dot(g2, g2) + w3 * dot(g3, g3) + alpha;
+    if (denom < 1e-12) return;
+
+    float dL = (-C - alpha * lam) / denom;
+    writeFloat(pc.clothVertexCount, ti, lam + dL);
+
+    if (w0 > 0.0) { vec4 p = readVec4(pc.predPIdx, i0); p.xyz += dL * w0 * g0; writeVec4(pc.predPIdx, i0, p); }
+    if (w1 > 0.0) { vec4 p = readVec4(pc.predPIdx, i1); p.xyz += dL * w1 * g1; writeVec4(pc.predPIdx, i1, p); }
+    if (w2 > 0.0) { vec4 p = readVec4(pc.predPIdx, i2); p.xyz += dL * w2 * g2; writeVec4(pc.predPIdx, i2, p); }
+    if (w3 > 0.0) { vec4 p = readVec4(pc.predPIdx, i3); p.xyz += dL * w3 * g3; writeVec4(pc.predPIdx, i3, p); }
+}

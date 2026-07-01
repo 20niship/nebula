@@ -160,9 +160,15 @@ tasks:
     cmds:
       - cmake --build {{.BUILD_DIR}} --target fluid_absorb -j{{.JOBS}}
 
+  build:softbody:
+    desc: "xpbd_softbody をビルド"
+    deps: [configure]
+    cmds:
+      - cmake --build {{.BUILD_DIR}} --target xpbd_softbody -j{{.JOBS}}
+
   capture:
     desc: "テストケース別シミュレーションを実行してグリッド動画を生成 (sim_captures/simulation_results.mp4)"
-    deps: [build:fluid, build:cloth, build:smoke, build:cloth-scene, build:absorb]
+    deps: [build:fluid, build:cloth, build:smoke, build:cloth-scene, build:absorb, build:softbody]
     cmds:
       - /opt/homebrew/bin/python3 capture_sim.py
     env:

@@ -1,0 +1,43 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "common.glsl"
+
+// 粒子間反発 — 1スレッド = 1粒子、全ペアを O(N²) でチェック
+// pc.windX を衝突半径として流用 (soft body では wind 不使用)
+layout(local_size_x = 256) in;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.particleCount) return;
+
+    float wi = readVec4(pc.invMassIdx, i).x;
+    if (wi <= 0.0) return;
+
+    vec3  pi = readVec4(pc.predPIdx, i).xyz;
+    float r  = pc.windX;          // 衝突半径 [m]
+    float r2 = r * r;
+
+    vec3 corr = vec3(0.0);
+
+    for (uint j = 0; j < pc.particleCount; j++) {
+        if (j == i) continue;
+        float wj = readVec4(pc.invMassIdx, j).x;
+        if (wj <= 0.0 && wi <= 0.0) continue;
+
+        vec3  pj   = readVec4(pc.predPIdx, j).xyz;
+        vec3  d    = pi - pj;
+        float dist2 = dot(d, d);
+        if (dist2 >= r2 || dist2 < 1e-10) continue;
+
+        float dist  = sqrt(dist2);
+        float C     = dist - r;        // < 0 (重なり量)
+        vec3  n     = d / dist;
+        float denom = wi + wj;
+        if (denom < 1e-10) continue;
+
+        // XPBD 位置補正: Δx_i = -(wi/denom)*C*n
+        corr -= (wi / denom) * C * n;
+    }
+
+    writeVec4(pc.predPIdx, i, vec4(pi + corr, 0.0));
+}

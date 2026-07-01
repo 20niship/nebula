@@ -180,6 +180,19 @@ void main() {
         tau_new = henckyStress(F_new, mat_mu, mat_lam);
     }
 
+    // ── J-クランプ: 極端な圧縮・膨張で弾性エネルギーをリセット ────────────
+    // det(F) が物理的範囲 [0.15, 10] を超えた場合、数値発散の前兆と判定して
+    // F と応力を単位状態にリセット。さらに速度も減衰して蓄積圧縮爆発を防ぐ。
+    bool j_reset = false;
+    {
+        float J_det = abs(determinant(F_new));
+        if (J_det < 0.15 || J_det > 10.0) {
+            F_new   = mat3(1.0);
+            tau_new = mat3(0.0);
+            j_reset = true;
+        }
+    }
+
     // ── 速度・位置更新 ───────────────────────────────────────────────────
     // APIC: B_new で P2G にアフィン情報を伝達。PIC / FLIP では B = 0
     if (pc.flip_ratio > -0.5) { B_new = mat3(0.0); }
@@ -194,7 +207,49 @@ void main() {
         // PIC (flip_ratio==0) または APIC (flip_ratio==-1)
         v_new = vpic;
     }
+
+    // J-リセットが発生した場合: 過圧縮が引き起こした速度も減衰して弾性反発を防ぐ
+    if (j_reset) v_new *= 0.1;
+
     vec3 x_new = xp + pc.dt * v_new;
+
+    // ── SDF コライダー 粒子レベル境界補正 ──────────────────────────────────
+    // mpm_nanovdb_bc はグリッドノードを修正するが、SDF境界近傍では粒子が
+    // 固体セルに入り込むことがある。G2P内で粒子位置・速度を直接補正し
+    // 固体内部での弾性エネルギー蓄積 (速度爆発の根本原因) を防ぐ。
+    if (pc.nanoVDBIdx != 0u) {
+        ivec3 pijk = ivec3(floor((x_new - pc.worldMin) / pc.cellSize));
+        ivec3 gres = ivec3(int(pc.gridRes));
+        pijk = clamp(pijk, ivec3(0), gres - 1);
+        float psdf = readFloat(pc.nanoVDBIdx, mortonEncodeI(pijk));
+        if (psdf < 0.0) {
+            // SDF 勾配 (有限差分) → 表面外向き法線
+            ivec3 px1 = clamp(pijk + ivec3(1,0,0), ivec3(0), gres-1);
+            ivec3 mx1 = clamp(pijk - ivec3(1,0,0), ivec3(0), gres-1);
+            ivec3 py1 = clamp(pijk + ivec3(0,1,0), ivec3(0), gres-1);
+            ivec3 my1 = clamp(pijk - ivec3(0,1,0), ivec3(0), gres-1);
+            ivec3 pz1 = clamp(pijk + ivec3(0,0,1), ivec3(0), gres-1);
+            ivec3 mz1 = clamp(pijk - ivec3(0,0,1), ivec3(0), gres-1);
+            vec3 gn = vec3(
+                readFloat(pc.nanoVDBIdx, mortonEncodeI(px1)) - readFloat(pc.nanoVDBIdx, mortonEncodeI(mx1)),
+                readFloat(pc.nanoVDBIdx, mortonEncodeI(py1)) - readFloat(pc.nanoVDBIdx, mortonEncodeI(my1)),
+                readFloat(pc.nanoVDBIdx, mortonEncodeI(pz1)) - readFloat(pc.nanoVDBIdx, mortonEncodeI(mz1))
+            );
+            float gl = length(gn);
+            if (gl > 1e-6) {
+                vec3 n = gn / gl;
+                x_new -= psdf * n;          // 固体外に押し出す (psdf<0 → +|psdf|*n)
+                float vn = dot(v_new, n);
+                if (vn < 0.0) v_new -= vn * n;  // 法線方向の固体向き速度を除去
+            } else {
+                x_new = xp;
+                v_new = vec3(0.0);
+            }
+            // 弾性エネルギー蓄積をリセット (これが速度爆発の根本原因)
+            F_new   = mat3(1.0);
+            tau_new = mat3(0.0);
+        }
+    }
 
     // ── ワールド境界クランプ ─────────────────────────────────────────────
     float margin = pc.cellSize * 1.5;

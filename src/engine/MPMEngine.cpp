@@ -185,6 +185,7 @@ void MPMEngine::cleanup() {
 }
 
 VkBuffer MPMEngine::getPositionBuffer() const { return attrBuf_.getBuffer("P"); }
+VkBuffer MPMEngine::getVelocityBuffer() const { return attrBuf_.getBuffer("v"); }
 
 // ── NanoVDB SDF コライダー ────────────────────────────────────────────────
 

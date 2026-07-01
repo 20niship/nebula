@@ -97,6 +97,17 @@ public:
   void clearSources();
   void resetParticles(); // ライブ粒子数を 0 にリセット (バッファは再生成しない)
 
+  // ── 粒子の直接追加 ────────────────────────────────────────────────────
+  // pos.w = 粒子体積 Vp, vel.w = floatBitsToUint(material_id)
+  // F=単位行列, B=0, stress=0 で初期化して maxParticleCount() まで追加
+  void appendParticles(const std::vector<glm::vec4>& pos,
+                        const std::vector<glm::vec4>& vel);
+
+  // ── 任意形状 SDF コライダー ────────────────────────────────────────────
+  // Morton 順に並んだ float SDF 配列 (totalCells() 要素) を地形コライダーとして設定
+  // sdf[mortonEncode(ix,iy,iz)] = 符号付き距離 [m]  負値=障害物内部
+  void setColliderSDF(const std::vector<float>& mortonSDF);
+
   VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
   VkDescriptorSet       descriptorSet       = VK_NULL_HANDLE;
   uint32_t              posIdx              = 0;

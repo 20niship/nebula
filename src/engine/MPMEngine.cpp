@@ -226,6 +226,39 @@ void MPMEngine::clearCollider() {
   nanoVDBIdx_ = 0;
 }
 
+void MPMEngine::setColliderSDF(const std::vector<float>& mortonSDF) {
+  if (nanoVDBIdx_ == 0) {
+    nanoVDBIdx_ = attrBuf_.addAttribute("nanoVDB", sizeof(float), cfg_.totalCells());
+  }
+  attrBuf_.upload("nanoVDB", mortonSDF.data(),
+                  mortonSDF.size() * sizeof(float), cmdPool_, queue_);
+}
+
+void MPMEngine::appendParticles(const std::vector<glm::vec4>& pos,
+                                  const std::vector<glm::vec4>& vel) {
+  const uint32_t maxN = cfg_.maxParticleCount();
+  const uint32_t nNew = std::min(uint32_t(pos.size()), maxN - nParticles_);
+  if (nNew == 0) return;
+
+  std::vector<glm::vec4> F0(nNew, glm::vec4(1,0,0,0));
+  std::vector<glm::vec4> F1(nNew, glm::vec4(0,1,0,0));
+  std::vector<glm::vec4> F2(nNew, glm::vec4(0,0,1,0));
+  std::vector<glm::vec4> B0(nNew, glm::vec4(0));
+  std::vector<glm::vec4> B1(nNew, glm::vec4(0));
+  std::vector<glm::vec4> B2(nNew, glm::vec4(0));
+
+  VkDeviceSize byteOff = VkDeviceSize(nParticles_) * sizeof(glm::vec4);
+  auto up = [&](const std::string& name, const void* data) {
+    attrBuf_.uploadAt(name, data, VkDeviceSize(nNew) * sizeof(glm::vec4), byteOff, cmdPool_, queue_);
+  };
+  up("P",  pos.data());
+  up("v",  vel.data());
+  up("F0", F0.data()); up("F1", F1.data()); up("F2", F2.data());
+  up("B0", B0.data()); up("B1", B1.data()); up("B2", B2.data());
+
+  nParticles_ += nNew;
+}
+
 // ── マテリアルテーブル設定 ────────────────────────────────────────────────
 
 void MPMEngine::setMaterials(const std::vector<MaterialParams>& mats) {

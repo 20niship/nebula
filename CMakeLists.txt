@@ -385,3 +385,25 @@ add_sim_example(mpm_fountain
     src/App.cpp
     examples/mpm_fountain.cpp
 )
+
+# ── mpm_avalanche: 山岳地形 + Drucker-Prager 雪崩 (~80K 粒子) ───────────
+add_sim_example(mpm_avalanche
+    src/core/VulkanContext.cpp
+    src/core/AttributeBuffer.cpp
+    src/core/ComputePipeline.cpp
+    src/graphics/GraphicsPipeline.cpp
+    src/engine/MPMEngine.cpp
+    src/App.cpp
+    examples/mpm_avalanche.cpp
+)
+
+# ── mpm_stl_drop: 任意 STL 障害物 SDF + 上部からパーティクル落下 ──────────
+add_sim_example(mpm_stl_drop
+    src/core/VulkanContext.cpp
+    src/core/AttributeBuffer.cpp
+    src/core/ComputePipeline.cpp
+    src/graphics/GraphicsPipeline.cpp
+    src/engine/MPMEngine.cpp
+    src/App.cpp
+    examples/mpm_stl_drop.cpp
+)

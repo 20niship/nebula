@@ -20,6 +20,7 @@
   TC-B: MPM Elastic — APIC (flip_ratio=-1.00)      mpm_elastic
   TC-C: MPM Elastic — FLIP (flip_ratio=0.95)       mpm_elastic
   TC-D: MPM Fountain — FLIP (flip_ratio=0.95)      mpm_fountain
+  TC-E: MPM Mountain Avalanche — Drucker-Prager     mpm_avalanche
 
 使い方:
   python3 capture_sim.py [--frames N] [--fps F]
@@ -46,7 +47,7 @@ VIDEO_FPS = 60     # 出力動画 FPS
 THUMB_W   = 480    # 4列 × 480 = 1920px (ffmpeg scale と一致)
 THUMB_H   = 270    # 16:9
 GRID_COLS = 4
-GRID_ROWS = 4      # 4×4=16 セル; 使用14 + 空き2
+GRID_ROWS = 4      # 4×4=16 セル; 使用15 + 空き1
 
 # テストケース定義
 # exe=None のエントリは空きセル（グリッドのパディング用）
@@ -159,8 +160,17 @@ SIMS = [
         ],
         "params": "N≤32768 | emit=512/step | 球コライダー",
     },
-    # ── 空きセル (4×4=16、使用14) ─────────────────────────────────────────
-    {"id": None, "exe": None, "title": "", "env": {}, "extra_args": [], "params": ""},
+    {
+        "id": "tc_avalanche", "exe": "mpm_avalanche",
+        "title": "TC-E: MPM Avalanche — Snow",
+        "env": {},
+        "extra_args": [
+            "--max-n", "80000",
+            "--grid-res", "128", "--substeps", "30", "--flip-ratio", "-1.0",
+        ],
+        "params": "N=80K | Drucker-Prager snow | 地形 SDF コライダー",
+    },
+    # ── 空きセル (4×4=16、使用15) ─────────────────────────────────────────
     {"id": None, "exe": None, "title": "", "env": {}, "extra_args": [], "params": ""},
 ]
 

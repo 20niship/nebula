@@ -23,6 +23,14 @@ void main() {
     vec3 mom = readVec4(pc.gridMomIdx, gid).xyz;
     vec3 v   = mom / mass;
 
+    // グリッド速度キャップ: 過圧縮粒子の弾性応力蓄積による速度爆発を防ぐ
+    // 自由落下 10m の終端速度 ~14 m/s を上限として非物理的なピークを除去
+    {
+        float vspeed = length(v);
+        float vmax_grid = 15.0;  // m/s
+        if (vspeed > vmax_grid) v *= vmax_grid / vspeed;
+    }
+
     // FLIP: 物理適用前の速度を後半バッファへ退避 (G2P が v_i_old として参照)
     writeVec4(pc.gridMomIdx, gid + totalCells, vec4(v, 0.0));
 

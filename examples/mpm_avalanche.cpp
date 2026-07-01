@@ -10,25 +10,35 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 #include <glm/glm.hpp>
+#include <vk_mem_alloc.h>
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 static const std::string SHADER_DIR_STR = SHADER_DIR;
 
-// ── 地形関数 (Python ツールと同一) ─────────────────────────────────────────
+// ── 地形関数 ────────────────────────────────────────────────────────────────
 
-static float terrainHeight(float x, float z, float W) {
+// SDF 構築用 (平滑版): rough/texture 高周波項を除外
+// 高周波項の勾配は最大 ≈1.0 rad/m → セル幅 cs 以上のSDF誤差を生じ粒子が固体内に入る原因
+static float terrainHeightSmooth(float x, float z, float W) {
     float slope   = W * 0.55f * (1.0f - z / W);
     float ridgeL  = W * 0.10f * std::exp(-std::pow((x - W*0.28f) / (W*0.06f), 2.0f));
     float ridgeR  = W * 0.10f * std::exp(-std::pow((x - W*0.72f) / (W*0.06f), 2.0f));
     float couloir = -W * 0.12f * std::exp(-std::pow((x - W*0.50f) / (W*0.10f + z*0.006f), 2.0f));
+    return std::max(0.2f, slope + ridgeL + ridgeR + couloir);
+}
+
+// 粒子初期配置用 (詳細版): rough/texture を加えて自然な凹凸に配置
+static float terrainHeight(float x, float z, float W) {
+    float base    = terrainHeightSmooth(x, z, W);
     float rough   = W * 0.020f * std::sin(x * 4.0f) * std::cos(z * 3.0f);
     float texture = W * 0.010f * std::sin(x * 9.0f + z * 7.0f);
-    return std::max(0.2f, slope + ridgeL + ridgeR + couloir + rough + texture);
+    return base + rough + texture;
 }
 
 // ── Morton 符号化 (MPMEngine.cpp と同一) ────────────────────────────────────
@@ -52,10 +62,12 @@ struct AvalancheArgs : public argparse::Args {
     int&         grid_res       = kwarg("grid-res",       "MPM grid resolution").set_default(128);
     int&         max_n          = kwarg("max-n",          "max particle count").set_default(80000);
     float&       dt             = kwarg("dt",             "frame timestep [s]").set_default(1.0f/60.0f);
-    int&         substeps       = kwarg("substeps",       "substeps per frame").set_default(30);
+    int&         substeps       = kwarg("substeps",       "substeps per frame").set_default(40);
     int&         n_shots        = kwarg("n-shots",        "screenshot count (0=disabled)").set_default(0);
     std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
-    float&       flip_ratio     = kwarg("flip-ratio",     "0=PIC -1=APIC 0~1=FLIP").set_default(-1.0f);
+    // PIC (0.0) がデフォルト: 速度拡散で安定; APIC (-1.0) は角運動量保存だが DP 材料で発散しやすい
+    float&       flip_ratio     = kwarg("flip-ratio",     "0=PIC -1=APIC 0~1=FLIP").set_default(0.0f);
+    int&         vel_check      = kwarg("vel-check",      "速度チェック間隔 (フレーム数)").set_default(30);
 };
 
 // ── App ────────────────────────────────────────────────────────────────────
@@ -63,8 +75,9 @@ struct AvalancheArgs : public argparse::Args {
 class AvalancheApp {
 public:
     void run(const AvalancheArgs& args) {
-        dt_        = args.dt;
-        worldSize_ = args.world_size;
+        dt_           = args.dt;
+        worldSize_    = args.world_size;
+        velCheckEvery_= args.vel_check;
         base_.screenshotDir = args.screenshot_dir;
 
         MPMConfig cfg;
@@ -89,7 +102,79 @@ private:
     float            worldSize_ = 10.0f;
     float            simTime_   = 0.0f;
 
-    // 地形 SDF (高さ場の符号付き距離) を Morton 順バッファとして構築
+    // ── 速度モニタリング ────────────────────────────────────────────────
+    VkBuffer      velStaging_      = VK_NULL_HANDLE;
+    VmaAllocation velStagingAlloc_ = VK_NULL_HANDLE;
+    int           frameCount_      = 0;
+    int           velCheckEvery_   = 30;
+    float         velHistory_[120]{};
+    int           velHistHead_     = 0;
+    float         maxVelCur_       = 0.0f;
+    float         maxVelPrev_      = 0.0f;
+
+    void createVelStaging(uint32_t maxParticles) {
+        VkBufferCreateInfo bci{};
+        bci.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bci.size  = VkDeviceSize(maxParticles) * sizeof(glm::vec4);
+        bci.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+
+        VmaAllocationCreateInfo aci{};
+        aci.usage = VMA_MEMORY_USAGE_CPU_ONLY;
+        vmaCreateBuffer(base_.ctx.allocator, &bci, &aci,
+                        &velStaging_, &velStagingAlloc_, nullptr);
+    }
+
+    // GPU 速度バッファをホストに読み戻して最大速度を返す
+    // 呼び出し前に前フレームの compute が完了していること (vkWaitForFences 済み)
+    float readbackMaxVel() {
+        uint32_t N = engine_.liveParticleCount();
+        if (N == 0 || velStaging_ == VK_NULL_HANDLE) return 0.0f;
+
+        VkDeviceSize sz = VkDeviceSize(N) * sizeof(glm::vec4);
+
+        VkCommandBuffer cmd;
+        VkCommandBufferAllocateInfo ai{};
+        ai.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        ai.commandPool        = base_.ctx.graphicsCommandPool;
+        ai.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        ai.commandBufferCount = 1;
+        vkAllocateCommandBuffers(base_.ctx.device, &ai, &cmd);
+
+        VkCommandBufferBeginInfo bi{};
+        bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkBeginCommandBuffer(cmd, &bi);
+
+        VkBufferCopy region{};
+        region.size = sz;
+        vkCmdCopyBuffer(cmd, engine_.getVelocityBuffer(), velStaging_, 1, &region);
+        vkEndCommandBuffer(cmd);
+
+        VkSubmitInfo si{};
+        si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        si.commandBufferCount = 1;
+        si.pCommandBuffers    = &cmd;
+        vkQueueSubmit(base_.ctx.graphicsQueue, 1, &si, VK_NULL_HANDLE);
+        vkQueueWaitIdle(base_.ctx.graphicsQueue);
+        vkFreeCommandBuffers(base_.ctx.device, base_.ctx.graphicsCommandPool, 1, &cmd);
+
+        void* data;
+        vmaMapMemory(base_.ctx.allocator, velStagingAlloc_, &data);
+        const glm::vec4* vels = static_cast<const glm::vec4*>(data);
+        float maxV = 0.0f;
+        for (uint32_t i = 0; i < N; ++i) {
+            float spd = std::sqrt(vels[i].x*vels[i].x
+                                + vels[i].y*vels[i].y
+                                + vels[i].z*vels[i].z);
+            if (spd > maxV) maxV = spd;
+        }
+        vmaUnmapMemory(base_.ctx.allocator, velStagingAlloc_);
+        return maxV;
+    }
+
+    // ── 地形 SDF ───────────────────────────────────────────────────────
+    // smooth版を使用: 高周波 rough/texture を含まないのでSDF境界が安定
+    // さらに cs*0.5 の安全マージンを加算 → 粒子が固体内に入りにくくなる
     std::vector<float> buildTerrainSDF(const MPMConfig& cfg) {
         const uint32_t G  = cfg.grid_res;
         const float    cs = cfg.cellSize();
@@ -101,18 +186,20 @@ private:
             float cx = (ix + 0.5f) * cs;
             float cy = (iy + 0.5f) * cs;
             float cz = (iz + 0.5f) * cs;
-            float h  = terrainHeight(cx, cz, W);
-            sdf[mortonEncode(ix, iy, iz)] = cy - h;  // < 0: 地形内部 (固体)
+            float h  = terrainHeightSmooth(cx, cz, W) + cs * 0.5f;  // 安全マージン
+            sdf[mortonEncode(ix, iy, iz)] = cy - h;
         }
         return sdf;
     }
 
-    // 雪粒子を山肌上部に配置して appendParticles() で追加
+    // ── 雪粒子配置 ──────────────────────────────────────────────────────
+    // オフセット = 2*cs: 地形 SDF のセル中心誤差 (terrain 高周波成分) を吸収
+    // rough/texture の最大勾配は ~1.0 rad/m → セル幅 cs で最大 cs 程度の誤差
+    // → 2*cs のマージンで初期位置が SDF 内部に入るのを防ぐ
     void placeSnow(const MPMConfig& cfg) {
         const float W   = cfg.world_size;
         const float cs  = cfg.cellSize();
 
-        // 雪の覆う領域: x 全幅, z は上部 40% (斜面上部)
         const float x0   = W * 0.05f,  x1 = W * 0.95f;
         const float z0   = W * 0.05f,  z1 = W * 0.45f;
         const int   nx_p = 160;
@@ -134,12 +221,14 @@ private:
             float pz = z0 + (iz + 0.5f) * dz_p;
             float h  = terrainHeight(px, pz, W);
             for (int iy = 0; iy < nlay && int(pos.size()) < maxN; ++iy) {
-                float py = h + (iy + 0.5f) * dy + cs * 0.15f;
-                if (py >= W) continue;
+                // 2*cs マージンで確実に SDF の外側に配置
+                float py = h + 2.0f * cs + (iy + 0.5f) * dy;
+                if (py >= W - cs) continue;
                 pos.push_back({px, py, pz, Vp});
-                vel.push_back({0.0f, 0.0f, 0.0f, 0.0f});  // material id 0
+                vel.push_back({0.0f, 0.0f, 0.0f, 0.0f});
             }
         }
+        std::printf("  雪粒子配置: %zu 個 (最大 %d)\n", pos.size(), maxN);
         engine_.appendParticles(pos, vel);
     }
 
@@ -154,20 +243,22 @@ private:
         engine_.gravity     = -9.8f;
         engine_.flip_ratio  = flipRatio;
 
-        // Drucker-Prager 雪マテリアル (スロット 0)
+        // ── Drucker-Prager 雪マテリアル ─────────────────────────────
+        // E: 1e3 Pa (非常に柔らかい設定。J-クランプと組み合わせて蓄積圧縮爆発を防ぐ)
+        // q_cohesion: 500 Pa (DP コーン頂点付近の張力不安定を防ぐ最小粘着力)
         MaterialParams snow{};
-        snow.mu         = calcMu(5e4f, 0.3f);
-        snow.lambda     = calcLambda(5e4f, 0.3f);
+        snow.mu         = calcMu(1e3f, 0.3f);
+        snow.lambda     = calcLambda(1e3f, 0.3f);
         snow.rho0       = 400.0f;
         snow.model      = uint32_t(MaterialModel::DRUCKER_PRAGER);
-        snow.M_friction = 0.40f;  // tan(~22°)
-        snow.q_cohesion = 0.0f;
+        snow.M_friction = 0.40f;
+        snow.q_cohesion = 500.0f;
         engine_.setMaterials({snow});
 
         // 地形 SDF コライダー
         engine_.setColliderSDF(buildTerrainSDF(cfg));
 
-        // ドメイン境界 (壁・天井)
+        // ドメイン境界 (床・4壁)
         {
             ColliderSet cols;
             float W = cfg.world_size;
@@ -179,8 +270,8 @@ private:
             engine_.setColliders(cols);
         }
 
-        // 初期雪粒子配置
         placeSnow(cfg);
+        createVelStaging(cfg.maxParticleCount());
 
         graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass,
                            engine_.descriptorSetLayout,
@@ -247,7 +338,6 @@ private:
         renderPc.particleCount = engine_.liveParticleCount();
         renderPc.worldMin      = 0.0f;
         renderPc.worldMax      = engine_.config().world_size;
-
         graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.liveParticleCount());
 
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
@@ -258,6 +348,24 @@ private:
     void drawFrame(int nShots) {
         auto& f = base_.frames[base_.currentFrame];
         vkWaitForFences(base_.ctx.device, 1, &f.inFlightFence, VK_TRUE, UINT64_MAX);
+
+        // 速度チェック: 前フレームの compute 完了後に読み戻す
+        ++frameCount_;
+        if (velCheckEvery_ > 0 && frameCount_ % velCheckEvery_ == 0) {
+            maxVelPrev_ = maxVelCur_;
+            maxVelCur_  = readbackMaxVel();
+            velHistory_[velHistHead_++ % 120] = maxVelCur_;
+            // 急激な速度増加を検出してコンソールに出力
+            if (maxVelPrev_ > 0.1f && maxVelCur_ > maxVelPrev_ * 4.0f) {
+                std::printf("[frame %4d  t=%6.2fs] 速度急増! prev=%.2f → cur=%.2f m/s\n",
+                            frameCount_, simTime_, maxVelPrev_, maxVelCur_);
+                std::fflush(stdout);
+            } else {
+                std::printf("[frame %4d  t=%6.2fs] max_vel=%.3f m/s\n",
+                            frameCount_, simTime_, maxVelCur_);
+                std::fflush(stdout);
+            }
+        }
 
         uint32_t imageIdx;
         VkResult result = vkAcquireNextImageKHR(base_.ctx.device, base_.ctx.swapchain,
@@ -272,15 +380,27 @@ private:
         ImGui::NewFrame();
 
         ImGui::SetNextWindowPos({10, 10}, ImGuiCond_Once);
-        ImGui::SetNextWindowSize({360, 0}, ImGuiCond_Once);
+        ImGui::SetNextWindowSize({370, 0}, ImGuiCond_Once);
         ImGui::Begin("MPM Mountain Avalanche");
         const char* mode = (engine_.flip_ratio < -0.5f) ? "APIC"
                          : (engine_.flip_ratio > 0.01f) ? "FLIP" : "PIC";
         ImGui::Text("FPS: %.1f | N=%u | t=%.2f s | %s",
                     ImGui::GetIO().Framerate, engine_.liveParticleCount(), simTime_, mode);
         ImGui::Separator();
-        ImGui::SliderFloat("重力",       &engine_.gravity,      -20.0f, 0.0f);
-        ImGui::SliderInt("サブステップ",  &engine_.numSubsteps,  1, 60);
+        ImGui::SliderFloat("重力",       &engine_.gravity,     -20.0f, 0.0f);
+        ImGui::SliderInt("サブステップ",  &engine_.numSubsteps, 1, 60);
+        ImGui::Separator();
+        // 速度モニタリング
+        bool exploding = (maxVelPrev_ > 0.1f && maxVelCur_ > maxVelPrev_ * 4.0f);
+        if (exploding) ImGui::PushStyleColor(ImGuiCol_Text, {1,0.2f,0.2f,1});
+        ImGui::Text("max |v| = %.3f m/s %s", maxVelCur_, exploding ? "<!爆発>" : "");
+        if (exploding) ImGui::PopStyleColor();
+        // 直近 120 サンプルの速度履歴グラフ
+        float dispHist[120];
+        for (int i = 0; i < 120; ++i)
+            dispHist[i] = velHistory_[(velHistHead_ - 120 + i + 120 * 2) % 120];
+        ImGui::PlotLines("##velplot", dispHist, 120, 0, nullptr,
+                         0.0f, std::max(20.0f, maxVelCur_ * 1.5f), {350, 60});
         ImGui::End();
 
         ImGui::Render();
@@ -357,6 +477,11 @@ private:
     }
 
     void cleanup() {
+        if (velStaging_ != VK_NULL_HANDLE) {
+            vmaDestroyBuffer(base_.ctx.allocator, velStaging_, velStagingAlloc_);
+            velStaging_      = VK_NULL_HANDLE;
+            velStagingAlloc_ = VK_NULL_HANDLE;
+        }
         graphicsPipe_.cleanup();
         engine_.cleanup();
         base_.cleanupBase();

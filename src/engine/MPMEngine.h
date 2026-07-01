@@ -59,6 +59,7 @@ public:
   const MPMConfig& config() const { return cfg_; }
   uint32_t liveParticleCount() const { return nParticles_; }
   VkBuffer getPositionBuffer() const;
+  VkBuffer getVelocityBuffer() const;
 
   // ImGui から調整可能
   float gravity        = -9.8f;

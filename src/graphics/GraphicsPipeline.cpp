@@ -22,7 +22,8 @@ VkShaderModule GraphicsPipeline::loadShader(const std::string& path) {
   return mod;
 }
 
-void GraphicsPipeline::init(VkDevice device, VkRenderPass renderPass, VkDescriptorSetLayout bindlessLayout, const std::string& vertPath, const std::string& fragPath) {
+void GraphicsPipeline::init(VkDevice device, VkRenderPass renderPass, VkDescriptorSetLayout bindlessLayout, const std::string& vertPath, const std::string& fragPath,
+                            VkPrimitiveTopology topology) {
   device_ = device;
 
   // Pipeline layout
@@ -60,7 +61,7 @@ void GraphicsPipeline::init(VkDevice device, VkRenderPass renderPass, VkDescript
 
   VkPipelineInputAssemblyStateCreateInfo assembly{};
   assembly.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-  assembly.topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+  assembly.topology = topology;
 
   VkPipelineViewportStateCreateInfo viewportState{};
   viewportState.sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;

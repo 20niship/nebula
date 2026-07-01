@@ -1,0 +1,90 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "mpm_common.glsl"
+#include "collider_common.glsl"
+
+// MPM グリッド更新: 運動量→速度変換 + 重力 + 壁 BC + 解析コライダー BC
+//
+// ① 軸平行壁 BC: グリッド端 2 ノード以内で法線方向速度を除去
+// ② 解析コライダー BC: colliderCount > 0 のとき各プリミティブを SDF で判定
+//    ColliderPrimitive 読み取りは MoltenVK 制約に従い main() でインライン展開
+// dispatch: (totalCells + 255) / 256
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    if (gid >= totalCells) return;
+
+    float mass = readFloat(pc.gridMassIdx, gid);
+    if (mass < 1e-10) return;
+
+    vec3 mom = readVec4(pc.gridMomIdx, gid).xyz;
+    vec3 v   = mom / mass;
+
+    // グリッド速度キャップ: 過圧縮粒子の弾性応力蓄積による速度爆発を防ぐ
+    // 自由落下 10m の終端速度 ~14 m/s を上限として非物理的なピークを除去
+    {
+        float vspeed = length(v);
+        float vmax_grid = 15.0;  // m/s
+        if (vspeed > vmax_grid) v *= vmax_grid / vspeed;
+    }
+
+    // FLIP: 物理適用前の速度を後半バッファへ退避 (G2P が v_i_old として参照)
+    writeVec4(pc.gridMomIdx, gid + totalCells, vec4(v, 0.0));
+
+    // ① 重力
+    v.y += pc.gravity * pc.dt;
+
+    // ② 軸平行壁 BC (B-spline support = 1.5h → 境界 2 ノード以内を不透過)
+    ivec3 ijk = mortonDecodeI(gid);
+    int N = int(pc.gridRes) - 1;
+    if (ijk.x <= 1   && v.x < 0.0) v.x = 0.0;
+    if (ijk.x >= N-1 && v.x > 0.0) v.x = 0.0;
+    if (ijk.y <= 1   && v.y < 0.0) v.y = 0.0;
+    if (ijk.y >= N-1 && v.y > 0.0) v.y = 0.0;
+    if (ijk.z <= 1   && v.z < 0.0) v.z = 0.0;
+    if (ijk.z >= N-1 && v.z > 0.0) v.z = 0.0;
+
+    // ③ 解析コライダー BC
+    // MoltenVK: buffers[] は main() でのみアクセス可（関数内不可）
+    if (pc.colliderCount > 0u) {
+        vec3 xi = (vec3(ijk) + 0.5) * pc.cellSize + pc.worldMin;
+
+        for (uint ci = 0u; ci < pc.colliderCount; ci++) {
+            uint  ctype = buffers[pc.colliderIdx].data[ci * 16u];
+            vec3  cpos  = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[ci * 16u + 1u]),
+                               uintBitsToFloat(buffers[pc.colliderIdx].data[ci * 16u + 2u]),
+                               uintBitsToFloat(buffers[pc.colliderIdx].data[ci * 16u + 3u]));
+            vec3  cnrm  = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[ci * 16u + 4u]),
+                               uintBitsToFloat(buffers[pc.colliderIdx].data[ci * 16u + 5u]),
+                               uintBitsToFloat(buffers[pc.colliderIdx].data[ci * 16u + 6u]));
+            float cr    = uintBitsToFloat(buffers[pc.colliderIdx].data[ci * 16u + 7u]);
+            vec3  cvel  = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[ci * 16u + 8u]),
+                               uintBitsToFloat(buffers[pc.colliderIdx].data[ci * 16u + 9u]),
+                               uintBitsToFloat(buffers[pc.colliderIdx].data[ci * 16u + 10u]));
+            float crest = uintBitsToFloat(buffers[pc.colliderIdx].data[ci * 16u + 11u]);
+            float cfric = uintBitsToFloat(buffers[pc.colliderIdx].data[ci * 16u + 12u]);
+
+            vec3  col_n;
+            float sdf;
+            if (ctype == COLL_SPHERE) {
+                sdf = sphereSDF(xi, cpos, cr, col_n);
+            } else if (ctype == COLL_BOX) {
+                sdf = boxSDF(xi, cpos, cnrm, col_n);
+            } else if (ctype == COLL_CAPSULE) {
+                sdf = capsuleSDF(xi, cpos, cnrm, cr, col_n);
+            } else {
+                // COLL_PLANE (default)
+                sdf = planeSDF(xi, cpos, cnrm, col_n);
+            }
+
+            if (sdf <= 0.0) {
+                applyColliderBC(v, col_n, cvel, crest, cfric);
+            }
+        }
+    }
+
+    writeVec4(pc.gridMomIdx, gid, vec4(v, 0.0));
+}

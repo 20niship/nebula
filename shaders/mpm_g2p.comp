@@ -1,0 +1,272 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "mpm_common.glsl"
+
+// MPM G2P: グリッド→パーティクル gather + F 更新 + 応力計算 + 位置更新
+//
+// ノード規約: cell ix のセンター = (ix + 0.5) * cellSize + worldMin
+// パーティクル xp のステンシル: base = ivec3(floor((xp - worldMin)/h) - 1)
+//   → ノード base, base+1, base+2 (3×3×3 = 27 ノード)
+//
+// 応力はバッファ w レーンにパック (readStressW / writeStressW / writeMat3xyz)
+// APIC: flip_ratio==-1 のとき B_p = Σ w*v_i⊗(x_i-x_p) を B0/B1/B2 xyz に書き込む
+//       P2G 側で v_eff = v_p + (4/h²)*B_p*(x_i-x_p) として運動量精度を向上させる
+// dispatch: (particleCount + 255) / 256
+
+layout(local_size_x = 256) in;
+
+// ── Von Mises 塑性射影 ────────────────────────────────────────────────────
+mat3 projectVonMises(mat3 F, float mu, float lam, float q_max) {
+    mat3 U; vec3 sigma; mat3 V;
+    svd3(F, U, sigma, V);
+    sigma = max(abs(sigma), vec3(1e-6));
+    vec3 eps = log(sigma);
+
+    float trEps  = eps.x + eps.y + eps.z;
+    vec3  devEps = eps - (trEps / 3.0) * vec3(1.0);
+    float normDev = length(devEps);
+
+    float e_mu = 2.0 * mu;
+    float delta = normDev - q_max / e_mu;
+    if (delta > 0.0 && normDev > 1e-8) {
+        devEps -= (delta / normDev) * devEps;
+        eps = devEps + (trEps / 3.0) * vec3(1.0);
+        sigma = exp(eps);
+        F = U * mat3(sigma.x, 0, 0,  0, sigma.y, 0,  0, 0, sigma.z) * transpose(V);
+    }
+    return F;
+}
+
+// ── Drucker-Prager 塑性射影 ───────────────────────────────────────────────
+mat3 projectDruckerPrager(mat3 F, float mu, float lam, float M, float q_c) {
+    mat3 U; vec3 sigma; mat3 V;
+    svd3(F, U, sigma, V);
+    sigma = max(abs(sigma), vec3(1e-6));
+    vec3 eps    = log(sigma);
+    float trEps = eps.x + eps.y + eps.z;
+    vec3  devEps = eps - (trEps / 3.0) * vec3(1.0);
+    float normDev = length(devEps);
+
+    float K   = lam + 2.0 * mu / 3.0;
+    float p   = -K * trEps;
+    float q_yield = M * p + q_c;
+
+    if (q_yield <= 1e-8) {
+        float p_proj = -q_c / max(M, 1e-8);
+        trEps = -p_proj / K;
+        eps   = (trEps / 3.0) * vec3(1.0);
+    } else {
+        float delta = normDev - q_yield / (2.0 * mu);
+        if (delta > 0.0 && normDev > 1e-8) {
+            devEps -= (delta / normDev) * devEps;
+            eps = devEps + (trEps / 3.0) * vec3(1.0);
+        }
+    }
+
+    sigma = exp(eps);
+    return U * mat3(sigma.x, 0, 0,  0, sigma.y, 0,  0, 0, sigma.z) * transpose(V);
+}
+
+void main() {
+    uint p = gl_GlobalInvocationID.x;
+    if (p >= pc.particleCount) return;
+
+    vec4  pp = readVec4(pc.posIdx, p);
+    vec3  xp = pp.xyz;
+    float Vp = pp.w;
+
+    // G2P gather: 3×3×3 近傍ノードから速度・速度勾配を収集
+    ivec3 base = ivec3(floor((xp - pc.worldMin) / pc.cellSize)) - ivec3(1);
+
+    vec3  vpic     = vec3(0.0);
+    vec3  vpic_old = vec3(0.0);  // FLIP 用: グリッド物理前速度の加重和
+    mat3  vgrad = mat3(0.0);  // ∇v_p = Σ v_i ⊗ ∇w_ip
+    mat3  B_new = mat3(0.0);  // APIC アフィン B_p = Σ w * v_i ⊗ (x_i - x_p)
+    uint  totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+
+    for (int iz = 0; iz < 3; iz++)
+    for (int iy = 0; iy < 3; iy++)
+    for (int ix = 0; ix < 3; ix++) {
+        ivec3 nijk = base + ivec3(ix, iy, iz);
+        if (any(lessThan(nijk, ivec3(0))) ||
+            any(greaterThanEqual(nijk, ivec3(pc.gridRes)))) continue;
+
+        uint nid  = mortonEncodeI(nijk);
+        float mass = readFloat(pc.gridMassIdx, nid);
+        if (mass < 1e-10) continue;
+
+        vec3 xi = (vec3(nijk) + 0.5) * pc.cellSize + pc.worldMin;
+        vec3 d = (xp - xi) / pc.cellSize;
+
+        float wx = bspline2(d.x), wy = bspline2(d.y), wz = bspline2(d.z);
+        float w  = wx * wy * wz;
+        if (w < 1e-12) continue;
+
+        vec3 dw = vec3(bspline2g(d.x) * wy * wz,
+                       wx * bspline2g(d.y) * wz,
+                       wx * wy * bspline2g(d.z)) / pc.cellSize;
+
+        vec3 vi = readVec4(pc.gridMomIdx, nid).xyz;
+        vpic  += w * vi;
+        vgrad += outerProduct(vi, dw);
+        // APIC: B_p = Σ w * v_i ⊗ (x_i - x_p)  (outerProduct の列優先: col j = vi*dxi[j])
+        B_new += w * outerProduct(vi, xi - xp);
+        // FLIP: 後半バッファから物理前グリッド速度を収集 (push constant 分岐は uniform → 全スレッド同一)
+        if (pc.flip_ratio > 0.01) {
+            vpic_old += w * readVec4(pc.gridMomIdx, nid + totalCells).xyz;
+        }
+    }
+
+    // ── per-particle material パラメータ読み込み ─────────────────────────
+    // MoltenVK: buffers[] は main() でのみアクセス可（関数内不可）
+    vec4 velWrd = readVec4(pc.velIdx, p);
+    uint matId  = floatBitsToUint(velWrd.w);
+
+    float mat_mu, mat_lam, mat_bulkK, mat_M, mat_qc, mat_qmax, mat_visc;
+    uint  mat_model;
+
+    if (pc.materialCount > 0u) {
+        matId  = min(matId, pc.materialCount - 1u);
+        uint mbase = matId * 16u;
+        mat_mu    = uintBitsToFloat(buffers[pc.materialsIdx].data[mbase + 0u]);
+        mat_lam   = uintBitsToFloat(buffers[pc.materialsIdx].data[mbase + 1u]);
+        mat_model = buffers[pc.materialsIdx].data[mbase + 3u];
+        mat_M     = uintBitsToFloat(buffers[pc.materialsIdx].data[mbase + 4u]);
+        mat_qc    = uintBitsToFloat(buffers[pc.materialsIdx].data[mbase + 5u]);
+        mat_qmax  = uintBitsToFloat(buffers[pc.materialsIdx].data[mbase + 6u]);
+        mat_bulkK = uintBitsToFloat(buffers[pc.materialsIdx].data[mbase + 7u]);
+        mat_visc  = uintBitsToFloat(buffers[pc.materialsIdx].data[mbase + 9u]);
+    } else {
+        // materialCount==0: グローバルパラメータにフォールバック (Phase 0 互換)
+        mat_mu    = pc.mu_lame;
+        mat_lam   = pc.lambda_lame;
+        mat_model = pc.plasticModel;
+        mat_M     = pc.M_friction;
+        mat_qc    = pc.q_cohesion;
+        mat_qmax  = pc.q_max;
+        mat_bulkK = 0.0;
+        mat_visc  = 0.0;
+    }
+
+    // ── 変形勾配更新 F_new = (I + dt * ∇v) * F_old ──────────────────────
+    mat3 F = readMat3(p, pc.F0Idx, pc.F1Idx, pc.F2Idx);
+    mat3 F_new = (mat3(1.0) + pc.dt * vgrad) * F;
+
+    // ── per-material 塑性射影 + Kirchhoff 応力 ───────────────────────────
+    mat3 tau_new;
+
+    if (mat_model == MAT_FLUID) {
+        // 弱圧縮流体: det(F) を保存してFをリセット
+        float J = determinant(F_new);
+        J       = max(J, 1e-4);
+        F_new   = pow(J, 1.0 / 3.0) * mat3(1.0);
+        tau_new = fluidStressJ(J, mat_bulkK);
+    } else if (mat_model == MAT_VON_MISES) {
+        F_new   = projectVonMises(F_new, mat_mu, mat_lam, mat_qmax);
+        tau_new = henckyStress(F_new, mat_mu, mat_lam);
+    } else if (mat_model == MAT_DRUCKER_PRAGER || mat_model == MAT_GRANULAR_POWDER) {
+        F_new   = projectDruckerPrager(F_new, mat_mu, mat_lam, mat_M, mat_qc);
+        tau_new = henckyStress(F_new, mat_mu, mat_lam);
+    } else if (mat_model == MAT_VISCOPLASTIC_MUD) {
+        F_new   = projectDruckerPrager(F_new, mat_mu, mat_lam, mat_M, mat_qc);
+        tau_new = henckyStress(F_new, mat_mu, mat_lam);
+        // 粘性偏差応力: 2η * dev(sym(∇v))
+        mat3  D    = 0.5 * (vgrad + transpose(vgrad));
+        float trD  = D[0][0] + D[1][1] + D[2][2];
+        mat3  devD = D - (trD / 3.0) * mat3(1.0);
+        tau_new   += 2.0 * mat_visc * devD;
+    } else {
+        // MAT_ELASTIC (デフォルト)
+        tau_new = henckyStress(F_new, mat_mu, mat_lam);
+    }
+
+    // ── J-クランプ: 極端な圧縮・膨張で弾性エネルギーをリセット ────────────
+    // det(F) が物理的範囲 [0.15, 10] を超えた場合、数値発散の前兆と判定して
+    // F と応力を単位状態にリセット。さらに速度も減衰して蓄積圧縮爆発を防ぐ。
+    bool j_reset = false;
+    {
+        float J_det = abs(determinant(F_new));
+        if (J_det < 0.15 || J_det > 10.0) {
+            F_new   = mat3(1.0);
+            tau_new = mat3(0.0);
+            j_reset = true;
+        }
+    }
+
+    // ── 速度・位置更新 ───────────────────────────────────────────────────
+    // APIC: B_new で P2G にアフィン情報を伝達。PIC / FLIP では B = 0
+    if (pc.flip_ratio > -0.5) { B_new = mat3(0.0); }
+
+    vec3 v_new;
+    if (pc.flip_ratio > 0.01) {
+        // FLIP: v_p_old + (v_pic_new - v_pic_old) を PIC とブレンド
+        // velWrd.xyz は前ステップ末尾で書いた v_p_old
+        vec3 v_flip = velWrd.xyz + (vpic - vpic_old);
+        v_new = mix(vpic, v_flip, pc.flip_ratio);
+    } else {
+        // PIC (flip_ratio==0) または APIC (flip_ratio==-1)
+        v_new = vpic;
+    }
+
+    // J-リセットが発生した場合: 過圧縮が引き起こした速度も減衰して弾性反発を防ぐ
+    if (j_reset) v_new *= 0.1;
+
+    vec3 x_new = xp + pc.dt * v_new;
+
+    // ── SDF コライダー 粒子レベル境界補正 ──────────────────────────────────
+    // mpm_nanovdb_bc はグリッドノードを修正するが、SDF境界近傍では粒子が
+    // 固体セルに入り込むことがある。G2P内で粒子位置・速度を直接補正し
+    // 固体内部での弾性エネルギー蓄積 (速度爆発の根本原因) を防ぐ。
+    if (pc.nanoVDBIdx != 0u) {
+        ivec3 pijk = ivec3(floor((x_new - pc.worldMin) / pc.cellSize));
+        ivec3 gres = ivec3(int(pc.gridRes));
+        pijk = clamp(pijk, ivec3(0), gres - 1);
+        float psdf = readFloat(pc.nanoVDBIdx, mortonEncodeI(pijk));
+        if (psdf < 0.0) {
+            // SDF 勾配 (有限差分) → 表面外向き法線
+            ivec3 px1 = clamp(pijk + ivec3(1,0,0), ivec3(0), gres-1);
+            ivec3 mx1 = clamp(pijk - ivec3(1,0,0), ivec3(0), gres-1);
+            ivec3 py1 = clamp(pijk + ivec3(0,1,0), ivec3(0), gres-1);
+            ivec3 my1 = clamp(pijk - ivec3(0,1,0), ivec3(0), gres-1);
+            ivec3 pz1 = clamp(pijk + ivec3(0,0,1), ivec3(0), gres-1);
+            ivec3 mz1 = clamp(pijk - ivec3(0,0,1), ivec3(0), gres-1);
+            vec3 gn = vec3(
+                readFloat(pc.nanoVDBIdx, mortonEncodeI(px1)) - readFloat(pc.nanoVDBIdx, mortonEncodeI(mx1)),
+                readFloat(pc.nanoVDBIdx, mortonEncodeI(py1)) - readFloat(pc.nanoVDBIdx, mortonEncodeI(my1)),
+                readFloat(pc.nanoVDBIdx, mortonEncodeI(pz1)) - readFloat(pc.nanoVDBIdx, mortonEncodeI(mz1))
+            );
+            float gl = length(gn);
+            if (gl > 1e-6) {
+                vec3 n = gn / gl;
+                x_new -= psdf * n;          // 固体外に押し出す (psdf<0 → +|psdf|*n)
+                float vn = dot(v_new, n);
+                if (vn < 0.0) v_new -= vn * n;  // 法線方向の固体向き速度を除去
+            } else {
+                x_new = xp;
+                v_new = vec3(0.0);
+            }
+            // 弾性エネルギー蓄積をリセット (これが速度爆発の根本原因)
+            F_new   = mat3(1.0);
+            tau_new = mat3(0.0);
+        }
+    }
+
+    // ── ワールド境界クランプ ─────────────────────────────────────────────
+    float margin = pc.cellSize * 1.5;
+    vec3 lo = vec3(pc.worldMin) + margin;
+    vec3 hi = vec3(pc.worldMax) - margin;
+    if (x_new.x < lo.x) { x_new.x = lo.x; v_new.x = max(v_new.x, 0.0); }
+    if (x_new.x > hi.x) { x_new.x = hi.x; v_new.x = min(v_new.x, 0.0); }
+    if (x_new.y < lo.y) { x_new.y = lo.y; v_new.y = max(v_new.y, 0.0); }
+    if (x_new.y > hi.y) { x_new.y = hi.y; v_new.y = min(v_new.y, 0.0); }
+    if (x_new.z < lo.z) { x_new.z = lo.z; v_new.z = max(v_new.z, 0.0); }
+    if (x_new.z > hi.z) { x_new.z = hi.z; v_new.z = min(v_new.z, 0.0); }
+
+    // ── 書き戻し ─────────────────────────────────────────────────────────
+    writeVec4(pc.posIdx, p, vec4(x_new, Vp));
+    writeVec4(pc.velIdx, p, vec4(v_new, velWrd.w));  // w=material id を保持
+    writeMat3xyz(p, F_new, pc.F0Idx, pc.F1Idx, pc.F2Idx);
+    writeStressW(p, tau_new);
+    // APIC B 行列を xyz レーンに書き戻す (w レーンの応力は writeStressW が保持)
+    writeMat3xyz(p, B_new, pc.B0Idx, pc.B1Idx, pc.B2Idx);
+}

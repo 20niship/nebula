@@ -3,24 +3,29 @@
 全シミュレーション キャプチャ → 1本の動画生成スクリプト
 
 各シミュレーションを順次実行し、フレームごとに PPM として保存。
-全シム完了後、対応フレームを 4×4 グリッドに合成して MP4 動画を書き出す。
+全シム完了後、対応フレームを 4×5 グリッドに合成して MP4 動画を書き出す。
 
 テストケース一覧:
-  TC1:  流体 ダムブレイク                          fluid_pbf
-  TC2:  流体 移動ソースフロー                       fluid_pbf
-  TC3:  高粘性ゼリー流体                            fluid_pbf
-  TC4:  布シミュレーション（2隅固定）               cloth_3d
-  TC5:  布2枚 + 布-布衝突                           cloth_scene --scene 5
-  TC6:  煙パーティクル                              smoke
-  TC7:  4隅アニメーションピン・布ねじれ             cloth_scene --scene 7
-  TC8:  回転スクリュー + PBF 流体                   screw_fluid
-  TC9:  楕円水たまり + 移動円柱吸収ポート           fluid_absorb
-  TC10: XPBD 四面体ソフトボディ                    xpbd_softbody
-  TC-A: MPM Elastic — PIC  (flip_ratio=0.00)       mpm_elastic
-  TC-B: MPM Elastic — APIC (flip_ratio=-1.00)      mpm_elastic
-  TC-C: MPM Elastic — FLIP (flip_ratio=0.95)       mpm_elastic
-  TC-D: MPM Fountain — FLIP (flip_ratio=0.95)      mpm_fountain
-  TC-E: MPM Mountain Avalanche — Drucker-Prager     mpm_avalanche
+  TC1:  流体 ダムブレイク                                      fluid_pbf
+  TC2:  流体 移動ソースフロー                                   fluid_pbf
+  TC3:  高粘性ゼリー流体                                       fluid_pbf
+  TC4:  布シミュレーション（2隅固定）                          cloth_3d
+  TC5:  布2枚 + 布-布衝突                                      cloth_scene --scene 5
+  TC6:  煙パーティクル                                         smoke
+  TC7:  4隅アニメーションピン・布ねじれ                        cloth_scene --scene 7
+  TC8:  回転スクリュー + PBF 流体                              screw_fluid
+  TC9:  楕円水たまり + 移動円柱吸収ポート                      fluid_absorb
+  TC10: XPBD 四面体ソフトボディ                               xpbd_softbody
+  TC-A: MPM Elastic — PIC  (flip_ratio=0.00)                  mpm_elastic
+  TC-B: MPM Elastic — APIC (flip_ratio=-1.00)                 mpm_elastic
+  TC-C: MPM Elastic — FLIP (flip_ratio=0.95)                  mpm_elastic
+  TC-D: MPM Fountain — FLIP (flip_ratio=0.95)                 mpm_fountain
+  TC-E: MPM Mountain Avalanche — Drucker-Prager                mpm_avalanche
+  TC-F: MPM マルチマテリアル — 弾性体 + Drucker-Prager 砂      mpm_multimaterial
+  TC-G: MPM 雪衝突 — 移動箱SDF (粒子50倍・高速・半サイズ箱)   mpm_snow_impact
+  TC-H: MPM 地層崩壊 — 硬岩/弱粘土/緩土 3層                  mpm_geolayer
+  TC-I: MPM 砂柱崩壊 — Drucker-Prager 粒状体                  mpm_granular
+  TC-J: MPM STL落下 — 球体STL障害物 SDF                       mpm_stl_drop
 
 使い方:
   python3 capture_sim.py [--frames N] [--fps F]
@@ -47,7 +52,7 @@ VIDEO_FPS = 60     # 出力動画 FPS
 THUMB_W   = 480    # 4列 × 480 = 1920px (ffmpeg scale と一致)
 THUMB_H   = 270    # 16:9
 GRID_COLS = 4
-GRID_ROWS = 4      # 4×4=16 セル; 使用15 + 空き1
+GRID_ROWS = 5      # 4×5=20 セル; TC1–TC10 + TC-A–TC-J
 
 # テストケース定義
 # exe=None のエントリは空きセル（グリッドのパディング用）
@@ -170,8 +175,58 @@ SIMS = [
         ],
         "params": "N=80K | Drucker-Prager snow | 地形 SDF コライダー",
     },
-    # ── 空きセル (4×4=16、使用15) ─────────────────────────────────────────
-    {"id": None, "exe": None, "title": "", "env": {}, "extra_args": [], "params": ""},
+    # ── 追加 MPM シーン ────────────────────────────────────────────────────
+    {
+        "id": "tc_multi", "exe": "mpm_multimaterial",
+        "title": "TC-F: MPM Multi-Material",
+        "env": {},
+        "extra_args": [
+            "--n", "20",
+            "--grid-res", "64", "--substeps", "25",
+        ],
+        "params": "N=8000 | 下半分=Hencky弾性体 | 上半分=Drucker-Prager砂",
+    },
+    {
+        "id": "tc_snow", "exe": "mpm_snow_impact",
+        "title": "TC-G: MPM Snow Impact",
+        "env": {},
+        "extra_args": [
+            "--pn", "44",
+            "--grid-res", "64", "--substeps", "25",
+            "--box-speed", "6.0",
+            "--box-scale", "0.5",
+            "--auto-launch", "1",
+        ],
+        "params": "N~85K | VON_MISES雪 | 箱速6m/s・半サイズ | 自動衝突",
+    },
+    {
+        "id": "tc_geolayer", "exe": "mpm_geolayer",
+        "title": "TC-H: MPM Geo-Layer Collapse",
+        "env": {},
+        "extra_args": [
+            "--grid-res", "64", "--substeps", "25",
+        ],
+        "params": "N=1920 | 下=硬岩ELASTIC | 中=弱粘土VON_MISES | 上=緩土D-P",
+    },
+    {
+        "id": "tc_granular", "exe": "mpm_granular",
+        "title": "TC-I: MPM Granular — Sand Column",
+        "env": {},
+        "extra_args": [
+            "--nx", "8", "--ny", "32", "--nz", "8",
+            "--grid-res", "64", "--substeps", "25",
+        ],
+        "params": "N=2048 | Drucker-Prager砂柱崩壊 | E=50kPa rho=1600",
+    },
+    {
+        "id": "tc_stl", "exe": "mpm_stl_drop",
+        "title": "TC-J: MPM STL Drop",
+        "env": {},
+        "extra_args": [
+            "--grid-res", "64", "--substeps", "25",
+        ],
+        "params": "N~16K | 球体STL SDF障害物 | パーティクル落下",
+    },
 ]
 
 

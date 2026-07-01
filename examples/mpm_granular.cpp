@@ -26,6 +26,8 @@ struct MpmGranularArgs : public argparse::Args {
   float& rho0       = kwarg("rho0","density [kg/m^3]").set_default(1600.0f);
   float& dt         = kwarg("dt",  "frame timestep [s]").set_default(1.0f / 60.0f);
   int&   substeps   = kwarg("substeps", "substeps per frame").set_default(25);
+  int&   n_shots    = kwarg("n-shots",  "screenshot count (0=disabled)").set_default(0);
+  std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
 };
 
 // ── App ───────────────────────────────────────────────────────────────────
@@ -34,6 +36,7 @@ class MpmGranularApp {
 public:
   void run(const MpmGranularArgs& args) {
     dt_ = args.dt;
+    base_.screenshotDir = args.screenshot_dir;
 
     MPMConfig cfg;
     cfg.nx         = uint32_t(args.nx);
@@ -47,7 +50,7 @@ public:
 
     base_.initWindow("MPM Granular – 砂柱崩壊");
     initVulkan(cfg, args.substeps);
-    mainLoop();
+    mainLoop(args.n_shots);
     cleanup();
   }
 
@@ -146,7 +149,7 @@ private:
     vkEndCommandBuffer(cmd);
   }
 
-  void drawFrame() {
+  void drawFrame(int nShots) {
     auto& f = base_.frames[base_.currentFrame];
     vkWaitForFences(base_.ctx.device, 1, &f.inFlightFence, VK_TRUE, UINT64_MAX);
 
@@ -232,6 +235,7 @@ private:
     present.swapchainCount     = 1;
     present.pSwapchains        = &base_.ctx.swapchain;
     present.pImageIndices      = &imageIdx;
+    if (nShots > 0) base_.saveScreenshot(imageIdx, nShots);
     result = vkQueuePresentKHR(base_.ctx.graphicsQueue, &present);
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR
         || base_.framebufferResized) {
@@ -241,10 +245,10 @@ private:
     base_.currentFrame = (base_.currentFrame + 1) % BaseApp::MAX_FRAMES;
   }
 
-  void mainLoop() {
+  void mainLoop(int nShots) {
     while (!glfwWindowShouldClose(base_.window) && !base_.shouldExit) {
       glfwPollEvents();
-      drawFrame();
+      drawFrame(nShots);
     }
     vkDeviceWaitIdle(base_.ctx.device);
   }

@@ -407,3 +407,25 @@ add_sim_example(mpm_stl_drop
     src/App.cpp
     examples/mpm_stl_drop.cpp
 )
+
+# ── mpm_geolayer: 地層崩壊 (複数マテリアル) ──────────────────────────────────
+add_sim_example(mpm_geolayer
+    src/core/VulkanContext.cpp
+    src/core/AttributeBuffer.cpp
+    src/core/ComputePipeline.cpp
+    src/graphics/GraphicsPipeline.cpp
+    src/engine/MPMEngine.cpp
+    src/App.cpp
+    examples/mpm_geolayer.cpp
+)
+
+# ── mpm_snow_impact: 移動箱 SDF による雪衝突 ─────────────────────────────────
+add_sim_example(mpm_snow_impact
+    src/core/VulkanContext.cpp
+    src/core/AttributeBuffer.cpp
+    src/core/ComputePipeline.cpp
+    src/graphics/GraphicsPipeline.cpp
+    src/engine/MPMEngine.cpp
+    src/App.cpp
+    examples/mpm_snow_impact.cpp
+)

@@ -1,6 +1,7 @@
 #include "App.h"
 #include "engine/MPMEngine.h"
 #include "MaterialParams.h"
+#include "Collider.h"
 #include "graphics/GraphicsPipeline.h"
 
 #include <argparse/argparse.hpp>
@@ -10,38 +11,43 @@
 
 #include <stdexcept>
 #include <string>
-#include <vector>
 
 static const std::string SHADER_DIR_STR = SHADER_DIR;
 
 // ── CLI ───────────────────────────────────────────────────────────────────
 
-struct MpmMultiArgs : public argparse::Args {
-  int&   n          = kwarg("n",   "particle grid N (N×N×N)").set_default(16);
-  float& world_size = kwarg("world-size", "world size [m]").set_default(10.0f);
-  int&   grid_res   = kwarg("grid-res", "MPM grid resolution").set_default(64);
-  float& dt         = kwarg("dt",  "frame timestep [s]").set_default(1.0f / 60.0f);
-  int&   substeps   = kwarg("substeps", "substeps per frame").set_default(25);
-  int&   n_shots    = kwarg("n-shots",  "screenshot count (0=disabled)").set_default(0);
+struct MpmSnowImpactArgs : public argparse::Args {
+  float& world_size    = kwarg("world-size",   "world size [m]").set_default(10.0f);
+  int&   grid_res      = kwarg("grid-res",     "MPM grid resolution").set_default(64);
+  float& dt            = kwarg("dt",           "frame timestep [s]").set_default(1.0f / 60.0f);
+  int&   substeps      = kwarg("substeps",     "substeps per frame").set_default(25);
+  int&   pn            = kwarg("pn",           "particle grid per side (N^3 total)").set_default(44);
+  float& box_speed     = kwarg("box-speed",    "obstacle box speed [m/s]").set_default(6.0f);
+  float& box_scale     = kwarg("box-scale",    "obstacle box half-extent scale (1=original)").set_default(0.5f);
+  int&   auto_launch   = kwarg("auto-launch",  "1=start box moving immediately").set_default(0);
+  int&   n_shots       = kwarg("n-shots",      "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
 };
 
 // ── App ───────────────────────────────────────────────────────────────────
 
-class MpmMultiApp {
+class MpmSnowImpactApp {
 public:
-  void run(const MpmMultiArgs& args) {
-    dt_ = args.dt;
+  void run(const MpmSnowImpactArgs& args) {
+    dt_        = args.dt;
     base_.screenshotDir = args.screenshot_dir;
+    boxSpeed_  = args.box_speed;
+    boxScale_  = args.box_scale;
+    boxMoving_ = (args.auto_launch != 0);
 
     MPMConfig cfg;
-    cfg.nx         = uint32_t(args.n);
-    cfg.ny         = uint32_t(args.n);
-    cfg.nz         = uint32_t(args.n);
+    cfg.nx         = uint32_t(args.pn);
+    cfg.ny         = uint32_t(args.pn);
+    cfg.nz         = uint32_t(args.pn);
     cfg.world_size = args.world_size;
     cfg.grid_res   = uint32_t(args.grid_res);
 
-    base_.initWindow("MPM Multi-Material – 弾性体 + 砂");
+    base_.initWindow("MPM Snow Impact – 移動箱コライダー衝突");
     initVulkan(cfg, args.substeps);
     mainLoop(args.n_shots);
     cleanup();
@@ -51,8 +57,25 @@ private:
   BaseApp          base_;
   MPMEngine        engine_;
   GraphicsPipeline graphicsPipe_;
-  float dt_      = 1.0f / 60.0f;
-  float simTime_ = 0.0f;
+  float dt_        = 1.0f / 60.0f;
+  float simTime_   = 0.0f;
+
+  float boxPosX_   = 0.0f;
+  float boxSpeed_  = 6.0f;
+  float boxScale_  = 0.5f;
+  bool  boxMoving_ = false;
+
+  void rebuildColliders() {
+    const float ws = engine_.config().world_size;
+    ColliderSet cols;
+    cols.addPlane({0.0f, 0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, 0.1f, 0.5f);
+    glm::vec3 vel = boxMoving_ ? glm::vec3(-boxSpeed_, 0.0f, 0.0f) : glm::vec3(0.0f);
+    cols.addBox(
+        {boxPosX_, 1.5f * boxScale_, ws * 0.5f},
+        {0.5f * boxScale_, 1.5f * boxScale_, ws * 0.3f * boxScale_},
+        0.1f, 0.6f, vel);
+    engine_.setColliders(cols);
+  }
 
   void initVulkan(const MPMConfig& cfg, int substeps) {
     base_.ctx.init(base_.window);
@@ -63,29 +86,24 @@ private:
                  SHADER_DIR_STR, cfg);
     engine_.numSubsteps = substeps;
     engine_.gravity     = -9.8f;
+    engine_.flip_ratio  = -1.0f; // APIC
 
-    // slot 0: ゼリー状弾性体 (下半分)
-    // slot 1: Drucker-Prager 砂 (上半分)
-    MaterialParams mat0 = presetJelly(1e4f, 0.4f, 1000.0f);
-    MaterialParams mat1 = presetSand(5e4f, 0.3f, 1600.0f);
-    engine_.setMaterials({mat0, mat1});
+    // 雪: Von Mises 塑性 (低密度・低降伏応力)
+    MaterialParams snow{};
+    snow.mu     = calcMu(5e4f, 0.3f);
+    snow.lambda = calcLambda(5e4f, 0.3f);
+    snow.rho0   = 300.0f;
+    snow.model  = uint32_t(MaterialModel::VON_MISES);
+    snow.q_max  = 3000.0f;
+    engine_.setMaterials({snow});
 
-    // パーティクルの material id を設定 (上半分 = 砂, 下半分 = 弾性体)
-    const uint32_t N  = cfg.particleCount();
-    const uint32_t nx = cfg.nx;
-    const uint32_t ny = cfg.ny;
-    std::vector<uint32_t> matIds(N);
-    for (uint32_t i = 0; i < N; i++) {
-        uint32_t iy = (i / nx) % ny;
-        matIds[i] = (iy >= ny / 2) ? 1u : 0u;  // 上半分=砂
-    }
-    engine_.setParticleMaterialIds(matIds);
+    boxPosX_ = cfg.world_size * 0.85f;
+    rebuildColliders();
 
     graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass,
                        engine_.descriptorSetLayout,
                        SHADER_DIR_STR + "/particle.vert.spv",
                        SHADER_DIR_STR + "/particle.frag.spv");
-
     base_.createFrameData();
     base_.initImGui();
   }
@@ -122,7 +140,7 @@ private:
     vkBeginCommandBuffer(cmd, &bi);
 
     VkClearValue clear{};
-    clear.color = {{0.02f, 0.02f, 0.04f, 1.0f}};
+    clear.color = {{0.02f, 0.03f, 0.06f, 1.0f}};
 
     VkRenderPassBeginInfo rp{};
     rp.sType             = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -174,20 +192,38 @@ private:
 
     ImGui::SetNextWindowPos({10, 10}, ImGuiCond_Once);
     ImGui::SetNextWindowSize({310, 0}, ImGuiCond_Once);
-    ImGui::Begin("MPM Multi-Material");
-    const auto& cfg = engine_.config();
-    ImGui::Text("FPS: %.1f | N=%u | gridRes=%u",
-                ImGui::GetIO().Framerate,
-                engine_.liveParticleCount(), cfg.grid_res);
-    ImGui::Text("t=%.2f s | %u^3 particles", simTime_, cfg.nx);
-    ImGui::Text("[下半分] slot 0: Hencky 弾性体 (E=10kPa, nu=0.4)");
-    ImGui::Text("[上半分] slot 1: Drucker-Prager 砂 (E=50kPa, M=0.577)");
-    ImGui::Separator();
-    ImGui::SliderFloat("重力", &engine_.gravity, -20.0f, 0.0f);
-    ImGui::SliderInt("サブステップ", &engine_.numSubsteps, 1, 50);
-    ImGui::End();
+    ImGui::Begin("MPM Snow Impact");
 
+    ImGui::Text("FPS: %.1f | N=%u | t=%.2f s",
+                ImGui::GetIO().Framerate, engine_.liveParticleCount(), simTime_);
+    ImGui::Text("Snow: VON_MISES  E=50kPa  q=3kPa  rho=300 kg/m3");
+    ImGui::Text("Box X: %.2f  %s", boxPosX_, boxMoving_ ? "[移動中]" : "[停止]");
+    ImGui::Separator();
+
+    if (!boxMoving_) {
+      if (ImGui::Button("Launch Box →衝突開始")) {
+        boxPosX_   = engine_.config().world_size * 0.85f;
+        boxMoving_ = true;
+        rebuildColliders();
+      }
+    } else {
+      ImGui::TextDisabled("箱が移動中...");
+    }
+    ImGui::SliderFloat("速度 [m/s]", &boxSpeed_, 0.1f, 10.0f);
+    ImGui::Separator();
+    ImGui::SliderFloat("重力",       &engine_.gravity,    -20.0f, 0.0f);
+    ImGui::SliderInt("サブステップ", &engine_.numSubsteps,  1,     50);
+
+    ImGui::End();
     ImGui::Render();
+
+    // 箱の位置を更新してからコライダーを再アップロード (compute より前)
+    if (boxMoving_) {
+      boxPosX_ -= boxSpeed_ * dt_;
+      if (boxPosX_ - 0.5f * boxScale_ < 0.5f)
+        boxMoving_ = false;
+      rebuildColliders();
+    }
     simTime_ += dt_;
 
     f.timelineValue++;
@@ -269,8 +305,8 @@ private:
 // ── main ──────────────────────────────────────────────────────────────────
 
 int main(int argc, char* argv[]) {
-  auto args = argparse::parse<MpmMultiArgs>(argc, argv);
-  MpmMultiApp app;
+  auto args = argparse::parse<MpmSnowImpactArgs>(argc, argv);
+  MpmSnowImpactApp app;
   try {
     app.run(args);
   } catch (const std::exception& e) {

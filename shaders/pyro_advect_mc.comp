@@ -1,0 +1,77 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "pyro_common.glsl"
+
+// MacCormack 移流 パス2/2 (後退補正 + オーバーシュートクランプ)。
+// パス1 (pyro_advect.comp) が書いたスクラッチ (curlIdx=velocity, pressureIdxA=density,
+// divergenceIdx=temperature の一次 semi-Lagrangian 推定 φ̂ⁿ⁺¹) を読み、そこから
+// 同じ速度場で "前進" 追跡した位置を φ̂ⁿ⁺¹ で補間 = φ̂ⁿ として、
+//   φⁿ⁺¹ = φ̂ⁿ⁺¹ + 0.5*(φⁿ - φ̂ⁿ)
+// で誤差を半分だけ補正する (Selle et al. 2008, unconditionally stable MacCormack)。
+// 補正値は逆追跡位置の8隅 (A バッファ) の最小/最大でクランプし、
+// 新たな極値 (オーバーシュート/リンギング) の発生を防ぐ。
+// 最終結果は B バッファへ書く (fuel は一次精度のままパス1で既に確定済み)。
+// dispatch: (totalCells + 255) / 256
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    if (gid >= totalCells) return;
+
+    ivec3 ijk = pyroMortonDecodeI(gid);
+    vec3  xi  = (vec3(ijk) + 0.5) * pc.cellSize + pc.worldMin;
+
+    vec3 v0 = readVec4(pc.velIdxA, gid).xyz;
+
+    // パス1と同じ RK2 逆追跡 (クランプ範囲を求める8隅を再取得するため再計算)
+    vec3 pMidB = xi - 0.5 * pc.dt * v0;
+    vec3 vMidB;
+    TRILERP_VEC3(pc.velIdxA, WORLD_TO_GRID(pMidB), vMidB);
+    vec3 pBack = xi - pc.dt * vMidB;
+    vec3 gBack = WORLD_TO_GRID(pBack);
+
+    vec3  velMin, velMax, velClampDummy;
+    float densMin, densMax, densClampDummy;
+    float tempMin, tempMax, tempClampDummy;
+    TRILERP_VEC3_MINMAX(pc.velIdxA,         gBack, velClampDummy,  velMin,  velMax);
+    TRILERP_FLOAT_MINMAX(pc.densityIdxA,     gBack, densClampDummy, densMin, densMax);
+    TRILERP_FLOAT_MINMAX(pc.temperatureIdxA, gBack, tempClampDummy, tempMin, tempMax);
+
+    // 同じ RK2 式を時間反転して "前進" 追跡 (φ̂ⁿ⁺¹ 場を dt だけ巻き戻す)
+    vec3 pMidF = xi + 0.5 * pc.dt * v0;
+    vec3 vMidF;
+    TRILERP_VEC3(pc.velIdxA, WORLD_TO_GRID(pMidF), vMidF);
+    vec3 pFwd = xi + pc.dt * vMidF;
+    vec3 gFwd = WORLD_TO_GRID(pFwd);
+
+    vec3  velHatN;
+    float densHatN, tempHatN;
+    TRILERP_VEC3(pc.curlIdx,        gFwd, velHatN);
+    TRILERP_FLOAT(pc.pressureIdxA,   gFwd, densHatN);
+    TRILERP_FLOAT(pc.divergenceIdx,  gFwd, tempHatN);
+
+    vec3  velSelfN    = readVec4(pc.velIdxA, gid).xyz;         // φⁿ (自セル、補間不要)
+    float densSelfN   = readFloat(pc.densityIdxA, gid);
+    float tempSelfN   = readFloat(pc.temperatureIdxA, gid);
+
+    vec3  velSelfHat1  = readVec4(pc.curlIdx, gid).xyz;        // φ̂ⁿ⁺¹ (自セル、補間不要)
+    float densSelfHat1 = readFloat(pc.pressureIdxA, gid);
+    float tempSelfHat1 = readFloat(pc.divergenceIdx, gid);
+
+    vec3  velCorrected  = velSelfHat1  + 0.5 * (velSelfN  - velHatN);
+    float densCorrected = densSelfHat1 + 0.5 * (densSelfN - densHatN);
+    float tempCorrected = tempSelfHat1 + 0.5 * (tempSelfN - tempHatN);
+
+    velCorrected  = clamp(velCorrected,  velMin,  velMax);
+    densCorrected = clamp(densCorrected, densMin, densMax);
+    tempCorrected = clamp(tempCorrected, tempMin, tempMax);
+
+    densCorrected *= exp(-pc.densityDissipation * pc.dt);
+    tempCorrected  = pc.ambientTemp + (tempCorrected - pc.ambientTemp) * exp(-pc.tempDissipation * pc.dt);
+
+    writeVec4(pc.velIdxB,         gid, vec4(velCorrected, 0.0));
+    writeFloat(pc.densityIdxB,     gid, max(densCorrected, 0.0));
+    writeFloat(pc.temperatureIdxB, gid, tempCorrected);
+}

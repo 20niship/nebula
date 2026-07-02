@@ -26,7 +26,7 @@ struct ExplosionArgs : public argparse::Args {
   int&   n_frames      = kwarg("n-frames",     "実行フレーム数").set_default(240);
   float& dt            = kwarg("dt",           "フレームタイムステップ [s]").set_default(1.0f / 60.0f);
   int&   substeps      = kwarg("substeps",     "1フレームあたりのサブステップ数").set_default(1);
-  int&   jacobi_iters  = kwarg("jacobi-iters", "圧力投影 Jacobi 反復回数").set_default(50);
+  int&   pressure_iters  = kwarg("pressure-iters", "圧力投影 Red-Black Gauss-Seidel sweep 回数").set_default(50);
   float& vorticity_eps = kwarg("vorticity-eps","渦度閉じ込め強度 (傘の巻き上がりを強調)").set_default(6.0f);
   std::string& out_dir = kwarg("out",          "ボクセルダンプ出力先ディレクトリ")
                                 .set_default(std::string("sim_captures/pyro_explosion"));
@@ -50,7 +50,7 @@ int main(int argc, char* argv[]) {
                 ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR, cfg);
 
     engine.numSubsteps        = args.substeps;
-    engine.numJacobiIters     = args.jacobi_iters;
+    engine.numPressureIters   = args.pressure_iters;
     engine.vorticityEps       = args.vorticity_eps;
     engine.buoyancyAlpha      = 5.0f;  // 強い浮力で急速に立ち上らせる
     engine.buoyancyBeta       = 0.5f;

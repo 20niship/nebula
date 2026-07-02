@@ -63,6 +63,7 @@ SimPC MultiPhysicsEngine::buildPC(float subDt) const {
   pc.boundaryStart     = cfg_.fluidStart(); // 境界粒子なし; 流体開始でも使用される
   pc.linearDamping     = 0.6f;              // 布の従来挙動を維持（update_velocity 共用）
   pc.cfmEpsilon        = 100.0f;            // pbf_density の CFM ε（0 除算回避）
+  pc.relaxOmega        = 1.0f;              // pbf_delta_p の ΔP 緩和係数（1.0=無効、標準PBF互換）
   return pc;
 }
 

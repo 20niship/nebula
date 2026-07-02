@@ -6,8 +6,18 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
-// MoltenVK (Apple M2) maxPerStageDescriptorStorageBuffers = 31
-static constexpr uint32_t MAX_BINDLESS_BUFFERS = 16;
+// MoltenVK (Apple M2) maxPerStageDescriptorStorageBuffers = 31。
+// 24 はその範囲内で安全マージンを残しつつ機能追加の余地を確保する値
+// (Pyroエンジンだけで既に14/16枠を消費しており、旧上限16は逼迫していた)。
+// device が実際にこの数を確保できない場合は vkCreateDescriptorSetLayout /
+// vkCreateDescriptorPool が VK_SUCCESS 以外を返し、AttributeBuffer 側の
+// 既存エラーハンドリング (createDescriptorSetLayout/createDescriptorSet) が
+// std::runtime_error を投げて起動時に明確に検出できる。
+// 本プロジェクトは Apple Silicon / MoltenVK を主対象としており、31という
+// 実機値が既知のため、VkPhysicalDeviceProperties を都度クエリして動的に
+// 決定するのではなく、検証済みの安全な固定値を採用している
+// (低スペックGPUへの動的な段階的縮退が必要になった場合は要再検討)。
+static constexpr uint32_t MAX_BINDLESS_BUFFERS = 24;
 
 // SoAバッファマネージャ。addAttribute()でVMAバッファを確保し、
 // Bindlessディスクリプタ配列へ自動登録してインデックスを返す。

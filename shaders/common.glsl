@@ -55,6 +55,8 @@ layout(push_constant) uniform PC {
     // 吸収ポート (fluid_absorb 専用; 他シェーダーは宣言のみで不使用)
     uint  absorberBufIdx;   // 吸収形状バッファの bindless index (8 floats × absorberCount)
     uint  absorberCount;    // 有効な吸収形状数 (0 = 吸収パスをスキップ)
+    // PBF 密度制約 under-relaxation (IPBF 風; 他シェーダーは不使用)
+    float relaxOmega;       // pbf_delta_p.comp の ΔP に乗じる緩和係数 (1.0=標準PBF互換)
 } pc;
 
 // ── vec4 読み書き（FP32, MoltenVK 関数化バグ回避のためマクロ）────

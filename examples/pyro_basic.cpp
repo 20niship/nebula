@@ -29,7 +29,7 @@ struct PyroBasicArgs : public argparse::Args {
   int&   n_frames       = kwarg("n-frames",       "実行フレーム数").set_default(120);
   float& dt             = kwarg("dt",             "フレームタイムステップ [s]").set_default(1.0f / 60.0f);
   int&   substeps       = kwarg("substeps",       "1フレームあたりのサブステップ数").set_default(1);
-  int&   jacobi_iters   = kwarg("jacobi-iters",   "圧力投影 Jacobi 反復回数").set_default(40);
+  int&   pressure_iters   = kwarg("pressure-iters", "圧力投影 Red-Black Gauss-Seidel sweep 回数").set_default(40);
   float& vorticity_eps  = kwarg("vorticity-eps",  "渦度閉じ込め強度").set_default(2.0f);
   std::string& out_dir  = kwarg("out",            "ボクセルダンプ出力先ディレクトリ").set_default(std::string("sim_captures/pyro"));
   int&   dump_every     = kwarg("dump-every",     "何フレームごとに .pvox をダンプするか (0=無効)").set_default(10);
@@ -55,7 +55,7 @@ int main(int argc, char* argv[]) {
                 ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR, cfg);
 
     engine.numSubsteps        = args.substeps;
-    engine.numJacobiIters     = args.jacobi_iters;
+    engine.numPressureIters   = args.pressure_iters;
     engine.vorticityEps       = args.vorticity_eps;
     engine.buoyancyAlpha      = 1.2f;
     engine.buoyancyBeta       = 0.4f;

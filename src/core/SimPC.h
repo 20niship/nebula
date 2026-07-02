@@ -62,5 +62,11 @@ struct SimPC {
   // ── 吸収ポート (fluid_absorb 専用; 他シェーダーは宣言のみで不使用) ──────
   uint32_t absorberBufIdx; // 吸収形状バッファの bindless index (8 floats × absorberCount)
   uint32_t absorberCount;  // 有効な吸収形状数 (0 = 吸収パスをスキップ)
+
+  // ── PBF 密度制約 under-relaxation (IPBF 風; 他シェーダーは不使用) ────────
+  // pbf_delta_p.comp の位置補正 ΔP に乗じる緩和係数 (1.0=無効、標準PBF互換)。
+  // CFM ε を小さくして拘束を硬くしても発散しないよう、少ないJacobi反復数のまま
+  // 過圧縮 (excessive compression) を抑えるための固定 under-relaxation。
+  float relaxOmega;
 };
-static_assert(sizeof(SimPC) == 168, "SimPC must be 168 bytes");
+static_assert(sizeof(SimPC) == 172, "SimPC must be 172 bytes");

@@ -118,6 +118,17 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/mpm_grid_update.comp
     ${SHADER_SRC_DIR}/mpm_g2p.comp
     ${SHADER_SRC_DIR}/mpm_nanovdb_bc.comp
+    # ── Pyro (グリッドベース煙・火炎) シェーダー ─────────────────────────────
+    ${SHADER_SRC_DIR}/pyro_emit.comp
+    ${SHADER_SRC_DIR}/pyro_combustion.comp
+    ${SHADER_SRC_DIR}/pyro_forces.comp
+    ${SHADER_SRC_DIR}/pyro_obstacle_bc.comp
+    ${SHADER_SRC_DIR}/pyro_advect.comp
+    ${SHADER_SRC_DIR}/pyro_curl.comp
+    ${SHADER_SRC_DIR}/pyro_vorticity_force.comp
+    ${SHADER_SRC_DIR}/pyro_divergence.comp
+    ${SHADER_SRC_DIR}/pyro_pressure_jacobi.comp
+    ${SHADER_SRC_DIR}/pyro_project.comp
 )
 
 set(SHADER_SPV)
@@ -132,6 +143,7 @@ foreach(SHADER ${SHADER_SOURCES})
                          -o ${SPV} ${SHADER}
         DEPENDS ${SHADER} ${SHADER_SRC_DIR}/common.glsl
                 ${SHADER_SRC_DIR}/mpm_common.glsl ${SHADER_SRC_DIR}/collider_common.glsl
+                ${SHADER_SRC_DIR}/pyro_common.glsl
                 ${PNANOVDB_GLSL_INCLUDE}/PNanoVDB.h
         COMMENT "Compiling shader ${FNAME}"
     )
@@ -429,3 +441,58 @@ add_sim_example(mpm_snow_impact
     src/App.cpp
     examples/mpm_snow_impact.cpp
 )
+
+# ── Pyro (グリッドベース煙・火炎) ヘッドレス実行例 ───────────────────────────
+# ウィンドウ/ImGui を使わないため add_sim_example ではなく tests/vulkan_tests と
+# 同じ最小構成 (HeadlessCtx) を用いる。ボクセルを .pvox にダンプするのみで、
+# 可視化は tools/pyro_raymarch.py (Python) 側で行う。
+if(APPLE)
+    set(PYRO_PLATFORM_WRAPPERS
+        tests/helpers/VkWrapper.mm
+        src/VkSafeAlloc.mm
+    )
+else()
+    set(PYRO_PLATFORM_WRAPPERS "")
+endif()
+
+function(add_pyro_example TARGET SOURCE_FILE)
+    add_executable(${TARGET}
+        ${SOURCE_FILE}
+        tests/helpers/HeadlessCtx.cpp
+        ${PYRO_PLATFORM_WRAPPERS}
+        src/core/AttributeBuffer.cpp
+        src/core/ComputePipeline.cpp
+        src/engine/PyroEngine.cpp
+    )
+    add_dependencies(${TARGET} shaders)
+
+    target_include_directories(${TARGET} PRIVATE
+        src
+        src/core
+        src/engine
+        tests
+        third_party/VulkanMemoryAllocator/include
+        third_party/argparse/include
+    )
+    target_compile_definitions(${TARGET} PRIVATE
+        SHADER_DIR="${SHADER_OUT_DIR}"
+        ASSET_DIR="${CMAKE_SOURCE_DIR}/assets"
+    )
+    target_link_libraries(${TARGET} PRIVATE
+        Vulkan::Vulkan
+        glm::glm
+        GPUOpen::VulkanMemoryAllocator
+    )
+    if(APPLE)
+        target_compile_definitions(${TARGET} PRIVATE VK_USE_PLATFORM_METAL_EXT)
+        target_link_libraries(${TARGET} PRIVATE "-framework Foundation")
+        set_target_properties(${TARGET} PROPERTIES
+            BUILD_RPATH   "${VULKAN_SDK}/lib"
+            INSTALL_RPATH "${VULKAN_SDK}/lib"
+        )
+    endif()
+endfunction()
+
+add_pyro_example(pyro_basic       examples/pyro_basic.cpp)
+add_pyro_example(pyro_cow_blast   examples/pyro_cow_blast.cpp)
+add_pyro_example(pyro_explosion   examples/pyro_explosion.cpp)

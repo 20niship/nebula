@@ -1,0 +1,36 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "pyro_common.glsl"
+
+// 圧力 Jacobi 反復 (1回分)。pc.pressureIdxA (前回値) を読み pc.pressureIdxB へ書く。
+// p_new = ( div + p(i-1)+p(i+1)+p(j-1)+p(j+1)+p(k-1)+p(k+1) ) / 6
+// 障害物内部の近傍セルは自セルの圧力で代用する (Neumann 境界近似)。
+// 障害物内部セル自体の圧力は常に 0。
+// dispatch: (totalCells + 255) / 256
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    if (gid >= totalCells) return;
+
+    ivec3 ijk = pyroMortonDecodeI(gid);
+
+    if (CELL_IS_SOLID(ijk.x, ijk.y, ijk.z)) {
+        writeFloat(pc.pressureIdxB, gid, 0.0);
+        return;
+    }
+
+    float pSelf = readFloat(pc.pressureIdxA, gid);
+    float pXp = CELL_IS_SOLID(ijk.x + 1, ijk.y, ijk.z) ? pSelf : SAMPLE_FLOAT_CLAMPED(pc.pressureIdxA, ijk.x + 1, ijk.y, ijk.z);
+    float pXm = CELL_IS_SOLID(ijk.x - 1, ijk.y, ijk.z) ? pSelf : SAMPLE_FLOAT_CLAMPED(pc.pressureIdxA, ijk.x - 1, ijk.y, ijk.z);
+    float pYp = CELL_IS_SOLID(ijk.x, ijk.y + 1, ijk.z) ? pSelf : SAMPLE_FLOAT_CLAMPED(pc.pressureIdxA, ijk.x, ijk.y + 1, ijk.z);
+    float pYm = CELL_IS_SOLID(ijk.x, ijk.y - 1, ijk.z) ? pSelf : SAMPLE_FLOAT_CLAMPED(pc.pressureIdxA, ijk.x, ijk.y - 1, ijk.z);
+    float pZp = CELL_IS_SOLID(ijk.x, ijk.y, ijk.z + 1) ? pSelf : SAMPLE_FLOAT_CLAMPED(pc.pressureIdxA, ijk.x, ijk.y, ijk.z + 1);
+    float pZm = CELL_IS_SOLID(ijk.x, ijk.y, ijk.z - 1) ? pSelf : SAMPLE_FLOAT_CLAMPED(pc.pressureIdxA, ijk.x, ijk.y, ijk.z - 1);
+
+    float div = readFloat(pc.divergenceIdx, gid);
+    float pNew = (div + pXp + pXm + pYp + pYm + pZp + pZm) / 6.0;
+    writeFloat(pc.pressureIdxB, gid, pNew);
+}

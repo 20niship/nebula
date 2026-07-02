@@ -1,0 +1,37 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "pyro_common.glsl"
+
+// Stable Fluids (Stam) 流儀の速度発散計算。
+// div = -0.5*h * ( (vx(i+1)-vx(i-1)) + (vy(j+1)-vy(j-1)) + (vz(k+1)-vz(k-1)) )
+// 障害物内部 (SDF<0) の近傍セルは自セルの速度で代用する (Neumann/ミラー境界近似)。
+// 自セルが障害物内部なら divergence=0 とする。
+// dispatch: (totalCells + 255) / 256
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    if (gid >= totalCells) return;
+
+    ivec3 ijk = pyroMortonDecodeI(gid);
+
+    if (CELL_IS_SOLID(ijk.x, ijk.y, ijk.z)) {
+        writeFloat(pc.divergenceIdx, gid, 0.0);
+        return;
+    }
+
+    vec3 vSelf = readVec4(pc.velIdxA, gid).xyz;
+
+    vec3 vXp = CELL_IS_SOLID(ijk.x + 1, ijk.y, ijk.z) ? vSelf : SAMPLE_VEC3_CLAMPED(pc.velIdxA, ijk.x + 1, ijk.y, ijk.z);
+    vec3 vXm = CELL_IS_SOLID(ijk.x - 1, ijk.y, ijk.z) ? vSelf : SAMPLE_VEC3_CLAMPED(pc.velIdxA, ijk.x - 1, ijk.y, ijk.z);
+    vec3 vYp = CELL_IS_SOLID(ijk.x, ijk.y + 1, ijk.z) ? vSelf : SAMPLE_VEC3_CLAMPED(pc.velIdxA, ijk.x, ijk.y + 1, ijk.z);
+    vec3 vYm = CELL_IS_SOLID(ijk.x, ijk.y - 1, ijk.z) ? vSelf : SAMPLE_VEC3_CLAMPED(pc.velIdxA, ijk.x, ijk.y - 1, ijk.z);
+    vec3 vZp = CELL_IS_SOLID(ijk.x, ijk.y, ijk.z + 1) ? vSelf : SAMPLE_VEC3_CLAMPED(pc.velIdxA, ijk.x, ijk.y, ijk.z + 1);
+    vec3 vZm = CELL_IS_SOLID(ijk.x, ijk.y, ijk.z - 1) ? vSelf : SAMPLE_VEC3_CLAMPED(pc.velIdxA, ijk.x, ijk.y, ijk.z - 1);
+
+    float h   = pc.cellSize;
+    float div = -0.5 * h * ((vXp.x - vXm.x) + (vYp.y - vYm.y) + (vZp.z - vZm.z));
+    writeFloat(pc.divergenceIdx, gid, div);
+}

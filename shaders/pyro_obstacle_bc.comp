@@ -1,0 +1,50 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "pyro_common.glsl"
+
+// 障害物 SDF 境界条件: pc.colliderSDFIdx (Morton, 負値=内部) を用いて
+// 内部セルの速度をゼロ化し、表面付近のセルは法線方向速度成分を除去する。
+// mpm_nanovdb_bc.comp と同じ手法。pc.velIdxA を対象に適用する
+// (CPU側が呼び出しごとに velIdxA へ現在処理したいバッファを設定する)。
+// dispatch: (totalCells + 255) / 256
+
+layout(local_size_x = 256) in;
+
+#define SAMPLE_SDF(ix_, iy_, iz_) \
+    ( ((ix_) < 0 || (iy_) < 0 || (iz_) < 0 || \
+       (ix_) >= int(pc.gridRes) || (iy_) >= int(pc.gridRes) || (iz_) >= int(pc.gridRes)) \
+      ? 1e6 \
+      : readFloat(pc.colliderSDFIdx, pyroMortonEncodeI(ivec3((ix_), (iy_), (iz_)))) )
+
+void main() {
+    if (pc.colliderSDFIdx == 0u) return;
+
+    uint gid = gl_GlobalInvocationID.x;
+    uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    if (gid >= totalCells) return;
+
+    ivec3 ijk = pyroMortonDecodeI(gid);
+    float sdf = SAMPLE_SDF(ijk.x, ijk.y, ijk.z);
+
+    if (sdf < 0.0) {
+        writeVec4(pc.velIdxA, gid, vec4(0.0));
+        return;
+    }
+
+    if (sdf < pc.cellSize * 1.5) {
+        vec3 v = readVec4(pc.velIdxA, gid).xyz;
+
+        float sdx = SAMPLE_SDF(ijk.x + 1, ijk.y, ijk.z) - SAMPLE_SDF(ijk.x - 1, ijk.y, ijk.z);
+        float sdy = SAMPLE_SDF(ijk.x, ijk.y + 1, ijk.z) - SAMPLE_SDF(ijk.x, ijk.y - 1, ijk.z);
+        float sdz = SAMPLE_SDF(ijk.x, ijk.y, ijk.z + 1) - SAMPLE_SDF(ijk.x, ijk.y, ijk.z - 1);
+
+        vec3  gn = vec3(sdx, sdy, sdz);
+        float gl = length(gn);
+        if (gl > 1e-6) {
+            vec3  n  = gn / gl;
+            float vn = dot(v, n);
+            if (vn < 0.0) v -= vn * n;
+        }
+        writeVec4(pc.velIdxA, gid, vec4(v, 0.0));
+    }
+}

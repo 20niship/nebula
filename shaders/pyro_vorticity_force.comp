@@ -1,0 +1,36 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "pyro_common.glsl"
+
+// 渦度閉じ込め (2パス構成の2パス目)。pc.curlIdx (pyro_curl.comp で計算済み) の
+// 大きさの勾配方向 N を求め、f = vorticityEps * h * (N × curl) を velIdxA に適用する。
+// dispatch: (totalCells + 255) / 256
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    if (gid >= totalCells) return;
+    if (pc.curlIdx == 0u || pc.vorticityEps <= 0.0) return;
+
+    ivec3 ijk = pyroMortonDecodeI(gid);
+    vec3  curlSelf = readVec4(pc.curlIdx, gid).xyz;
+
+    float magXp = length(SAMPLE_VEC3_CLAMPED(pc.curlIdx, ijk.x + 1, ijk.y, ijk.z));
+    float magXm = length(SAMPLE_VEC3_CLAMPED(pc.curlIdx, ijk.x - 1, ijk.y, ijk.z));
+    float magYp = length(SAMPLE_VEC3_CLAMPED(pc.curlIdx, ijk.x, ijk.y + 1, ijk.z));
+    float magYm = length(SAMPLE_VEC3_CLAMPED(pc.curlIdx, ijk.x, ijk.y - 1, ijk.z));
+    float magZp = length(SAMPLE_VEC3_CLAMPED(pc.curlIdx, ijk.x, ijk.y, ijk.z + 1));
+    float magZm = length(SAMPLE_VEC3_CLAMPED(pc.curlIdx, ijk.x, ijk.y, ijk.z - 1));
+
+    vec3  gradMag = vec3(magXp - magXm, magYp - magYm, magZp - magZm) * (0.5 / pc.cellSize);
+    float gl      = length(gradMag);
+    if (gl < 1e-6) return;
+
+    vec3 n = gradMag / gl;
+    vec3 f = pc.vorticityEps * pc.cellSize * cross(n, curlSelf);
+
+    vec3 v = readVec4(pc.velIdxA, gid).xyz;
+    writeVec4(pc.velIdxA, gid, vec4(v + f * pc.dt, 0.0));
+}

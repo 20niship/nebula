@@ -1,0 +1,132 @@
+#pragma once
+
+#include <string>
+#include <vector>
+#include <vulkan/vulkan.h>
+#include <vk_mem_alloc.h>
+#include <glm/glm.hpp>
+
+#include "AttributeBuffer.h"
+#include "ComputePipeline.h"
+#include "../core/PyroSimPC.h"
+#include "../core/PyroSource.h"
+
+struct PyroConfig {
+  // Morton (Z-order) 符号化を使うため 2 のべき乗であること (例: 16, 32, 64)。
+  // べき乗以外を指定すると PyroEngine::init() が例外を投げる
+  // (べき乗でない場合 decode(gid) が gridRes 範囲外の (ix,iy,iz) を生成し、
+  //  GPU バッファ境界外アクセスを起こすため)。
+  uint32_t grid_res   = 64;
+  float    world_size = 10.0f;
+  uint32_t maxSources = 32; // 同時に登録できる PyroSource の上限 (SSBO 固定容量)
+
+  uint32_t totalCells() const { return grid_res * grid_res * grid_res; }
+  float    cellSize()   const { return world_size / float(grid_res); }
+  uint32_t nGroups()    const { return (totalCells() + 255u) / 256u; }
+};
+
+// Houdini Pyro 的なグリッド(オイラー)ソルバー。MPMEngine と異なりパーティクルを
+// 持たず、Morton順の Dense セル中心グリッド上で density/temperature/fuel/velocity
+// を直接解く (semi-Lagrangian 移流 + 圧力投影 + 燃焼反応)。
+class PyroEngine {
+public:
+  void init(VkDevice device, VmaAllocator allocator,
+            VkDescriptorPool descriptorPool,
+            VkCommandPool cmdPool, VkQueue queue,
+            const std::string& shaderDir,
+            const PyroConfig& cfg = {});
+  void cleanup();
+
+  void step(VkCommandBuffer cmd, float dt);
+
+  const PyroConfig& config() const { return cfg_; }
+
+  // ── 物理パラメータ (ImGui/CLI から調整可能) ─────────────────────────────
+  float buoyancyAlpha      = 1.2f;  // 温度浮力係数
+  float buoyancyBeta       = 0.4f;  // 密度による重さ (下降) 係数
+  float ambientTemp        = 0.0f;  // 環境温度
+  float vorticityEps       = 0.0f;  // 渦度閉じ込め強度 (Phase2)
+  float densityDissipation = 0.05f; // 密度減衰係数 [1/s]
+  float tempDissipation    = 0.2f;  // 温度減衰係数 [1/s] (環境温度への復帰)
+  float ignitionTemp       = 0.0f;  // 発火温度 (Phase3)
+  float burnRate           = 0.0f;  // 燃料消費速度 [1/s] (Phase3)
+  float heatRelease        = 0.0f;  // 燃焼による温度上昇量 (Phase3)
+  float smokeYieldPerFuel  = 0.0f;  // 燃焼による密度生成量 (Phase3)
+  float flameBrightness    = 0.0f;  // 燃焼による発光量 (Phase3)
+  int   numJacobiIters     = 40;    // 圧力投影 Jacobi 反復回数 (Phase2)
+  int   numSubsteps        = 1;
+
+  // ── 障害物 SDF (任意形状、mpm_stl_drop.cpp 由来の MeshSDF.h で構築) ──────
+  // Morton 順に並んだ float SDF 配列 (totalCells() 要素)。負値=障害物内部。
+  void setColliderSDF(const std::vector<float>& mortonSDF);
+  void clearCollider();
+
+  // ── 複数 Source (連続的な density/temperature/fuel/velocity 注入) ───────
+  void addSource(const PyroSource& src);
+  void clearSources();
+
+  // ── 読み取り (テスト/ダンプ用) ────────────────────────────────────────
+  VkBuffer getDensityBuffer()     const;
+  VkBuffer getTemperatureBuffer() const;
+  VkBuffer getFuelBuffer()        const;
+  VkBuffer getFlameBuffer()       const;
+  VkBuffer getVelocityBuffer()    const;
+  bool     hasCollider()          const { return colliderSDFIdx_ != 0; }
+
+  // ── ボクセルダンプ (.pvox) ───────────────────────────────────────────────
+  // density/temperature/fuel/flame/velocity/sdf を GPU→CPU readback し、Morton→線形
+  // (x + y*nx + z*nx*ny) に並べ替えてから独自バイナリ形式で書き出す。
+  // sdf チャンネルは障害物未設定時、全セル背景値 (1e6, 障害物なし) で埋める。
+  void dumpFrame(const std::string& path, float simTime) const;
+
+  VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
+  VkDescriptorSet       descriptorSet       = VK_NULL_HANDLE;
+
+private:
+  PyroConfig   cfg_;
+  VkDevice     device_    = VK_NULL_HANDLE;
+  VmaAllocator allocator_ = VK_NULL_HANDLE;
+  VkCommandPool cmdPool_  = VK_NULL_HANDLE;
+  VkQueue       queue_    = VK_NULL_HANDLE;
+
+  AttributeBuffer attrBuf_;
+
+  // ダブルバッファ (A/B): cur_==0 なら [0]が現在値/[1]が次フレーム書き込み先
+  uint32_t velIdx_[2]         = {0, 0};
+  uint32_t densityIdx_[2]     = {0, 0};
+  uint32_t temperatureIdx_[2] = {0, 0};
+  uint32_t fuelIdx_[2]        = {0, 0};
+  int      cur_               = 0;
+
+  uint32_t flameIdx_       = 0;
+  uint32_t pressureIdx_[2] = {0, 0}; // Jacobi 反復用ダブルバッファ (フレーム内で複数回入れ替える)
+  uint32_t divergenceIdx_  = 0;
+  uint32_t curlIdx_        = 0; // 渦度閉じ込め用スクラッチ (vec4)
+
+  uint32_t colliderSDFIdx_ = 0; // 0 = 無効
+
+  // Source
+  uint32_t              sourcesIdx_         = 0; // init() で cfg_.maxSources 分を固定確保
+  uint32_t              sourcesActiveCount_ = 0; // 直近 updateSources() でアップロードした有効数
+  std::vector<PyroSource> sources_;
+  std::vector<int>        sourceStepsDone_;
+
+  ComputePipeline kEmit_;
+  ComputePipeline kCombustion_;
+  ComputePipeline kForces_;
+  ComputePipeline kObstacleBC_;
+  ComputePipeline kAdvect_;
+  ComputePipeline kCurl_;
+  ComputePipeline kVorticityForce_;
+  ComputePipeline kDivergence_;
+  ComputePipeline kPressureJacobi_;
+  ComputePipeline kProject_;
+
+  PyroSimPC buildPC(float dt) const;
+  void      dispatchPyro(VkCommandBuffer cmd, ComputePipeline& k, const PyroSimPC& pc);
+  void      computeBarrier(VkCommandBuffer cmd);
+  void      updateSources(float dt); // CPU側でアクティブな Source を選別・アップロード
+
+  // ステージングバッファ経由の GPU→CPU 同期読み戻し (dumpFrame 専用)
+  void readBufferToCPU(VkBuffer src, void* dst, size_t bytes) const;
+};

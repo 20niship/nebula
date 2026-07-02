@@ -1,0 +1,40 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "pyro_common.glsl"
+
+// 燃焼反応: fuel>0 かつ temperature>ignitionTemp のセルで燃料を消費し、
+// 温度上昇・密度生成 (煙)・発光 (flame, 可視化用メタデータ) を行う。
+// A バッファへインプレースで適用する。
+// dispatch: (totalCells + 255) / 256
+
+layout(local_size_x = 256) in;
+
+// flame (発光) の減衰速度 [1/s]。燃焼が続く限り毎フレーム再供給されるため
+// PyroSimPC には持たせず、可視化用パラメータとしてここに固定する。
+#define FLAME_DECAY_RATE 8.0
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    if (gid >= totalCells) return;
+
+    float fuel  = readFloat(pc.fuelIdxA, gid);
+    float temp  = readFloat(pc.temperatureIdxA, gid);
+    float flame = readFloat(pc.flameIdx, gid) * exp(-FLAME_DECAY_RATE * pc.dt);
+
+    if (fuel > 0.0 && temp > pc.ignitionTemp) {
+        float burn = min(fuel, pc.burnRate * pc.dt);
+        fuel -= burn;
+        temp += burn * pc.heatRelease;
+        flame += burn * pc.flameBrightness;
+
+        float dens = readFloat(pc.densityIdxA, gid);
+        dens += burn * pc.smokeYieldPerFuel;
+
+        writeFloat(pc.fuelIdxA,        gid, fuel);
+        writeFloat(pc.temperatureIdxA, gid, temp);
+        writeFloat(pc.densityIdxA,     gid, dens);
+    }
+
+    writeFloat(pc.flameIdx, gid, flame);
+}

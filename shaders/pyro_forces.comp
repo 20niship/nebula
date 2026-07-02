@@ -1,0 +1,24 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "pyro_common.glsl"
+
+// 浮力: 温度が周囲より高いほど上昇し、密度が高いほど重くなる (下降)。
+// v.y += dt * (buoyancyAlpha * (T - Tambient) - buoyancyBeta * density)
+// A バッファへインプレースで適用する。渦度閉じ込めは pyro_curl.comp /
+// pyro_vorticity_force.comp (2パス構成、隣接セル読み取りが必要なため) で別途行う。
+// dispatch: (totalCells + 255) / 256
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    if (gid >= totalCells) return;
+
+    float T   = readFloat(pc.temperatureIdxA, gid);
+    float rho = readFloat(pc.densityIdxA, gid);
+
+    vec3 v = readVec4(pc.velIdxA, gid).xyz;
+    v.y += pc.dt * (pc.buoyancyAlpha * (T - pc.ambientTemp) - pc.buoyancyBeta * rho);
+    writeVec4(pc.velIdxA, gid, vec4(v, 0.0));
+}

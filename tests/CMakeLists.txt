@@ -23,9 +23,11 @@ add_executable(vulkan_tests
     test_pbf_fluid.cpp
     test_pbf.cpp
     test_mpm.cpp
+    test_pyro.cpp
     # 共通シミュレーションコード (メインアプリと共有)
     ${CMAKE_SOURCE_DIR}/src/core/AttributeBuffer.cpp
     ${CMAKE_SOURCE_DIR}/src/core/ComputePipeline.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/PyroEngine.cpp
 )
 
 add_dependencies(vulkan_tests shaders)

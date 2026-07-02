@@ -17,6 +17,7 @@
 #include "Collider.h"
 #include "graphics/GraphicsPipeline.h"
 #include "core/SimPC.h"
+#include "core/MeshSDF.h"
 #include "../core/source.h"
 
 #include <argparse/argparse.hpp>
@@ -28,7 +29,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <fstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -36,120 +36,8 @@
 static const std::string SHADER_DIR_STR = SHADER_DIR;
 static const std::string ASSET_DIR_STR  = ASSET_DIR;
 
-// ── Binary STL ローダー ───────────────────────────────────────────────────
-
-struct MeshTriangle {
-    glm::vec3 n;
-    glm::vec3 v[3];
-};
-
-static std::vector<MeshTriangle> loadBinarySTL(const std::string& path) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f) throw std::runtime_error("STL open failed: " + path);
-
-    char header[80];
-    f.read(header, 80);
-    uint32_t count;
-    f.read(reinterpret_cast<char*>(&count), 4);
-
-    std::vector<MeshTriangle> tris(count);
-    for (uint32_t i = 0; i < count; ++i) {
-        float buf[12];
-        f.read(reinterpret_cast<char*>(buf), 48);
-        uint16_t attr;
-        f.read(reinterpret_cast<char*>(&attr), 2);
-        tris[i].n    = {buf[0], buf[1], buf[2]};
-        tris[i].v[0] = {buf[3], buf[4], buf[5]};
-        tris[i].v[1] = {buf[6], buf[7], buf[8]};
-        tris[i].v[2] = {buf[9], buf[10], buf[11]};
-    }
-    return tris;
-}
-
-// ── 点→三角形 最近傍点 (Ericson RTCD) ─────────────────────────────────────
-
-static glm::vec3 closestPtOnTriangle(glm::vec3 p,
-                                      glm::vec3 a, glm::vec3 b, glm::vec3 c) {
-    glm::vec3 ab = b-a, ac = c-a, ap = p-a;
-    float d1 = glm::dot(ab,ap), d2 = glm::dot(ac,ap);
-    if (d1 <= 0.0f && d2 <= 0.0f) return a;
-
-    glm::vec3 bp = p-b;
-    float d3 = glm::dot(ab,bp), d4 = glm::dot(ac,bp);
-    if (d3 >= 0.0f && d4 <= d3) return b;
-
-    float vc = d1*d4 - d3*d2;
-    if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f) {
-        return a + (d1 / (d1 - d3)) * ab;
-    }
-
-    glm::vec3 cp2 = p-c;
-    float d5 = glm::dot(ab,cp2), d6 = glm::dot(ac,cp2);
-    if (d6 >= 0.0f && d5 <= d6) return c;
-
-    float vb = d5*d2 - d1*d6;
-    if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f) {
-        return a + (d2 / (d2 - d6)) * ac;
-    }
-
-    float va = d3*d6 - d5*d4;
-    float sum = va + vb + vc;
-    return a + (vb/sum)*ab + (vc/sum)*ac;
-}
-
-// ── Morton 符号化 ─────────────────────────────────────────────────────────
-
-static uint32_t mortonExpand(uint32_t v) {
-    v &= 0x000003ffu;
-    v = (v | (v << 16u)) & 0x030000ffu;
-    v = (v | (v <<  8u)) & 0x0300f00fu;
-    v = (v | (v <<  4u)) & 0x030c30c3u;
-    v = (v | (v <<  2u)) & 0x09249249u;
-    return v;
-}
-static uint32_t mortonEncode(uint32_t x, uint32_t y, uint32_t z) {
-    return mortonExpand(x) | (mortonExpand(y) << 1u) | (mortonExpand(z) << 2u);
-}
-
-// ── メッシュ→SDF バッファ構築 ─────────────────────────────────────────────
-
-static std::vector<float> buildMeshSDF(const std::vector<MeshTriangle>& tris,
-                                        const MPMConfig& cfg) {
-    const uint32_t G  = cfg.grid_res;
-    const float    cs = cfg.cellSize();
-    std::vector<float> sdf(cfg.totalCells(), 1e9f);
-
-    std::printf("  SDF 構築中: %u³ セル × %zu 三角形 ...\n",
-                G, tris.size());
-    std::fflush(stdout);
-
-    for (uint32_t iz = 0; iz < G; ++iz) {
-        if (iz % (G/8) == 0) {
-            std::printf("  SDF %u/%u\r", iz, G);
-            std::fflush(stdout);
-        }
-        for (uint32_t iy = 0; iy < G; ++iy)
-        for (uint32_t ix = 0; ix < G; ++ix) {
-            glm::vec3 p = { (ix + 0.5f) * cs,
-                            (iy + 0.5f) * cs,
-                            (iz + 0.5f) * cs };
-            float minD  = 1e9f;
-            bool  outer = true;
-            for (const auto& tri : tris) {
-                glm::vec3 cp = closestPtOnTriangle(p, tri.v[0], tri.v[1], tri.v[2]);
-                float     d  = glm::length(p - cp);
-                if (d < minD) {
-                    minD  = d;
-                    // 最近傍三角形の法線で符号を判定
-                    outer = glm::dot(p - cp, tri.n) >= 0.0f;
-                }
-            }
-            sdf[mortonEncode(ix, iy, iz)] = outer ? minD : -minD;
-        }
-    }
-    std::printf("  SDF 完了                    \n");
-    return sdf;
-}
+// STL ローダー・三角形→SDF 構築ロジックは src/core/MeshSDF.h (mpm_stl_drop 由来を
+// PyroEngine 等でも再利用できるよう一般化したもの) を使う。
 
 // ── CLI ────────────────────────────────────────────────────────────────────
 
@@ -221,7 +109,7 @@ private:
         std::printf("STL 読み込み: %s\n", stlPath_.c_str());
         auto tris = loadBinarySTL(stlPath_);
         std::printf("  三角形数: %zu\n", tris.size());
-        engine_.setColliderSDF(buildMeshSDF(tris, cfg));
+        engine_.setColliderSDF(buildMeshSDF(tris, cfg.grid_res, cfg.world_size));
 
         // 床・壁の解析コライダー
         {

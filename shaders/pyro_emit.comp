@@ -1,0 +1,76 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "pyro_common.glsl"
+
+// Pyro ソースエミッタ: pc.sourcesIdx に並んだ PyroSourceGPU (CPU側で現在アクティブな
+// ソースのみに絞り込み済み) をループし、形状内のセルへ density/temperature/fuel を
+// 加算、velocity は inflowVelocity へブレンドする。
+// A バッファ (現在値) へインプレースで読み書きする (B は使わない)。
+// dispatch: (totalCells + 255) / 256
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    if (gid >= totalCells) return;
+    if (pc.sourceCount == 0u) return;
+
+    ivec3 ijk = pyroMortonDecodeI(gid);
+    vec3  xi  = (vec3(ijk) + 0.5) * pc.cellSize + pc.worldMin;
+
+    float densityAdd     = 0.0;
+    float temperatureAdd = 0.0;
+    float fuelAdd        = 0.0;
+    vec3  inflowBlend    = vec3(0.0);
+    float inflowWeight   = 0.0;
+
+    // MoltenVK: buffers[] は main() でのみ展開可能なためループも main() 直下に置く
+    for (uint si = 0u; si < pc.sourceCount; si++) {
+        uint  base  = si * 16u;
+        uint  shape = readUint(pc.sourcesIdx, base);
+        vec3  c     = vec3(readFloat(pc.sourcesIdx, base + 1u),
+                            readFloat(pc.sourcesIdx, base + 2u),
+                            readFloat(pc.sourcesIdx, base + 3u));
+        vec3  sz    = vec3(readFloat(pc.sourcesIdx, base + 4u),
+                            readFloat(pc.sourcesIdx, base + 5u),
+                            readFloat(pc.sourcesIdx, base + 6u));
+        float dRate = readFloat(pc.sourcesIdx, base + 7u);
+        vec3  iv    = vec3(readFloat(pc.sourcesIdx, base + 8u),
+                            readFloat(pc.sourcesIdx, base + 9u),
+                            readFloat(pc.sourcesIdx, base + 10u));
+        float tRate = readFloat(pc.sourcesIdx, base + 11u);
+        float fRate = readFloat(pc.sourcesIdx, base + 12u);
+
+        vec3  d = xi - c;
+        bool  inside;
+        if (shape == PYRO_SRC_SPHERE) {
+            inside = dot(d, d) <= sz.x * sz.x;
+        } else if (shape == PYRO_SRC_ELLIPSE) {
+            float e = (d.x * d.x) / (sz.x * sz.x) + (d.z * d.z) / (sz.z * sz.z);
+            inside = (e <= 1.0) && (abs(d.y) <= sz.y);
+        } else {
+            // PYRO_SRC_AABB
+            inside = abs(d.x) <= sz.x && abs(d.y) <= sz.y && abs(d.z) <= sz.z;
+        }
+
+        if (inside) {
+            densityAdd     += dRate * pc.dt;
+            temperatureAdd += tRate * pc.dt;
+            fuelAdd        += fRate * pc.dt;
+            inflowBlend    += iv;
+            inflowWeight   += 1.0;
+        }
+    }
+
+    if (inflowWeight > 0.0) {
+        writeFloat(pc.densityIdxA,     gid, readFloat(pc.densityIdxA,     gid) + densityAdd);
+        writeFloat(pc.temperatureIdxA, gid, readFloat(pc.temperatureIdxA, gid) + temperatureAdd);
+        writeFloat(pc.fuelIdxA,        gid, readFloat(pc.fuelIdxA,        gid) + fuelAdd);
+
+        vec3  vTarget = inflowBlend / inflowWeight;
+        vec3  v       = readVec4(pc.velIdxA, gid).xyz;
+        float blend   = clamp(pc.dt * 5.0, 0.0, 1.0);
+        writeVec4(pc.velIdxA, gid, vec4(mix(v, vTarget, blend), 0.0));
+    }
+}

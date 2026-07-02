@@ -1,0 +1,33 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "pyro_common.glsl"
+
+// 速度場の curl (渦度) を中心差分で計算し pc.curlIdx (vec4, xyz=curl) へ書き込む。
+// 渦度閉じ込め (pyro_vorticity_force.comp) の入力として使う2パス構成の1パス目。
+// dispatch: (totalCells + 255) / 256
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    if (gid >= totalCells) return;
+    if (pc.curlIdx == 0u) return;
+
+    ivec3 ijk = pyroMortonDecodeI(gid);
+    float invH2 = 0.5 / pc.cellSize;
+
+    vec3 vXp = SAMPLE_VEC3_CLAMPED(pc.velIdxA, ijk.x + 1, ijk.y, ijk.z);
+    vec3 vXm = SAMPLE_VEC3_CLAMPED(pc.velIdxA, ijk.x - 1, ijk.y, ijk.z);
+    vec3 vYp = SAMPLE_VEC3_CLAMPED(pc.velIdxA, ijk.x, ijk.y + 1, ijk.z);
+    vec3 vYm = SAMPLE_VEC3_CLAMPED(pc.velIdxA, ijk.x, ijk.y - 1, ijk.z);
+    vec3 vZp = SAMPLE_VEC3_CLAMPED(pc.velIdxA, ijk.x, ijk.y, ijk.z + 1);
+    vec3 vZm = SAMPLE_VEC3_CLAMPED(pc.velIdxA, ijk.x, ijk.y, ijk.z - 1);
+
+    // curl.x = d(vz)/dy - d(vy)/dz, curl.y = d(vx)/dz - d(vz)/dx, curl.z = d(vy)/dx - d(vx)/dy
+    float curlX = (vYp.z - vYm.z) * invH2 - (vZp.y - vZm.y) * invH2;
+    float curlY = (vZp.x - vZm.x) * invH2 - (vXp.z - vXm.z) * invH2;
+    float curlZ = (vXp.y - vXm.y) * invH2 - (vYp.x - vYm.x) * invH2;
+
+    writeVec4(pc.curlIdx, gid, vec4(curlX, curlY, curlZ, 0.0));
+}

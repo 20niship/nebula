@@ -48,6 +48,9 @@ public:
   float vorticityEps       = 0.0f;  // 渦度閉じ込め強度 (Phase2)
   float densityDissipation = 0.05f; // 密度減衰係数 [1/s]
   float tempDissipation    = 0.2f;  // 温度減衰係数 [1/s] (環境温度への復帰)
+  // 密閉ドメインでは運動量の逃げ場がなく、減衰が無いと際限なく速度が蓄積し発散するため追加。
+  float velocityDissipation = 0.3f; // 速度減衰係数 [1/s] (density/tempDissipationと同種)
+  float maxVelocity         = 25.0f; // 速度magnitude上限 [m/s] (安全弁)
   float ignitionTemp       = 0.0f;  // 発火温度 (Phase3)
   float burnRate           = 0.0f;  // 燃料消費速度 [1/s] (Phase3)
   float heatRelease        = 0.0f;  // 燃焼による温度上昇量 (Phase3)

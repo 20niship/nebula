@@ -71,6 +71,14 @@ void main() {
     densCorrected *= exp(-pc.densityDissipation * pc.dt);
     tempCorrected  = pc.ambientTemp + (tempCorrected - pc.ambientTemp) * exp(-pc.tempDissipation * pc.dt);
 
+    // 密閉ドメイン(自由すべり壁)には運動量の逃げ場が無く、velocityには元々減衰が
+    // 無かったため運動エネルギーが際限なく蓄積し発散していた。density/temperatureと
+    // 同じ指数減衰に加え、圧力投影の勾配やMacCormack補正由来のオーバーシュートも
+    // 最終防衛ラインとして速度クランプで頭打ちにする。
+    velCorrected *= exp(-pc.velocityDissipation * pc.dt);
+    float vspeed = length(velCorrected);
+    if (vspeed > pc.maxVelocity) velCorrected *= pc.maxVelocity / vspeed;
+
     writeVec4(pc.velIdxB,         gid, vec4(velCorrected, 0.0));
     writeFloat(pc.densityIdxB,     gid, max(densCorrected, 0.0));
     writeFloat(pc.temperatureIdxB, gid, tempCorrected);

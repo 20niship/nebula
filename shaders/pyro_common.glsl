@@ -38,6 +38,8 @@ layout(push_constant) uniform PC {
     float smokeYieldPerFuel;  // 116
     float flameBrightness;    // 120
     uint  curlIdx;            // 124 vec4×CELLS 渦度スクラッチ
+    float velocityDissipation; // 128 速度減衰係数 [1/s]
+    float maxVelocity;         // 132 速度magnitude上限 [m/s]
 } pc;
 
 // ── Buffer read/write マクロ (MoltenVK: buffers[] は main() でのみ展開) ────

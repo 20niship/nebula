@@ -198,6 +198,8 @@ PyroSimPC PyroEngine::buildPC(float dt) const {
 
   pc.densityDissipation = densityDissipation;
   pc.tempDissipation    = tempDissipation;
+  pc.velocityDissipation = velocityDissipation;
+  pc.maxVelocity         = maxVelocity;
   pc.ignitionTemp       = ignitionTemp;
   pc.burnRate           = burnRate;
 

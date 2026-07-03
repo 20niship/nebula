@@ -57,5 +57,11 @@ struct PyroSimPC {
   float smokeYieldPerFuel;  // 116 燃焼による密度生成量 (burn量あたり)
   float flameBrightness;    // 120 燃焼による発光量 (burn量あたり)
   uint32_t curlIdx;         // 124 vec4×CELLS (渦度閉じ込め=curlスクラッチ / 移流=velocity MacCormackスクラッチ)
+
+  // ── 速度減衰 / 上限クランプ (8 bytes) ───────────────────────────────────
+  // 密閉ドメインでは浮力・Source注入による運動量の逃げ場がなく、減衰が無いと
+  // 運動エネルギーが際限なく蓄積して発散するため追加 (density/tempDissipationと同種)。
+  float velocityDissipation; // 128 速度減衰係数 [1/s] (density/tempDissipationと同じ指数減衰)
+  float maxVelocity;         // 132 速度magnitude上限 [m/s] (安全弁。mpm_grid_update.compと同パターン)
 };
-static_assert(sizeof(PyroSimPC) == 128, "PyroSimPC must be 128 bytes");
+static_assert(sizeof(PyroSimPC) == 136, "PyroSimPC must be 136 bytes");

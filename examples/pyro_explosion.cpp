@@ -21,13 +21,15 @@ static const std::string SHADER_DIR_STR = SHADER_DIR;
 
 struct ExplosionArgs : public argparse::Args {
   // Morton 符号化のため 2 のべき乗であること (PyroEngine::init() が検証する)
-  int&   grid_res      = kwarg("grid-res",     "Pyro グリッド解像度 (2のべき乗)").set_default(64);
+  int&   grid_res      = kwarg("grid-res",     "Pyro グリッド解像度 (2のべき乗)").set_default(256);
   float& world_size    = kwarg("world-size",   "world size [m] (高さ方向に余裕を持たせる)").set_default(14.0f);
   int&   n_frames      = kwarg("n-frames",     "実行フレーム数").set_default(240);
   float& dt            = kwarg("dt",           "フレームタイムステップ [s]").set_default(1.0f / 60.0f);
   int&   substeps      = kwarg("substeps",     "1フレームあたりのサブステップ数").set_default(1);
   int&   pressure_iters  = kwarg("pressure-iters", "圧力投影 Red-Black Gauss-Seidel sweep 回数").set_default(50);
   float& vorticity_eps = kwarg("vorticity-eps","渦度閉じ込め強度 (傘の巻き上がりを強調)").set_default(6.0f);
+  float& velocity_dissipation = kwarg("velocity-dissipation", "速度減衰係数 [1/s] (密閉ドメインでの発散防止)").set_default(0.3f);
+  float& max_velocity  = kwarg("max-velocity",  "速度magnitude上限 [m/s] (安全弁。キノコ雲の勢いを保つためやや高め)").set_default(35.0f);
   std::string& out_dir = kwarg("out",          "ボクセルダンプ出力先ディレクトリ")
                                 .set_default(std::string("sim_captures/pyro_explosion"));
   int&   dump_every    = kwarg("dump-every",   "何フレームごとに .pvox をダンプするか").set_default(1);
@@ -57,6 +59,8 @@ int main(int argc, char* argv[]) {
     engine.ambientTemp        = 0.0f;
     engine.densityDissipation = 0.02f; // 傘の煙が長く残るよう減衰を抑える
     engine.tempDissipation    = 0.3f;
+    engine.velocityDissipation = args.velocity_dissipation;
+    engine.maxVelocity         = args.max_velocity;
     // 燃焼 (fire) パラメータ: 短時間の一気燃焼
     engine.ignitionTemp       = 1.0f;
     engine.burnRate           = 4.0f;

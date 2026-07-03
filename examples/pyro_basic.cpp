@@ -24,13 +24,15 @@ static const std::string ASSET_DIR_STR  = ASSET_DIR;
 
 struct PyroBasicArgs : public argparse::Args {
   // Morton 符号化のため 2 のべき乗であること (16/32/64 など。PyroEngine::init() が検証する)
-  int&   grid_res       = kwarg("grid-res",       "Pyro グリッド解像度 (2のべき乗)").set_default(32);
+  int&   grid_res       = kwarg("grid-res",       "Pyro グリッド解像度 (2のべき乗)").set_default(128);
   float& world_size     = kwarg("world-size",     "world size [m]").set_default(10.0f);
   int&   n_frames       = kwarg("n-frames",       "実行フレーム数").set_default(120);
   float& dt             = kwarg("dt",             "フレームタイムステップ [s]").set_default(1.0f / 60.0f);
   int&   substeps       = kwarg("substeps",       "1フレームあたりのサブステップ数").set_default(1);
-  int&   jacobi_iters   = kwarg("jacobi-iters",   "圧力投影 Jacobi 反復回数").set_default(40);
+  int&   pressure_iters   = kwarg("pressure-iters", "圧力投影 Red-Black Gauss-Seidel sweep 回数").set_default(40);
   float& vorticity_eps  = kwarg("vorticity-eps",  "渦度閉じ込め強度").set_default(2.0f);
+  float& velocity_dissipation = kwarg("velocity-dissipation", "速度減衰係数 [1/s] (密閉ドメインでの発散防止)").set_default(0.3f);
+  float& max_velocity   = kwarg("max-velocity",   "速度magnitude上限 [m/s] (安全弁)").set_default(25.0f);
   std::string& out_dir  = kwarg("out",            "ボクセルダンプ出力先ディレクトリ").set_default(std::string("sim_captures/pyro"));
   int&   dump_every     = kwarg("dump-every",     "何フレームごとに .pvox をダンプするか (0=無効)").set_default(10);
   std::string& stl_path = kwarg("obstacle-stl",   "移動障害物 STL パス")
@@ -55,13 +57,15 @@ int main(int argc, char* argv[]) {
                 ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR, cfg);
 
     engine.numSubsteps        = args.substeps;
-    engine.numJacobiIters     = args.jacobi_iters;
+    engine.numPressureIters   = args.pressure_iters;
     engine.vorticityEps       = args.vorticity_eps;
     engine.buoyancyAlpha      = 1.2f;
     engine.buoyancyBeta       = 0.4f;
     engine.ambientTemp        = 0.0f;
     engine.densityDissipation = 0.05f;
     engine.tempDissipation    = 0.2f;
+    engine.velocityDissipation = args.velocity_dissipation;
+    engine.maxVelocity         = args.max_velocity;
     // 燃焼 (fire) パラメータ
     engine.ignitionTemp      = 0.5f;
     engine.burnRate           = 1.5f;

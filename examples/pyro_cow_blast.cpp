@@ -25,12 +25,12 @@ static const std::string ASSET_DIR_STR  = ASSET_DIR;
 
 struct CowBlastArgs : public argparse::Args {
   // Morton 符号化のため 2 のべき乗であること (PyroEngine::init() が検証する)
-  int&   grid_res      = kwarg("grid-res",     "Pyro グリッド解像度 (2のべき乗)").set_default(64);
+  int&   grid_res      = kwarg("grid-res",     "Pyro グリッド解像度 (2のべき乗)").set_default(256);
   float& world_size    = kwarg("world-size",   "world size [m]").set_default(10.0f);
   int&   n_frames      = kwarg("n-frames",     "実行フレーム数").set_default(180);
   float& dt            = kwarg("dt",           "フレームタイムステップ [s]").set_default(1.0f / 60.0f);
   int&   substeps      = kwarg("substeps",     "1フレームあたりのサブステップ数").set_default(1);
-  int&   jacobi_iters  = kwarg("jacobi-iters", "圧力投影 Jacobi 反復回数").set_default(40);
+  int&   pressure_iters  = kwarg("pressure-iters", "圧力投影 Red-Black Gauss-Seidel sweep 回数").set_default(40);
   float& vorticity_eps = kwarg("vorticity-eps","渦度閉じ込め強度 (乱流構造を強調)").set_default(4.0f);
   std::string& out_dir = kwarg("out",          "ボクセルダンプ出力先ディレクトリ")
                                 .set_default(std::string("sim_captures/pyro_cow"));
@@ -40,6 +40,8 @@ struct CowBlastArgs : public argparse::Args {
   int&   blast_frames  = kwarg("blast-frames", "爆風バーストの継続フレーム数").set_default(6);
   float& blast_speed   = kwarg("blast-speed",  "爆風の初速 [m/s]").set_default(18.0f);
   float& blast_density = kwarg("blast-density","爆風の密度注入速度 [1/s] (超高密度)").set_default(60.0f);
+  float& velocity_dissipation = kwarg("velocity-dissipation", "速度減衰係数 [1/s] (密閉ドメインでの発散防止)").set_default(0.15f);
+  float& max_velocity  = kwarg("max-velocity",  "速度magnitude上限 [m/s] (安全弁)").set_default(30.0f);
 };
 
 int main(int argc, char* argv[]) {
@@ -58,7 +60,7 @@ int main(int argc, char* argv[]) {
                 ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR, cfg);
 
     engine.numSubsteps        = args.substeps;
-    engine.numJacobiIters     = args.jacobi_iters;
+    engine.numPressureIters   = args.pressure_iters;
     engine.vorticityEps       = args.vorticity_eps;
     // 爆風は運動量が主体で熱源ではないため浮力はごく弱めに (吹き飛ばされた後にわずかに立ち上る程度)
     engine.buoyancyAlpha      = 0.3f;
@@ -67,6 +69,8 @@ int main(int argc, char* argv[]) {
     // 乱流構造が長く見えるよう減衰を抑える (fire/fuelは使わない)
     engine.densityDissipation = 0.01f;
     engine.tempDissipation    = 0.2f;
+    engine.velocityDissipation = args.velocity_dissipation;
+    engine.maxVelocity         = args.max_velocity;
 
     const float W = cfg.world_size;
 

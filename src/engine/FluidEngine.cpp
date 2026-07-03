@@ -420,6 +420,7 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     // PBF 論文準拠パラメータ
     pc.cfmEpsilon       = cfmEpsilon;
     pc.scorrK           = scorrK;
+    pc.relaxOmega       = relaxOmega;
     pc.vorticityEpsilon = vorticityEpsilon;
     pc.linearDamping    = linearDamping;
     pc.omegaIdx         = omegaIdx_;

@@ -31,6 +31,12 @@ void main() {
     vec3 n = gradMag / gl;
     vec3 f = pc.vorticityEps * pc.cellSize * cross(n, curlSelf);
 
-    vec3 v = readVec4(pc.velIdxA, gid).xyz;
-    writeVec4(pc.velIdxA, gid, vec4(v + f * pc.dt, 0.0));
+    vec3 v = readVec4(pc.velIdxA, gid).xyz + f * pc.dt;
+
+    // 渦度閉じ込めは意図的にエネルギーを注入する力のため、密閉ドメインでは
+    // 特に暴走しやすい。圧力投影/移流に渡す前に頭打ちにする。
+    float vspeed = length(v);
+    if (vspeed > pc.maxVelocity) v *= pc.maxVelocity / vspeed;
+
+    writeVec4(pc.velIdxA, gid, vec4(v, 0.0));
 }

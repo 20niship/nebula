@@ -15,8 +15,8 @@ layout(push_constant) uniform PC {
     uint  fuelIdxA;        // 24  float×CELLS
     uint  fuelIdxB;        // 28
     uint  flameIdx;        // 32  float×CELLS
-    uint  pressureIdxA;    // 36  float×CELLS
-    uint  pressureIdxB;    // 40
+    uint  pressureIdxA;    // 36  float×CELLS (Red-Black GS、単一バッファ in-place)
+    uint  gsColor;         // 40  0=red/1=black (pyro_pressure_gs.comp 専用)
     uint  divergenceIdx;   // 44  float×CELLS
     uint  colliderSDFIdx;  // 48  float×CELLS (Morton SDF, 0=無効)
     uint  sourcesIdx;      // 52  PyroSourceGPU×sourceCount (0=無効)
@@ -38,6 +38,8 @@ layout(push_constant) uniform PC {
     float smokeYieldPerFuel;  // 116
     float flameBrightness;    // 120
     uint  curlIdx;            // 124 vec4×CELLS 渦度スクラッチ
+    float velocityDissipation; // 128 速度減衰係数 [1/s]
+    float maxVelocity;         // 132 速度magnitude上限 [m/s]
 } pc;
 
 // ── Buffer read/write マクロ (MoltenVK: buffers[] は main() でのみ展開) ────
@@ -150,5 +152,50 @@ ivec3 pyroMortonDecodeI(uint code) {
     vec3 _vy0  = mix(_vx00, _vx10, _vf.y); \
     vec3 _vy1  = mix(_vx01, _vx11, _vf.y); \
     outVar = mix(_vy0, _vy1, _vf.z); }
+
+// TRILERP_FLOAT と同じ補間に加え、使用した8隅の最小/最大値も返す
+// (MacCormack移流のオーバーシュート抑制クランプ用)
+#define TRILERP_FLOAT_MINMAX(bufIdx, gpos, outVar, outMin, outMax) { \
+    ivec3 _mi0 = ivec3(floor(gpos)); \
+    vec3  _mf  = (gpos) - vec3(_mi0); \
+    float _mc000 = SAMPLE_FLOAT_CLAMPED(bufIdx, _mi0.x,   _mi0.y,   _mi0.z); \
+    float _mc100 = SAMPLE_FLOAT_CLAMPED(bufIdx, _mi0.x+1, _mi0.y,   _mi0.z); \
+    float _mc010 = SAMPLE_FLOAT_CLAMPED(bufIdx, _mi0.x,   _mi0.y+1, _mi0.z); \
+    float _mc110 = SAMPLE_FLOAT_CLAMPED(bufIdx, _mi0.x+1, _mi0.y+1, _mi0.z); \
+    float _mc001 = SAMPLE_FLOAT_CLAMPED(bufIdx, _mi0.x,   _mi0.y,   _mi0.z+1); \
+    float _mc101 = SAMPLE_FLOAT_CLAMPED(bufIdx, _mi0.x+1, _mi0.y,   _mi0.z+1); \
+    float _mc011 = SAMPLE_FLOAT_CLAMPED(bufIdx, _mi0.x,   _mi0.y+1, _mi0.z+1); \
+    float _mc111 = SAMPLE_FLOAT_CLAMPED(bufIdx, _mi0.x+1, _mi0.y+1, _mi0.z+1); \
+    float _mx00 = mix(_mc000, _mc100, _mf.x); \
+    float _mx10 = mix(_mc010, _mc110, _mf.x); \
+    float _mx01 = mix(_mc001, _mc101, _mf.x); \
+    float _mx11 = mix(_mc011, _mc111, _mf.x); \
+    float _my0  = mix(_mx00, _mx10, _mf.y); \
+    float _my1  = mix(_mx01, _mx11, _mf.y); \
+    outVar = mix(_my0, _my1, _mf.z); \
+    outMin = min(_mc000, min(_mc100, min(_mc010, min(_mc110, min(_mc001, min(_mc101, min(_mc011, _mc111))))))); \
+    outMax = max(_mc000, max(_mc100, max(_mc010, max(_mc110, max(_mc001, max(_mc101, max(_mc011, _mc111))))))); }
+
+// TRILERP_VEC3 と同じ補間に加え、使用した8隅の成分ごとの最小/最大値も返す
+#define TRILERP_VEC3_MINMAX(bufIdx, gpos, outVar, outMin, outMax) { \
+    ivec3 _ni0 = ivec3(floor(gpos)); \
+    vec3  _nf  = (gpos) - vec3(_ni0); \
+    vec3 _nc000 = SAMPLE_VEC3_CLAMPED(bufIdx, _ni0.x,   _ni0.y,   _ni0.z); \
+    vec3 _nc100 = SAMPLE_VEC3_CLAMPED(bufIdx, _ni0.x+1, _ni0.y,   _ni0.z); \
+    vec3 _nc010 = SAMPLE_VEC3_CLAMPED(bufIdx, _ni0.x,   _ni0.y+1, _ni0.z); \
+    vec3 _nc110 = SAMPLE_VEC3_CLAMPED(bufIdx, _ni0.x+1, _ni0.y+1, _ni0.z); \
+    vec3 _nc001 = SAMPLE_VEC3_CLAMPED(bufIdx, _ni0.x,   _ni0.y,   _ni0.z+1); \
+    vec3 _nc101 = SAMPLE_VEC3_CLAMPED(bufIdx, _ni0.x+1, _ni0.y,   _ni0.z+1); \
+    vec3 _nc011 = SAMPLE_VEC3_CLAMPED(bufIdx, _ni0.x,   _ni0.y+1, _ni0.z+1); \
+    vec3 _nc111 = SAMPLE_VEC3_CLAMPED(bufIdx, _ni0.x+1, _ni0.y+1, _ni0.z+1); \
+    vec3 _nx00 = mix(_nc000, _nc100, _nf.x); \
+    vec3 _nx10 = mix(_nc010, _nc110, _nf.x); \
+    vec3 _nx01 = mix(_nc001, _nc101, _nf.x); \
+    vec3 _nx11 = mix(_nc011, _nc111, _nf.x); \
+    vec3 _ny0  = mix(_nx00, _nx10, _nf.y); \
+    vec3 _ny1  = mix(_nx01, _nx11, _nf.y); \
+    outVar = mix(_ny0, _ny1, _nf.z); \
+    outMin = min(_nc000, min(_nc100, min(_nc010, min(_nc110, min(_nc001, min(_nc101, min(_nc011, _nc111))))))); \
+    outMax = max(_nc000, max(_nc100, max(_nc010, max(_nc110, max(_nc001, max(_nc101, max(_nc011, _nc111))))))); }
 
 #endif // PYRO_COMMON_GLSL

@@ -11,7 +11,7 @@ C++側 (PyroEngine) はボクセルデータの出力のみを行い、可視化
   body:   float32 データ (チャンネル毎、線形 x+y*nx+z*nx*ny 順)
 
 使い方:
-  python3 tools/pyro_raymarch.py frame_0100.pvox out.png
+  python3 tools/pyro_raymarch.py frame_0100.pvox --out out.png
   python3 tools/pyro_raymarch.py sim_captures/pyro/*.pvox --out-dir renders/
 """
 
@@ -226,8 +226,10 @@ def render_heatmap(vox, axis, width, height, steps, threshold, speed_max, cow_co
 
 def main():
     ap = argparse.ArgumentParser(description="Ray-march a PyroEngine .pvox voxel dump into a PNG")
+    # 注意: "inputs out.png" のような2つの位置引数は argparse の nargs="+" が
+    # 貪欲にすべて inputs へ吸収してしまうため使えない。出力は --out/--out-dir で明示する。
     ap.add_argument("inputs", nargs="+", help=".pvox file(s) (glob patterns allowed)")
-    ap.add_argument("output", nargs="?", help="Output PNG path (single-input mode)")
+    ap.add_argument("--out", default=None, help="Output PNG path (single-input mode)")
     ap.add_argument("--out-dir", default=None, help="Output directory (multi-input mode)")
     ap.add_argument("--axis", choices=["x", "y", "z"], default="z", help="View axis (default: z / front view)")
     ap.add_argument("--width", type=int, default=480)
@@ -247,8 +249,8 @@ def main():
         matches = sorted(glob.glob(pat))
         paths.extend(matches if matches else [pat])
 
-    if len(paths) == 1 and args.output and not args.out_dir:
-        out_paths = [args.output]
+    if len(paths) == 1 and args.out and not args.out_dir:
+        out_paths = [args.out]
     else:
         out_dir = Path(args.out_dir or "pyro_renders")
         out_dir.mkdir(parents=True, exist_ok=True)

@@ -23,6 +23,8 @@ public:
         float    restitution   = 0.1f;
         int      pbfIterations = 4;
         int      numSubsteps   = 4;
+        float    cfmEpsilon    = 0.0f; // CFM 緩和 ε (0=無効)
+        float    relaxOmega    = 1.0f; // pbf_delta_p の ΔP 緩和係数 (IPBF風 under-relaxation; 1.0=無効)
     };
 
     // boundaryPos: typeFlag=3, invMass=0 boundary particles (optional)

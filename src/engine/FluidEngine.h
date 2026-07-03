@@ -90,6 +90,17 @@ public:
   float vorticityEpsilon = 0.1f;    // 渦度閉じ込め ε (式16)
   float linearDamping    = 0.02f;   // 速度減衰 [1/s]。元のハードコード値
   bool vorticityEnabled  = false;   // 渦度閉じ込めの ON/OFF
+  // IPBF (Implicit Position-Based Fluids, SIGGRAPH Asia 2025) 風の under-relaxation。
+  // pbf_delta_p.comp の ΔP に乗じる固定緩和係数 (1.0=無効、標準PBF互換)。
+  // これにより cfmEpsilon をより小さく (拘束をより硬く) しても、同じ pbfIterations の
+  // まま発散しにくくなり、過圧縮 (excessive compression) を抑えられる。
+  // 検証: rho0=35 (fluid_pbf既定と同スケール) で cfmEpsilon=300 + relaxOmega=0.7 の
+  // 組み合わせは、平均密度誤差を既定 (ε=3000, ω=1.0) 比で数十%改善しつつ NaN/発散なし
+  // (headless実験、tests/helpers/PBFHarness 経由)。ただし過圧縮シナリオでは初期配置に
+  // 対して結果がやや敏感 (GPU側の総和順序に起因すると見られる非決定性あり) なため、
+  // 既定値は安全側の 1.0 のまま据え置き、fluid_pbf の --relax-omega で個別に検証・
+  // チューニングすることを推奨する。
+  float relaxOmega       = 1.0f;
 
   // ── 煙・粉体パラメータ ──────────────────────────────────────────────────────
   float smokeRiseAccel = 8.0f;  // 煙の浮力加速度 [m/s²] (typeFlag==4)

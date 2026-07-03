@@ -83,6 +83,10 @@ void main() {
 
     deltaP /= rho0;
 
+    // Under-relaxation (IPBF風): CFM ε を小さくして拘束を硬くしても、少ない
+    // Jacobi反復数のまま発散しないよう ΔP を relaxOmega 倍に抑える (1.0=無効)。
+    deltaP *= pc.relaxOmega;
+
     // Clamp deltaP to h/4 per iteration to prevent violent explosions from
     // underdense corner particles (which have only ~7 neighbors instead of 26)
     float dpLen = length(deltaP);

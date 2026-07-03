@@ -2,11 +2,15 @@
 #extension GL_EXT_nonuniform_qualifier : enable
 #include "pyro_common.glsl"
 
-// 圧力 Jacobi 反復 (1回分)。pc.pressureIdxA (前回値) を読み pc.pressureIdxB へ書く。
+// 圧力 Red-Black Gauss-Seidel 反復 (1色分)。チェッカーボード分割
+// ((ix+iy+iz)&1 == pc.gsColor) のセルのみを in-place 更新する。
+// 同時に更新される色同士は互いに隣接しない (6近傍は必ず逆の色) ため、
+// 単一バッファを in-place で読み書きしてもセル間のデータ競合は発生しない。
+// Jacobi 版と異なり毎回最新の隣接値を使うため、同じ反復回数でも収束が速い。
 // p_new = ( div + p(i-1)+p(i+1)+p(j-1)+p(j+1)+p(k-1)+p(k+1) ) / 6
 // 障害物内部の近傍セルは自セルの圧力で代用する (Neumann 境界近似)。
 // 障害物内部セル自体の圧力は常に 0。
-// dispatch: (totalCells + 255) / 256
+// dispatch: (totalCells + 255) / 256 (1色あたり; red/black で2回呼ぶ)
 
 layout(local_size_x = 256) in;
 
@@ -16,9 +20,10 @@ void main() {
     if (gid >= totalCells) return;
 
     ivec3 ijk = pyroMortonDecodeI(gid);
+    if (uint(ijk.x + ijk.y + ijk.z) % 2u != pc.gsColor) return;
 
     if (CELL_IS_SOLID(ijk.x, ijk.y, ijk.z)) {
-        writeFloat(pc.pressureIdxB, gid, 0.0);
+        writeFloat(pc.pressureIdxA, gid, 0.0);
         return;
     }
 
@@ -32,5 +37,5 @@ void main() {
 
     float div = readFloat(pc.divergenceIdx, gid);
     float pNew = (div + pXp + pXm + pYp + pYm + pZp + pZm) / 6.0;
-    writeFloat(pc.pressureIdxB, gid, pNew);
+    writeFloat(pc.pressureIdxA, gid, pNew);
 }

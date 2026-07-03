@@ -20,5 +20,11 @@ void main() {
 
     vec3 v = readVec4(pc.velIdxA, gid).xyz;
     v.y += pc.dt * (pc.buoyancyAlpha * (T - pc.ambientTemp) - pc.buoyancyBeta * rho);
+
+    // 密閉ドメインでは運動量の逃げ場がなく、単発の力適用が暴走すると発散につながるため
+    // 圧力投影/移流に渡す前に頭打ちにする (mpm_grid_update.comp と同じクランプパターン)。
+    float vspeed = length(v);
+    if (vspeed > pc.maxVelocity) v *= pc.maxVelocity / vspeed;
+
     writeVec4(pc.velIdxA, gid, vec4(v, 0.0));
 }

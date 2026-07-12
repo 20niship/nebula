@@ -24,7 +24,7 @@ struct MpmSnowImpactArgs : public argparse::Args {
   int&   pn            = kwarg("pn",           "particle grid per side (N^3 total)").set_default(44);
   float& box_speed     = kwarg("box-speed",    "obstacle box speed [m/s]").set_default(6.0f);
   float& box_scale     = kwarg("box-scale",    "obstacle box half-extent scale (1=original)").set_default(0.5f);
-  int&   auto_launch   = kwarg("auto-launch",  "1=start box moving immediately").set_default(0);
+  int&   launch_frame  = kwarg("launch-frame", "box starts moving automatically at this frame (-1=manual button only)").set_default(60);
   int&   n_shots       = kwarg("n-shots",      "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
 };
@@ -38,7 +38,7 @@ public:
     base_.screenshotDir = args.screenshot_dir;
     boxSpeed_  = args.box_speed;
     boxScale_  = args.box_scale;
-    boxMoving_ = (args.auto_launch != 0);
+    launchFrame_ = args.launch_frame;
 
     MPMConfig cfg;
     cfg.nx         = uint32_t(args.pn);
@@ -59,6 +59,8 @@ private:
   GraphicsPipeline graphicsPipe_;
   float dt_        = 1.0f / 60.0f;
   float simTime_   = 0.0f;
+  int   frameCount_   = 0;
+  int   launchFrame_  = 60;
 
   float boxPosX_   = 0.0f;
   float boxSpeed_  = 6.0f;
@@ -201,6 +203,9 @@ private:
     ImGui::Separator();
 
     if (!boxMoving_) {
+      if (launchFrame_ >= 0 && frameCount_ < launchFrame_) {
+        ImGui::TextDisabled("自動発進まで: %d フレーム", launchFrame_ - frameCount_);
+      }
       if (ImGui::Button("Launch Box →衝突開始")) {
         boxPosX_   = engine_.config().world_size * 0.85f;
         boxMoving_ = true;
@@ -217,6 +222,12 @@ private:
     ImGui::End();
     ImGui::Render();
 
+    // 固定フレームに到達したらボタン操作なしで自動的に箱を発進させる
+    if (!boxMoving_ && launchFrame_ >= 0 && frameCount_ >= launchFrame_) {
+      boxPosX_   = engine_.config().world_size * 0.85f;
+      boxMoving_ = true;
+    }
+
     // 箱の位置を更新してからコライダーを再アップロード (compute より前)
     if (boxMoving_) {
       boxPosX_ -= boxSpeed_ * dt_;
@@ -225,6 +236,7 @@ private:
       rebuildColliders();
     }
     simTime_ += dt_;
+    ++frameCount_;
 
     f.timelineValue++;
     vkResetCommandBuffer(f.computeCmd, 0);

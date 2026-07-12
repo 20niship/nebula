@@ -1,0 +1,48 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "pyro_common.glsl"
+
+// Semi-Lagrangian 移流 (RK2 中点法) + 三線形補間。
+// A バッファ (dt 前の場) を読み、逆追跡した位置からサンプルして B バッファへ書き込む。
+// velocity/density/temperature/fuel をまとめて1パスで処理する
+// (いずれも同じ backtrace 位置を使う標準的な semi-Lagrangian の仮定)。
+// dispatch: (totalCells + 255) / 256
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    if (gid >= totalCells) return;
+
+    ivec3 ijk = pyroMortonDecodeI(gid);
+    vec3  xi  = (vec3(ijk) + 0.5) * pc.cellSize + pc.worldMin;
+
+    vec3 v0 = readVec4(pc.velIdxA, gid).xyz;
+
+    // RK2 中点法による逆追跡
+    vec3 pMid = xi - 0.5 * pc.dt * v0;
+    vec3 gMid = WORLD_TO_GRID(pMid);
+    vec3 vMid;
+    TRILERP_VEC3(pc.velIdxA, gMid, vMid);
+
+    vec3 pBack = xi - pc.dt * vMid;
+    vec3 gBack = WORLD_TO_GRID(pBack);
+
+    vec3 vNew;
+    TRILERP_VEC3(pc.velIdxA, gBack, vNew);
+    writeVec4(pc.velIdxB, gid, vec4(vNew, 0.0));
+
+    float densNew, tempNew, fuelNew;
+    TRILERP_FLOAT(pc.densityIdxA,     gBack, densNew);
+    TRILERP_FLOAT(pc.temperatureIdxA, gBack, tempNew);
+    TRILERP_FLOAT(pc.fuelIdxA,        gBack, fuelNew);
+
+    densNew *= exp(-pc.densityDissipation * pc.dt);
+    tempNew  = pc.ambientTemp + (tempNew - pc.ambientTemp) * exp(-pc.tempDissipation * pc.dt);
+    fuelNew  = max(fuelNew, 0.0);
+
+    writeFloat(pc.densityIdxB,     gid, max(densNew, 0.0));
+    writeFloat(pc.temperatureIdxB, gid, tempNew);
+    writeFloat(pc.fuelIdxB,        gid, fuelNew);
+}

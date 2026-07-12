@@ -52,7 +52,7 @@ VIDEO_FPS = 60     # 出力動画 FPS
 THUMB_W   = 480    # 4列 × 480 = 1920px (ffmpeg scale と一致)
 THUMB_H   = 270    # 16:9
 GRID_COLS = 4
-GRID_ROWS = 6      # 4×6=24 セル; TC1–TC10 + TC-A,B,E,F,G,H,K,L (TC-C/D/I/J除外、18使用 + 空き6)
+GRID_ROWS = 5      # 4×5=20 セル; TC1–TC10 + TC-A,B,E,F,G,H,K,L (TC-C/D/I/J除外、18使用 + 空き2)
 
 # テストケース定義
 # exe=None のエントリは空きセル（グリッドのパディング用）

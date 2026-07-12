@@ -1,0 +1,37 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "pyro_common.glsl"
+
+// 圧力勾配を差し引いて非圧縮速度場を得る (Stam Stable Fluids の project 相当)。
+// v -= 0.5/h * grad(p)。pc.pressureIdxA に最終圧力場を渡す。
+// 障害物内部セルは速度ゼロ (pyro_obstacle_bc.comp で改めて適用されるが、ここでも安全側に倒す)。
+// dispatch: (totalCells + 255) / 256
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    if (gid >= totalCells) return;
+
+    ivec3 ijk = pyroMortonDecodeI(gid);
+
+    if (CELL_IS_SOLID(ijk.x, ijk.y, ijk.z)) {
+        writeVec4(pc.velIdxA, gid, vec4(0.0));
+        return;
+    }
+
+    float pSelf = readFloat(pc.pressureIdxA, gid);
+    float pXp = CELL_IS_SOLID(ijk.x + 1, ijk.y, ijk.z) ? pSelf : SAMPLE_FLOAT_CLAMPED(pc.pressureIdxA, ijk.x + 1, ijk.y, ijk.z);
+    float pXm = CELL_IS_SOLID(ijk.x - 1, ijk.y, ijk.z) ? pSelf : SAMPLE_FLOAT_CLAMPED(pc.pressureIdxA, ijk.x - 1, ijk.y, ijk.z);
+    float pYp = CELL_IS_SOLID(ijk.x, ijk.y + 1, ijk.z) ? pSelf : SAMPLE_FLOAT_CLAMPED(pc.pressureIdxA, ijk.x, ijk.y + 1, ijk.z);
+    float pYm = CELL_IS_SOLID(ijk.x, ijk.y - 1, ijk.z) ? pSelf : SAMPLE_FLOAT_CLAMPED(pc.pressureIdxA, ijk.x, ijk.y - 1, ijk.z);
+    float pZp = CELL_IS_SOLID(ijk.x, ijk.y, ijk.z + 1) ? pSelf : SAMPLE_FLOAT_CLAMPED(pc.pressureIdxA, ijk.x, ijk.y, ijk.z + 1);
+    float pZm = CELL_IS_SOLID(ijk.x, ijk.y, ijk.z - 1) ? pSelf : SAMPLE_FLOAT_CLAMPED(pc.pressureIdxA, ijk.x, ijk.y, ijk.z - 1);
+
+    float invH = 1.0 / pc.cellSize;
+    vec3  grad = vec3(pXp - pXm, pYp - pYm, pZp - pZm) * (0.5 * invH);
+
+    vec3 v = readVec4(pc.velIdxA, gid).xyz;
+    writeVec4(pc.velIdxA, gid, vec4(v - grad, 0.0));
+}

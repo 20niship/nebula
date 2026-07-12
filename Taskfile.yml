@@ -32,6 +32,7 @@ tasks:
     desc: "CMake を構成する (BUILD_TYPE={{.BUILD_TYPE}})"
     cmds:
       - |
+        git submodule update --init --recursive
         cmake -B {{.BUILD_DIR}} \
           -DCMAKE_BUILD_TYPE={{.BUILD_TYPE}} \
           -DVULKAN_SDK={{.VULKAN_SDK}}

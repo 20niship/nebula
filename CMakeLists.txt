@@ -365,17 +365,6 @@ if(APPLE)
         PROPERTIES COMPILE_OPTIONS "-std=c++17")
 endif()
 
-# ── mpm_granular: Drucker-Prager 砂柱崩壊 ────────────────────────────────
-add_sim_example(mpm_granular
-    src/core/VulkanContext.cpp
-    src/core/AttributeBuffer.cpp
-    src/core/ComputePipeline.cpp
-    src/graphics/GraphicsPipeline.cpp
-    src/engine/MPMEngine.cpp
-    src/App.cpp
-    examples/mpm_granular.cpp
-)
-
 # ── mpm_multimaterial: 弾性体 + 砂 混在シミュレーション ─────────────────
 add_sim_example(mpm_multimaterial
     src/core/VulkanContext.cpp
@@ -387,17 +376,6 @@ add_sim_example(mpm_multimaterial
     examples/mpm_multimaterial.cpp
 )
 
-# ── mpm_fountain: コライダー + ソースエミッタ (Phase 3/4) ────────────────
-add_sim_example(mpm_fountain
-    src/core/VulkanContext.cpp
-    src/core/AttributeBuffer.cpp
-    src/core/ComputePipeline.cpp
-    src/graphics/GraphicsPipeline.cpp
-    src/engine/MPMEngine.cpp
-    src/App.cpp
-    examples/mpm_fountain.cpp
-)
-
 # ── mpm_avalanche: 山岳地形 + Drucker-Prager 雪崩 (~80K 粒子) ───────────
 add_sim_example(mpm_avalanche
     src/core/VulkanContext.cpp
@@ -407,17 +385,6 @@ add_sim_example(mpm_avalanche
     src/engine/MPMEngine.cpp
     src/App.cpp
     examples/mpm_avalanche.cpp
-)
-
-# ── mpm_stl_drop: 任意 STL 障害物 SDF + 上部からパーティクル落下 ──────────
-add_sim_example(mpm_stl_drop
-    src/core/VulkanContext.cpp
-    src/core/AttributeBuffer.cpp
-    src/core/ComputePipeline.cpp
-    src/graphics/GraphicsPipeline.cpp
-    src/engine/MPMEngine.cpp
-    src/App.cpp
-    examples/mpm_stl_drop.cpp
 )
 
 # ── mpm_geolayer: 地層崩壊 (複数マテリアル) ──────────────────────────────────

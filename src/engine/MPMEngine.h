@@ -11,7 +11,7 @@
 #include "MPMSimPC.h"
 #include "MaterialParams.h"
 #include "Collider.h"
-#include "../core/source.h"
+#include "../core/Emitter.h"
 
 #include <memory>
 #include <random>
@@ -91,11 +91,11 @@ public:
   // アップロード済みの解析コライダーを無効化 (colliderCount = 0)
   void clearAnalyticColliders();
 
-  // ── Source エミッタ (Phase 4) ──────────────────────────────────────────
+  // ── Emitter (Phase 4) ────────────────────────────────────────────────
   // particleType フィールドを MPM の material id として解釈する
   // step_count=-1: 最初の 1 フレームのみ, 0: 無限, >0: 指定フレーム数
-  void addSource(std::shared_ptr<Source> src);
-  void clearSources();
+  void addEmitter(std::shared_ptr<Emitter> emitter);
+  void clearEmitters();
   void resetParticles(); // ライブ粒子数を 0 にリセット (バッファは再生成しない)
 
   // ── 粒子の直接追加 ────────────────────────────────────────────────────
@@ -156,11 +156,11 @@ private:
   // NanoVDB SDF コライダー
   uint32_t nanoVDBIdx_  = 0;  // 0 = 未設定 (シェーダー内でスキップ)
 
-  // Source エミッタ (Phase 4)
-  std::vector<std::shared_ptr<Source>> sources_;
-  std::vector<int>                     sourceStepsDone_;
-  std::mt19937                         sourceRng_{12345};
-  void emitSources(float dt);
+  // Emitter (Phase 4)
+  std::vector<std::shared_ptr<Emitter>> emitters_;
+  std::vector<int>                      emitterStepsDone_;
+  std::mt19937                          emitterRng_{12345};
+  void emitFromEmitters(float dt);
 
   // コンピュートパイプライン
   // ハッシュ系 (MPM 版: posIdx を使う)

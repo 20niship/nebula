@@ -1,5 +1,5 @@
 #include "App.h"
-#include "core/source.h"
+#include "core/Emitter.h"
 #include "engine/FluidEngine.h"
 #include "graphics/GraphicsPipeline.h"
 #include "utils.hpp"
@@ -73,14 +73,14 @@ private:
     const float cx = w * 0.5f, cy = w * 0.5f;
 
     // 底面中央から連続放出するソース（typeFlag=4 = 煙）
-    auto src = std::make_shared<SphereSource>();
+    auto src = std::make_shared<SphereEmitter>();
     src->center             = glm::vec3(cx, cy, 1.0f);
     src->radius             = args.emit_radius;
     src->vel                = glm::vec3(0.0f, 0.0f, 3.0f); // 初期上向き速度
     src->particles_per_step = args.particles_per_step;
     src->step_count         = 0;    // 無限放出
     src->particleType       = 4u;   // 煙
-    engine_.addSource(src);
+    engine_.addEmitter(src);
   }
 
   void initVulkan(const FluidConfig& cfg, const SmokeArgs& args) {

@@ -24,11 +24,11 @@ struct PyroSimPC {
   uint32_t pressureIdxB;    // 40
   uint32_t divergenceIdx;   // 44  float×CELLS (スクラッチ)
 
-  // ── コライダー / ソース / グリッド定数 (16 bytes) ──────────────────────
+  // ── コライダー / エミッタ / グリッド定数 (16 bytes) ────────────────────
   uint32_t colliderSDFIdx;  // 48  float×CELLS (Morton SDF, 0=無効)
-  uint32_t sourcesIdx;      // 52  PyroSourceGPU×sourceCount (0=無効)
+  uint32_t emittersIdx;     // 52  EmitterGPU×emitterCount (0=無効)
   uint32_t gridRes;         // 56
-  uint32_t sourceCount;     // 60
+  uint32_t emitterCount;    // 60
 
   // ── World / time (16 bytes) ────────────────────────────────────────────
   float dt;                 // 64

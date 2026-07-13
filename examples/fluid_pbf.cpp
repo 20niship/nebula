@@ -1,5 +1,5 @@
 #include "App.h"
-#include "core/source.h"
+#include "core/Emitter.h"
 #include "engine/FluidEngine.h"
 #include "graphics/GraphicsPipeline.h"
 #include "utils.hpp"
@@ -92,23 +92,23 @@ private:
     if(scenario == "source-flow") {
       // TC2: 左端から右方向へ移動するボックスソース
       // X が広いワールド (world_size=40 を推奨) で左から右へ流体が噴出
-      auto src                = std::make_shared<AABBSource>();
+      auto src                = std::make_shared<AABBEmitter>();
       src->center             = glm::vec3(w * 0.05f, w * 0.5f, w * 0.5f);
       src->size               = glm::vec3(w * 0.07f, w * 0.35f, w * 0.35f);
       src->center_vel         = glm::vec3(w * 0.10f, 0.0f, 0.0f); // 10% world/s で右移動
       src->vel                = glm::vec3(w * 0.08f, 0.0f, 0.0f); // 放出粒子に右向き初速
       src->particles_per_step = std::max(1u, cfg.fluidCount() / 400u);
       src->step_count         = 0; // 無限
-      engine_.addSource(src);
+      engine_.addEmitter(src);
     } else {
       // dam-break (デフォルト): 左半分上部 (X: 左半分, Z: 上半分) を一気に充填
-      auto src                = std::make_shared<AABBSource>();
+      auto src                = std::make_shared<AABBEmitter>();
       src->center             = glm::vec3(w * 0.25f, w * 0.5f, w * 0.75f);
       src->size               = glm::vec3(w * 0.5f - 2.0f * m, w - 2.0f * m, w * 0.5f - 2.0f * m);
       src->vel                = glm::vec3(0.0f);
       src->particles_per_step = cfg.fluidCount(); // 全粒子を一気に
       src->step_count         = -1;               // 1回のみ
-      engine_.addSource(src);
+      engine_.addEmitter(src);
     }
   }
 

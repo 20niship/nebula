@@ -67,16 +67,15 @@ int main(int argc, char* argv[]) {
     const float W = cfg.world_size;
 
     // ── 地表付近での爆発源 (短時間バースト後、燃焼と浮力のみで自律的に発達) ──
-    PyroSource blast;
-    blast.shape           = PyroSourceShape::SPHERE;
-    blast.center          = {W * 0.5f, W * 0.06f, W * 0.5f};
-    blast.size            = glm::vec3(W * 0.07f);
-    blast.inflowVelocity  = {0.0f, 4.0f, 0.0f}; // 上向きの初速キック
-    blast.densityRate     = 30.0f;
-    blast.temperatureRate = 40.0f;
-    blast.fuelRate        = 25.0f;
-    blast.step_count      = args.burst_frames;
-    engine.addSource(blast);
+    auto blast = std::make_shared<SphereEmitter>();
+    blast->center          = {W * 0.5f, W * 0.06f, W * 0.5f};
+    blast->radius          = W * 0.07f;
+    blast->inflowVelocity  = {0.0f, 4.0f, 0.0f}; // 上向きの初速キック
+    blast->densityRate     = 30.0f;
+    blast->temperatureRate = 40.0f;
+    blast->fuelRate        = 25.0f;
+    blast->step_count      = args.burst_frames;
+    engine.addEmitter(blast);
 
     std::filesystem::create_directories(args.out_dir);
 

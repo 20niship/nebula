@@ -77,16 +77,17 @@ int main(int argc, char* argv[]) {
     engine.setColliderSDF(buildMeshSDF(cowTris, cfg.grid_res, cfg.world_size));
 
     // ── 超高密度・高速の爆風バースト (-X 側から牛へ向けて) ──────────────────
-    PyroSource blast;
-    blast.shape           = PyroSourceShape::AABB;
-    blast.center          = {W * 0.08f, W * 0.20f, W * 0.5f};
-    blast.size            = glm::vec3(W * 0.05f, W * 0.15f, W * 0.15f);
-    blast.inflowVelocity  = {args.blast_speed, 0.0f, 0.0f};
-    blast.densityRate     = args.blast_density;
-    blast.temperatureRate = 0.0f; // fire なし
-    blast.fuelRate        = 0.0f; // fire なし
-    blast.step_count      = args.blast_frames; // 短時間バーストのみ
-    engine.addSource(blast);
+    // AABBEmitter::size は全辺長 (pack() が内部で半分にする) のため、旧
+    // PyroSource(AABB) の半辺長 (W*0.05, W*0.15, W*0.15) を2倍して指定する。
+    auto blast = std::make_shared<AABBEmitter>();
+    blast->center          = {W * 0.08f, W * 0.20f, W * 0.5f};
+    blast->size            = glm::vec3(W * 0.10f, W * 0.30f, W * 0.30f);
+    blast->inflowVelocity  = {args.blast_speed, 0.0f, 0.0f};
+    blast->densityRate     = args.blast_density;
+    blast->temperatureRate = 0.0f; // fire なし
+    blast->fuelRate        = 0.0f; // fire なし
+    blast->step_count      = args.blast_frames; // 短時間バーストのみ
+    engine.addEmitter(blast);
 
     std::filesystem::create_directories(args.out_dir);
 

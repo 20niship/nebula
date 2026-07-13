@@ -9,7 +9,7 @@
 #include "AttributeBuffer.h"
 #include "ComputePipeline.h"
 #include "../core/PyroSimPC.h"
-#include "../core/PyroSource.h"
+#include "../core/Emitter.h"
 
 struct PyroConfig {
   // Morton (Z-order) 符号化を使うため 2 のべき乗であること (例: 16, 32, 64)。
@@ -18,7 +18,7 @@ struct PyroConfig {
   //  GPU バッファ境界外アクセスを起こすため)。
   uint32_t grid_res   = 64;
   float    world_size = 10.0f;
-  uint32_t maxSources = 32; // 同時に登録できる PyroSource の上限 (SSBO 固定容量)
+  uint32_t maxEmitters = 32; // 同時に登録できる Emitter の上限 (SSBO 固定容量)
 
   uint32_t totalCells() const { return grid_res * grid_res * grid_res; }
   float    cellSize()   const { return world_size / float(grid_res); }
@@ -61,9 +61,9 @@ public:
   void setColliderSDF(const std::vector<float>& mortonSDF);
   void clearCollider();
 
-  // ── 複数 Source (連続的な density/temperature/fuel/velocity 注入) ───────
-  void addSource(const PyroSource& src);
-  void clearSources();
+  // ── 複数 Emitter (連続的な density/temperature/fuel/velocity 注入) ──────
+  void addEmitter(std::shared_ptr<Emitter> emitter);
+  void clearEmitters();
 
   // ── 読み取り (テスト/ダンプ用) ────────────────────────────────────────
   VkBuffer getDensityBuffer()     const;
@@ -105,11 +105,11 @@ private:
 
   uint32_t colliderSDFIdx_ = 0; // 0 = 無効
 
-  // Source
-  uint32_t              sourcesIdx_         = 0; // init() で cfg_.maxSources 分を固定確保
-  uint32_t              sourcesActiveCount_ = 0; // 直近 updateSources() でアップロードした有効数
-  std::vector<PyroSource> sources_;
-  std::vector<int>        sourceStepsDone_;
+  // Emitter
+  uint32_t               emittersIdx_         = 0; // init() で cfg_.maxEmitters 分を固定確保
+  uint32_t               emittersActiveCount_ = 0; // 直近 updateEmitters() でアップロードした有効数
+  std::vector<std::shared_ptr<Emitter>> emitters_;
+  std::vector<int>                      emitterStepsDone_;
 
   ComputePipeline kEmit_;
   ComputePipeline kCombustion_;
@@ -125,7 +125,7 @@ private:
   PyroSimPC buildPC(float dt) const;
   void      dispatchPyro(VkCommandBuffer cmd, ComputePipeline& k, const PyroSimPC& pc);
   void      computeBarrier(VkCommandBuffer cmd);
-  void      updateSources(float dt); // CPU側でアクティブな Source を選別・アップロード
+  void      updateEmitters(float dt); // CPU側でアクティブな Emitter を選別・アップロード
 
   // ステージングバッファ経由の GPU→CPU 同期読み戻し (dumpFrame 専用)
   void readBufferToCPU(VkBuffer src, void* dst, size_t bytes) const;

@@ -296,46 +296,46 @@ void MPMEngine::clearAnalyticColliders() {
   colliderCount_ = 0;
 }
 
-// ── Source エミッタ ───────────────────────────────────────────────────────
+// ── Emitter ───────────────────────────────────────────────────────────────
 
-void MPMEngine::addSource(std::shared_ptr<Source> src) {
-  sources_.push_back(std::move(src));
-  sourceStepsDone_.push_back(0);
+void MPMEngine::addEmitter(std::shared_ptr<Emitter> emitter) {
+  emitters_.push_back(std::move(emitter));
+  emitterStepsDone_.push_back(0);
 }
 
-void MPMEngine::clearSources() {
-  sources_.clear();
-  sourceStepsDone_.clear();
+void MPMEngine::clearEmitters() {
+  emitters_.clear();
+  emitterStepsDone_.clear();
 }
 
 void MPMEngine::resetParticles() {
   if (device_ == VK_NULL_HANDLE) return;
   vkDeviceWaitIdle(device_);
   nParticles_ = 0;
-  std::fill(sourceStepsDone_.begin(), sourceStepsDone_.end(), 0);
-  sourceRng_.seed(12345);
+  std::fill(emitterStepsDone_.begin(), emitterStepsDone_.end(), 0);
+  emitterRng_.seed(12345);
 }
 
-void MPMEngine::emitSources(float dt) {
-  if (sources_.empty()) return;
+void MPMEngine::emitFromEmitters(float dt) {
+  if (emitters_.empty()) return;
   const uint32_t maxN = cfg_.maxParticleCount();
 
-  for (size_t si = 0; si < sources_.size(); si++) {
-    Source& src = *sources_[si];
-    int&    done = sourceStepsDone_[si];
+  for (size_t si = 0; si < emitters_.size(); si++) {
+    Emitter& emitter = *emitters_[si];
+    int&     done     = emitterStepsDone_[si];
 
     bool shouldEmit = false;
-    if      (src.step_count == -1) shouldEmit = (done == 0);
-    else if (src.step_count ==  0) shouldEmit = true;
-    else                           shouldEmit = (done < src.step_count);
+    if      (emitter.step_count == -1) shouldEmit = (done == 0);
+    else if (emitter.step_count ==  0) shouldEmit = true;
+    else                               shouldEmit = (done < emitter.step_count);
     if (!shouldEmit) continue;
 
     int available = int(maxN) - int(nParticles_);
-    int nNew      = std::min(src.particles_per_step, available);
+    int nNew      = std::min(emitter.particles_per_step, available);
     if (nNew <= 0) { done++; continue; }
 
     // material id を vel.w に格納するためビット再解釈
-    uint32_t matId = src.particleType;
+    uint32_t matId = emitter.particleType;
     float    matIdF;
     std::memcpy(&matIdF, &matId, sizeof(float));
 
@@ -344,35 +344,13 @@ void MPMEngine::emitSources(float dt) {
     std::vector<glm::vec4> F0v(nNew), F1v(nNew), F2v(nNew);
     std::vector<glm::vec4> B0v(nNew), B1v(nNew), B2v(nNew);
 
-    // 位置生成
-    if (auto* aabb = dynamic_cast<AABBSource*>(&src)) {
-      glm::vec3 half = aabb->size * 0.5f;
-      std::uniform_real_distribution<float> dx(-half.x, half.x);
-      std::uniform_real_distribution<float> dy(-half.y, half.y);
-      std::uniform_real_distribution<float> dz(-half.z, half.z);
-      for (int j = 0; j < nNew; j++)
-        pos[j] = glm::vec4(aabb->center + glm::vec3(dx(sourceRng_), dy(sourceRng_), dz(sourceRng_)), Vp);
-    } else if (auto* sphere = dynamic_cast<SphereSource*>(&src)) {
-      std::uniform_real_distribution<float> dr(0.0f, 1.0f);
-      std::uniform_real_distribution<float> dtheta(0.0f, 3.14159265f);
-      std::uniform_real_distribution<float> dphi(0.0f, 6.28318530f);
-      for (int j = 0; j < nNew; j++) {
-        float r     = sphere->radius * std::cbrt(dr(sourceRng_));
-        float theta = dtheta(sourceRng_);
-        float phi   = dphi(sourceRng_);
-        pos[j] = glm::vec4(
-            sphere->center.x + r * std::sin(theta) * std::cos(phi),
-            sphere->center.y + r * std::sin(theta) * std::sin(phi),
-            sphere->center.z + r * std::cos(theta), Vp);
-      }
-    } else {
-      for (int j = 0; j < nNew; j++)
-        pos[j] = glm::vec4(src.center, Vp);
-    }
+    // 位置生成 (形状ごとの分岐は Emitter::sample() に委譲)
+    for (int j = 0; j < nNew; j++)
+      pos[j] = glm::vec4(emitter.sample(emitterRng_), Vp);
 
     // 速度 (vel.w = material id)、F = I、B = 0、stress = 0
     for (int j = 0; j < nNew; j++) {
-      vel[j] = glm::vec4(src.vel, matIdF);
+      vel[j] = glm::vec4(emitter.vel, matIdF);
       F0v[j] = glm::vec4(1, 0, 0, 0);
       F1v[j] = glm::vec4(0, 1, 0, 0);
       F2v[j] = glm::vec4(0, 0, 1, 0);
@@ -396,7 +374,7 @@ void MPMEngine::emitSources(float dt) {
 
     nParticles_ += uint32_t(nNew);
     done++;
-    src.center += src.center_vel * dt;
+    emitter.center += emitter.center_vel * dt;
   }
 }
 
@@ -450,8 +428,8 @@ MPMSimPC MPMEngine::buildPC(float subDt) const {
 // ── ステップ ──────────────────────────────────────────────────────────────
 
 void MPMEngine::step(VkCommandBuffer cmd, float dt) {
-  // Source エミッタ (GPU upload は compute dispatch の前に完結)
-  emitSources(dt);
+  // Emitter (GPU upload は compute dispatch の前に完結)
+  emitFromEmitters(dt);
 
   const uint32_t N  = nParticles_;         // ライブパーティクル数
   const uint32_t NC = cfg_.totalCells();

@@ -1,5 +1,5 @@
 #include "App.h"
-#include "core/source.h"
+#include "core/Emitter.h"
 #include "engine/FluidEngine.h"
 #include "graphics/GraphicsPipeline.h"
 #include "utils.hpp"
@@ -181,14 +181,14 @@ private:
         // 楕円水たまりを一発投入 (XY 中央, 床面の1粒子間隔上)
         const float particleR = cfg.cellSize() * 0.5f;          // SDF 衝突距離
         const float floorZ    = particleR + cfg.particleSpacing(); // 床ちょうど上から投下
-        auto src           = std::make_shared<EllipseSource>();
+        auto src           = std::make_shared<EllipseEmitter>();
         src->center        = glm::vec3(kWorldSize * 0.5f, kWorldSize * 0.5f, floorZ);
-        src->semi_a        = 5.0f;
-        src->semi_b        = 3.0f;
+        src->semiA         = 5.0f;
+        src->semiB         = 3.0f;
         src->vel           = glm::vec3(0.0f);
         src->particles_per_step = cfg.fluidCount();
         src->step_count    = -1; // 初回 1 回のみ
-        engine_.addSource(src);
+        engine_.addEmitter(src);
 
         graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass,
                            engine_.descriptorSetLayout,

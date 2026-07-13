@@ -4,8 +4,10 @@
 #include <doctest/doctest.h>
 #include "helpers/HeadlessCtx.h"
 #include "helpers/MPMHarness.h"
+#include "core/Emitter.h"
 #include <glm/glm.hpp>
 #include <cmath>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -163,6 +165,63 @@ TEST_CASE("MPM Constitutive - 5-2: Uniform compression => negative diagonal stre
     // 理論値: τ_xx = λ*trε + 2μ*ε_xx = λ*3*log(0.9) + 2μ*log(0.9) = (3λ+2μ)*log(0.9)
     float expected = (3.0f * lam + 2.0f * mu) * std::log(0.9f);
     CHECK(std::abs(tau[0][0] - expected) < std::abs(expected) * 0.01f);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Emitter::sample() — GPU不要の純粋なCPUサンプリングテスト (issue #12: MPM/Fluid
+// 共通の Emitter クラスに対する初のユニットテスト。従来 Source/AABBSource/
+// SphereSource/EllipseSource には一切テストが無かった)
+// ─────────────────────────────────────────────────────────────────────────────
+TEST_CASE("Emitter - AABBEmitter samples land inside the box bounds") {
+    AABBEmitter e;
+    e.center = {1.0f, 2.0f, 3.0f};
+    e.size   = {2.0f, 4.0f, 6.0f}; // 全辺長
+
+    std::mt19937 rng{42};
+    const glm::vec3 half = e.size * 0.5f;
+    for (int i = 0; i < 500; i++) {
+        glm::vec3 p = e.sample(rng);
+        CHECK(std::abs(p.x - e.center.x) <= half.x + 1e-5f);
+        CHECK(std::abs(p.y - e.center.y) <= half.y + 1e-5f);
+        CHECK(std::abs(p.z - e.center.z) <= half.z + 1e-5f);
+    }
+}
+
+TEST_CASE("Emitter - SphereEmitter samples land inside the sphere radius") {
+    SphereEmitter e;
+    e.center = {0.0f, 0.0f, 0.0f};
+    e.radius = 2.5f;
+
+    std::mt19937 rng{42};
+    double sumR = 0.0;
+    const int    N = 500;
+    for (int i = 0; i < N; i++) {
+        glm::vec3 p = e.sample(rng);
+        float     r = glm::length(p - e.center);
+        CHECK(r <= e.radius + 1e-4f);
+        sumR += r;
+    }
+    // 体積一様分布 (r^3 に比例) であれば平均半径は半径の75%程度になり、
+    // 境界付近に偏った実装 (例: r一様分布のバグ) にはならないはず
+    double meanR = sumR / N;
+    CHECK(meanR > e.radius * 0.5);
+    CHECK(meanR < e.radius * 0.95);
+}
+
+TEST_CASE("Emitter - EllipseEmitter samples land inside the ellipse and at fixed Z") {
+    EllipseEmitter e;
+    e.center = {1.0f, -2.0f, 5.0f};
+    e.semiA  = 3.0f;
+    e.semiB  = 1.5f;
+
+    std::mt19937 rng{42};
+    for (int i = 0; i < 500; i++) {
+        glm::vec3 p  = e.sample(rng);
+        float     dx = p.x - e.center.x;
+        float     dy = p.y - e.center.y;
+        CHECK((dx * dx) / (e.semiA * e.semiA) + (dy * dy) / (e.semiB * e.semiB) <= 1.0f + 1e-5f);
+        CHECK(p.z == doctest::Approx(e.center.z));
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

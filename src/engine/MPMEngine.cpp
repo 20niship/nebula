@@ -4,6 +4,7 @@
 #include <cstring>
 #include <cmath>
 #include <random>
+#include <algorithm>
 #include <glm/glm.hpp>
 
 // ── バリア ────────────────────────────────────────────────────────────────

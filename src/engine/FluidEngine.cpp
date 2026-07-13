@@ -51,8 +51,8 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   absorberBufIdx_= attrBuf_.addAttribute("absorbers", sizeof(float), MAX_ABSORBERS * 8u);
 
   nFluid_ = 0;
-  sources_.clear();
-  sourceStepsDone_.clear();
+  emitters_.clear();
+  emitterStepsDone_.clear();
 
   auto load = [&](ComputePipeline& k, const char* name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
   load(kPredictSdf_, "predict_sdf.comp");
@@ -176,76 +176,44 @@ void FluidEngine::setAbsorbers(const std::vector<AbsorberDesc>& absorbers) {
   attrBuf_.upload("absorbers", absorbers.data(), n * sizeof(AbsorberDesc), cmdPool_, queue_);
 }
 
-// ── ソース管理 ───────────────────────────────────────────────────────────────
+// ── Emitter 管理 ─────────────────────────────────────────────────────────────
 
-void FluidEngine::addSource(std::shared_ptr<Source> src) {
-  sources_.push_back(std::move(src));
-  sourceStepsDone_.push_back(0);
+void FluidEngine::addEmitter(std::shared_ptr<Emitter> emitter) {
+  emitters_.push_back(std::move(emitter));
+  emitterStepsDone_.push_back(0);
 }
 
-void FluidEngine::clearSources() {
-  sources_.clear();
-  sourceStepsDone_.clear();
+void FluidEngine::clearEmitters() {
+  emitters_.clear();
+  emitterStepsDone_.clear();
 }
 
-void FluidEngine::emitSources(float dt) {
-  for(size_t i = 0; i < sources_.size(); ++i) {
-    Source& src = *sources_[i];
-    int& done   = sourceStepsDone_[i];
+void FluidEngine::emitFromEmitters(float dt) {
+  for(size_t i = 0; i < emitters_.size(); ++i) {
+    Emitter& emitter = *emitters_[i];
+    int&     done     = emitterStepsDone_[i];
 
     bool shouldEmit = false;
-    if(src.step_count == -1)
+    if(emitter.step_count == -1)
       shouldEmit = (done == 0);
-    else if(src.step_count == 0)
+    else if(emitter.step_count == 0)
       shouldEmit = true;
     else
-      shouldEmit = (done < src.step_count);
+      shouldEmit = (done < emitter.step_count);
 
     if(!shouldEmit) continue;
 
     int available = int(cfg_.fluidCount()) - int(nFluid_);
-    int nNew      = std::min(src.particles_per_step, available);
+    int nNew      = std::min(emitter.particles_per_step, available);
     if(nNew <= 0) { done++; continue; }
 
     std::vector<glm::vec4> pos(nNew);
+    for(int j = 0; j < nNew; ++j)
+      pos[j] = glm::vec4(emitter.sample(emitterRng_), 1.0f);
 
-    if(auto* aabb = dynamic_cast<AABBSource*>(&src)) {
-      glm::vec3 half = aabb->size * 0.5f;
-      std::uniform_real_distribution<float> dx(-half.x, half.x);
-      std::uniform_real_distribution<float> dy(-half.y, half.y);
-      std::uniform_real_distribution<float> dz(-half.z, half.z);
-      for(int j = 0; j < nNew; ++j)
-        pos[j] = glm::vec4(aabb->center.x + dx(sourceRng_), aabb->center.y + dy(sourceRng_), aabb->center.z + dz(sourceRng_), 1.0f);
-    } else if(auto* sphere = dynamic_cast<SphereSource*>(&src)) {
-      std::uniform_real_distribution<float> dr(0.0f, 1.0f);
-      std::uniform_real_distribution<float> dtheta(0.0f, 3.14159265f);
-      std::uniform_real_distribution<float> dphi(0.0f, 2.0f * 3.14159265f);
-      for(int j = 0; j < nNew; ++j) {
-        float r     = sphere->radius * std::cbrt(dr(sourceRng_));
-        float theta = dtheta(sourceRng_);
-        float phi   = dphi(sourceRng_);
-        pos[j]      = glm::vec4(sphere->center.x + r * std::sin(theta) * std::cos(phi), sphere->center.y + r * std::sin(theta) * std::sin(phi), sphere->center.z + r * std::cos(theta), 1.0f);
-      }
-    } else if(auto* ell = dynamic_cast<EllipseSource*>(&src)) {
-      // rejection sampling: バウンディングボックス内の一様乱数を楕円内に制限
-      std::uniform_real_distribution<float> dx(-ell->semi_a, ell->semi_a);
-      std::uniform_real_distribution<float> dy(-ell->semi_b, ell->semi_b);
-      for(int j = 0; j < nNew; ++j) {
-        float ex, ey;
-        do {
-          ex = dx(sourceRng_);
-          ey = dy(sourceRng_);
-        } while((ex * ex) / (ell->semi_a * ell->semi_a) + (ey * ey) / (ell->semi_b * ell->semi_b) > 1.0f);
-        pos[j] = glm::vec4(ell->center.x + ex, ell->center.y + ey, ell->center.z, 1.0f);
-      }
-    } else {
-      for(int j = 0; j < nNew; ++j)
-        pos[j] = glm::vec4(src.center, 1.0f);
-    }
-
-    std::vector<glm::vec4> vel(nNew, glm::vec4(src.vel, 0.0f));
+    std::vector<glm::vec4> vel(nNew, glm::vec4(emitter.vel, 0.0f));
     std::vector<glm::vec4> invM(nNew, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
-    std::vector<uint32_t>  flags(nNew, src.particleType);
+    std::vector<uint32_t>  flags(nNew, emitter.particleType);
 
     VkDeviceSize byteOff = nFluid_ * sizeof(glm::vec4);
     VkDeviceSize flagOff = nFluid_ * sizeof(uint32_t);
@@ -259,8 +227,8 @@ void FluidEngine::emitSources(float dt) {
     nFluid_ += uint32_t(nNew);
     done++;
 
-    // ソース中心を移動
-    src.center += src.center_vel * dt;
+    // エミッタ中心を移動
+    emitter.center += emitter.center_vel * dt;
   }
 }
 
@@ -270,8 +238,8 @@ void FluidEngine::resetParticles() {
   if(device_ == VK_NULL_HANDLE) return;
   vkDeviceWaitIdle(device_);
   nFluid_ = 0;
-  std::fill(sourceStepsDone_.begin(), sourceStepsDone_.end(), 0);
-  sourceRng_.seed(12345);
+  std::fill(emitterStepsDone_.begin(), emitterStepsDone_.end(), 0);
+  emitterRng_.seed(12345);
 }
 
 // ── クリーンアップ ───────────────────────────────────────────────────────────
@@ -375,7 +343,7 @@ void FluidEngine::cleanupKinematicBoundaryStaging() {
 // ── 1フレームのシミュレーション ───────────────────────────────────────────────
 
 void FluidEngine::step(VkCommandBuffer cmd, float dt) {
-  emitSources(dt);
+  emitFromEmitters(dt);
 
   if(nFluid_ == 0 && nBoundary == 0) return;
 

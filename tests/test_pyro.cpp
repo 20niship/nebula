@@ -1,5 +1,5 @@
 // Pyro (グリッドベース煙・火炎) 単体テスト
-// PyroEngine の公開 API (init/step/addSource/setColliderSDF/getXxxBuffer) が
+// PyroEngine の公開 API (init/step/addEmitter/setColliderSDF/getXxxBuffer) が
 // HeadlessCtx 上でそのままテストハーネスとして使えるため、専用 Harness は作らない。
 #include <doctest/doctest.h>
 #include "helpers/HeadlessCtx.h"
@@ -29,13 +29,12 @@ TEST_CASE("Pyro GPU - 1-1: Buoyancy drives net upward velocity") {
     engine.vorticityEps   = 0.0f;
     engine.numJacobiIters = 20;
 
-    PyroSource heat;
-    heat.shape           = PyroSourceShape::SPHERE;
-    heat.center          = {5.0f, 5.0f, 5.0f};
-    heat.size            = glm::vec3(1.5f);
-    heat.temperatureRate = 8.0f;
-    heat.step_count      = 0;
-    engine.addSource(heat);
+    auto heat = std::make_shared<SphereEmitter>();
+    heat->center          = {5.0f, 5.0f, 5.0f};
+    heat->radius          = 1.5f;
+    heat->temperatureRate = 8.0f;
+    heat->step_count      = 0;
+    engine.addEmitter(heat);
 
     const float dt = 1.0f / 60.0f;
     for (int i = 0; i < 20; i++) {
@@ -72,13 +71,12 @@ TEST_CASE("Pyro GPU - 2-1: Pressure projection keeps interior divergence small")
     engine.buoyancyAlpha  = 3.0f;
     engine.numJacobiIters = 60;
 
-    PyroSource src;
-    src.shape           = PyroSourceShape::SPHERE;
-    src.center          = {5.0f, 2.0f, 5.0f};
-    src.size            = glm::vec3(1.5f);
-    src.temperatureRate = 6.0f;
-    src.step_count      = 0;
-    engine.addSource(src);
+    auto src = std::make_shared<SphereEmitter>();
+    src->center          = {5.0f, 2.0f, 5.0f};
+    src->radius          = 1.5f;
+    src->temperatureRate = 6.0f;
+    src->step_count      = 0;
+    engine.addEmitter(src);
 
     const float dt = 1.0f / 60.0f;
     for (int i = 0; i < 30; i++) {
@@ -145,14 +143,13 @@ TEST_CASE("Pyro GPU - 3-1: Obstacle SDF zeroes velocity inside solid") {
     engine.setColliderSDF(sdf);
 
     // 障害物のすぐ下から強い上向きの流れを注入し、障害物へ向かわせる
-    PyroSource src;
-    src.shape           = PyroSourceShape::SPHERE;
-    src.center          = {5.0f, 2.0f, 5.0f};
-    src.size            = glm::vec3(1.0f);
-    src.inflowVelocity  = {0.0f, 6.0f, 0.0f};
-    src.temperatureRate = 6.0f;
-    src.step_count      = 0;
-    engine.addSource(src);
+    auto src = std::make_shared<SphereEmitter>();
+    src->center          = {5.0f, 2.0f, 5.0f};
+    src->radius          = 1.0f;
+    src->inflowVelocity  = {0.0f, 6.0f, 0.0f};
+    src->temperatureRate = 6.0f;
+    src->step_count      = 0;
+    engine.addEmitter(src);
 
     const float dt = 1.0f / 60.0f;
     for (int i = 0; i < 15; i++) {
@@ -172,9 +169,9 @@ TEST_CASE("Pyro GPU - 3-1: Obstacle SDF zeroes velocity inside solid") {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 4: Source放出でdensity/fuelが対象領域内のみ増加する
+// 4: Emitter放出でdensity/fuelが対象領域内のみ増加する
 // ═══════════════════════════════════════════════════════════════════════════
-TEST_CASE("Pyro GPU - 4-1: Source emission increases density only near source") {
+TEST_CASE("Pyro GPU - 4-1: Emitter emission increases density only near emitter") {
     HeadlessCtx ctx; ctx.init();
 
     PyroConfig cfg; cfg.grid_res = 16; cfg.world_size = 10.0f;
@@ -185,13 +182,12 @@ TEST_CASE("Pyro GPU - 4-1: Source emission increases density only near source") 
     engine.buoyancyBeta  = 0.0f;
     engine.vorticityEps  = 0.0f;
 
-    PyroSource src;
-    src.shape       = PyroSourceShape::SPHERE;
-    src.center      = {2.0f, 2.0f, 2.0f};
-    src.size        = glm::vec3(1.0f);
-    src.densityRate = 5.0f;
-    src.step_count  = 0;
-    engine.addSource(src);
+    auto src = std::make_shared<SphereEmitter>();
+    src->center      = {2.0f, 2.0f, 2.0f};
+    src->radius      = 1.0f;
+    src->densityRate = 5.0f;
+    src->step_count  = 0;
+    engine.addEmitter(src);
 
     VkCommandBuffer cmd = ctx.beginCmd();
     engine.step(cmd, 1.0f / 60.0f);
@@ -231,14 +227,13 @@ TEST_CASE("Pyro GPU - 5-1: Combustion consumes fuel, raises temperature, emits f
     engine.smokeYieldPerFuel  = 1.0f;
     engine.flameBrightness    = 2.0f;
 
-    PyroSource src;
-    src.shape           = PyroSourceShape::SPHERE;
-    src.center          = {5.0f, 5.0f, 5.0f};
-    src.size            = glm::vec3(1.0f);
-    src.fuelRate        = 10.0f;
-    src.temperatureRate = 10.0f;
-    src.step_count      = 3; // 3フレームだけ放出、その後は燃焼のみ進行
-    engine.addSource(src);
+    auto src = std::make_shared<SphereEmitter>();
+    src->center          = {5.0f, 5.0f, 5.0f};
+    src->radius          = 1.0f;
+    src->fuelRate        = 10.0f;
+    src->temperatureRate = 10.0f;
+    src->step_count      = 3; // 3フレームだけ放出、その後は燃焼のみ進行
+    engine.addEmitter(src);
 
     const uint32_t G    = cfg.grid_res;
     const uint32_t code = meshSdfMortonEncode(G / 2, G / 2, G / 2);

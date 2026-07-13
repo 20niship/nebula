@@ -19,9 +19,9 @@ layout(push_constant) uniform PC {
     uint  pressureIdxB;    // 40
     uint  divergenceIdx;   // 44  float×CELLS
     uint  colliderSDFIdx;  // 48  float×CELLS (Morton SDF, 0=無効)
-    uint  sourcesIdx;      // 52  PyroSourceGPU×sourceCount (0=無効)
+    uint  emittersIdx;     // 52  EmitterGPU×emitterCount (0=無効)
     uint  gridRes;         // 56
-    uint  sourceCount;     // 60
+    uint  emitterCount;    // 60
     float dt;              // 64
     float cellSize;        // 68
     float worldMin;        // 72
@@ -59,10 +59,10 @@ layout(push_constant) uniform PC {
 #define readFloat(bufIdx, i)     uintBitsToFloat(buffers[(bufIdx)].data[(i)])
 #define writeFloat(bufIdx, i, v) buffers[(bufIdx)].data[(i)] = floatBitsToUint(v)
 
-// ── PyroSource 形状定数 (PyroSource.h の PyroSourceShape と一致) ───────────
-#define PYRO_SRC_AABB    0u
-#define PYRO_SRC_SPHERE  1u
-#define PYRO_SRC_ELLIPSE 2u
+// ── Emitter 形状定数 (Emitter.h の EmitterShape と一致) ────────────────────
+#define EMITTER_SHAPE_AABB    0u
+#define EMITTER_SHAPE_SPHERE  1u
+#define EMITTER_SHAPE_ELLIPSE 2u
 
 // ── Morton 符号 (Z-order curve, mpm_common.glsl と同一ロジック) ────────────
 uint pyroMortonExpand(uint v) {

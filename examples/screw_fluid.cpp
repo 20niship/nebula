@@ -1,5 +1,5 @@
 #include "App.h"
-#include "core/source.h"
+#include "core/Emitter.h"
 #include "engine/FluidEngine.h"
 #include "graphics/GraphicsPipeline.h"
 #include "utils.hpp"
@@ -188,14 +188,14 @@ private:
 
     // ── 流体ソース: スクリュー周囲を充填 ──────────────────────────────────
     // スクリュー外径 5m に合わせた 12m 角タンクに集中配置して粒子密度を上げる
-    auto src                = std::make_shared<AABBSource>();
+    auto src                = std::make_shared<AABBEmitter>();
     src->center             = glm::vec3(w * 0.2f, w * 0.3f, 4.0f);
     src->size               = glm::vec3(4.0f, 3.0f, 4.0f);
     src->vel                = glm::vec3(0.0f);
     src->particles_per_step = cfg.fluidCount() / 10;
     src->step_count         = 100000;
     src->particleType       = 1u;
-    engine_.addSource(src);
+    engine_.addEmitter(src);
 
     graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/fluid_particle.vert.spv", SHADER_DIR_STR + "/fluid.frag.spv");
 

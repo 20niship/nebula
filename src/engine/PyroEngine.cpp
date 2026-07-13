@@ -62,7 +62,7 @@ void PyroEngine::init(VkDevice device, VmaAllocator allocator,
   pressureIdx_[1]    = attrBuf_.addAttribute("presB", sizeof(float),     NC);
   divergenceIdx_     = attrBuf_.addAttribute("div",   sizeof(float),     NC);
   curlIdx_           = attrBuf_.addAttribute("curl",  sizeof(glm::vec4), NC);
-  sourcesIdx_        = attrBuf_.addAttribute("pyroSources", sizeof(PyroSourceGPU), cfg_.maxSources);
+  emittersIdx_       = attrBuf_.addAttribute("pyroEmitters", sizeof(EmitterGPU), cfg_.maxEmitters);
   cur_ = 0;
 
   // GPU バッファは未初期化のため、全フィールドを明示的にゼロクリアする
@@ -124,44 +124,44 @@ void PyroEngine::setColliderSDF(const std::vector<float>& mortonSDF) {
 
 void PyroEngine::clearCollider() { colliderSDFIdx_ = 0; }
 
-// ── Source ────────────────────────────────────────────────────────────────
+// ── Emitter ───────────────────────────────────────────────────────────────
 
-void PyroEngine::addSource(const PyroSource& src) {
-  sources_.push_back(src);
-  sourceStepsDone_.push_back(0);
+void PyroEngine::addEmitter(std::shared_ptr<Emitter> emitter) {
+  emitters_.push_back(std::move(emitter));
+  emitterStepsDone_.push_back(0);
 }
 
-void PyroEngine::clearSources() {
-  sources_.clear();
-  sourceStepsDone_.clear();
+void PyroEngine::clearEmitters() {
+  emitters_.clear();
+  emitterStepsDone_.clear();
 }
 
-void PyroEngine::updateSources(float dt) {
-  sourcesActiveCount_ = 0;
-  if (sources_.empty()) return;
+void PyroEngine::updateEmitters(float dt) {
+  emittersActiveCount_ = 0;
+  if (emitters_.empty()) return;
 
-  std::vector<PyroSourceGPU> active;
-  active.reserve(sources_.size());
+  std::vector<EmitterGPU> active;
+  active.reserve(emitters_.size());
 
-  for (size_t si = 0; si < sources_.size(); si++) {
-    PyroSource& src  = sources_[si];
-    int&        done = sourceStepsDone_[si];
+  for (size_t si = 0; si < emitters_.size(); si++) {
+    Emitter& emitter = *emitters_[si];
+    int&     done     = emitterStepsDone_[si];
 
     bool shouldEmit;
-    if      (src.step_count == -1) shouldEmit = (done == 0);
-    else if (src.step_count ==  0) shouldEmit = true;
-    else                           shouldEmit = (done < src.step_count);
+    if      (emitter.step_count == -1) shouldEmit = (done == 0);
+    else if (emitter.step_count ==  0) shouldEmit = true;
+    else                               shouldEmit = (done < emitter.step_count);
 
     if (!shouldEmit) continue;
-    if (active.size() < cfg_.maxSources) active.push_back(toPyroSourceGPU(src));
+    if (active.size() < cfg_.maxEmitters) active.push_back(emitter.pack());
     done++;
-    src.center += src.center_vel * dt;
+    emitter.center += emitter.center_vel * dt;
   }
 
   if (active.empty()) return;
-  attrBuf_.upload("pyroSources", active.data(),
-                  active.size() * sizeof(PyroSourceGPU), cmdPool_, queue_);
-  sourcesActiveCount_ = uint32_t(active.size());
+  attrBuf_.upload("pyroEmitters", active.data(),
+                  active.size() * sizeof(EmitterGPU), cmdPool_, queue_);
+  emittersActiveCount_ = uint32_t(active.size());
 }
 
 // ── Push Constants 構築 ──────────────────────────────────────────────────
@@ -182,10 +182,10 @@ PyroSimPC PyroEngine::buildPC(float dt) const {
   pc.divergenceIdx   = divergenceIdx_;
   pc.curlIdx         = curlIdx_;
   pc.colliderSDFIdx  = colliderSDFIdx_;
-  // sourcesIdx/sourceCount は updateSources() 後に step() 側で設定する (0=無効)
-  pc.sourcesIdx  = 0;
-  pc.sourceCount = 0;
-  pc.gridRes     = cfg_.grid_res;
+  // emittersIdx/emitterCount は updateEmitters() 後に step() 側で設定する (0=無効)
+  pc.emittersIdx  = 0;
+  pc.emitterCount = 0;
+  pc.gridRes      = cfg_.grid_res;
 
   pc.dt       = dt;
   pc.cellSize = cfg_.cellSize();
@@ -214,15 +214,15 @@ void PyroEngine::step(VkCommandBuffer cmd, float dt) {
   const float subDt = dt / float(std::max(1, numSubsteps));
 
   for (int s = 0; s < numSubsteps; s++) {
-    updateSources(subDt);
+    updateEmitters(subDt);
 
     PyroSimPC pc = buildPC(subDt);
-    if (sourcesActiveCount_ > 0) {
-      pc.sourcesIdx  = sourcesIdx_;
-      pc.sourceCount = sourcesActiveCount_;
+    if (emittersActiveCount_ > 0) {
+      pc.emittersIdx  = emittersIdx_;
+      pc.emitterCount = emittersActiveCount_;
     }
 
-    // ① Source 注入 (A バッファへインプレース)
+    // ① Emitter 注入 (A バッファへインプレース)
     dispatchPyro(cmd, kEmit_, pc);
     computeBarrier(cmd);
 

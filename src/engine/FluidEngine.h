@@ -9,7 +9,7 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
-#include "../core/source.h"
+#include "../core/Emitter.h"
 #include "AttributeBuffer.h"
 #include "ComputePipeline.h"
 #include "SimPC.h"
@@ -60,8 +60,8 @@ public:
   void step(VkCommandBuffer cmd, float dt);
   void resetParticles(); // 粒子を初期位置・速度にリセット（バッファ/パイプラインは再生成しない）
 
-  void addSource(std::shared_ptr<Source> src);
-  void clearSources();
+  void addEmitter(std::shared_ptr<Emitter> emitter);
+  void clearEmitters();
   uint32_t nFluid() const { return nFluid_; }
 
   void loadBoundary(const std::string& objPath, float spacing);
@@ -192,11 +192,11 @@ private:
 
   std::vector<glm::vec3> boundaryTriVerts_;
 
-  std::vector<std::shared_ptr<Source>> sources_;
-  std::vector<int> sourceStepsDone_;
+  std::vector<std::shared_ptr<Emitter>> emitters_;
+  std::vector<int> emitterStepsDone_;
   uint32_t nFluid_ = 0;
-  std::mt19937 sourceRng_{12345};
+  std::mt19937 emitterRng_{12345};
 
-  void emitSources(float dt);
+  void emitFromEmitters(float dt);
   void computeBarrier(VkCommandBuffer cmd);
 };

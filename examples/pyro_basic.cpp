@@ -1,7 +1,7 @@
 /**
  * pyro_basic — グリッドベース煙・火炎 (Pyro) シミュレーション、ヘッドレス実行
  *
- * 可視化は不要 (ウィンドウ/ImGui なし)。複数の PyroSource (炎/煙の発生源、位置違い・
+ * 可視化は不要 (ウィンドウ/ImGui なし)。複数の Emitter (炎/煙の発生源、位置違い・
  * 一部は移動) + 1個の移動 STL 障害物 (--obstacle-rebuild-interval フレームごとに
  * SDF 再構築) を設定し、--n-frames 回 step() を回して --dump-every フレームごとに
  * ボクセルを .pvox としてダンプする。可視化は tools/pyro_raymarch.py (Python) 側で行う。
@@ -71,42 +71,41 @@ int main(int argc, char* argv[]) {
 
     const float W = cfg.world_size;
 
-    // ── 複数 Source (位置違い、一部は移動) ─────────────────────────────────
+    // ── 複数 Emitter (位置違い、一部は移動) ─────────────────────────────────
     {
-      PyroSource fire1;
-      fire1.shape           = PyroSourceShape::SPHERE;
-      fire1.center           = {W * 0.3f, W * 0.08f, W * 0.5f};
-      fire1.size             = glm::vec3(W * 0.06f);
-      fire1.inflowVelocity   = {0.0f, 2.0f, 0.0f};
-      fire1.densityRate      = 0.5f;
-      fire1.temperatureRate  = 3.0f;
-      fire1.fuelRate         = 2.0f;
-      fire1.step_count       = 0; // 無限
-      engine.addSource(fire1);
+      auto fire1 = std::make_shared<SphereEmitter>();
+      fire1->center           = {W * 0.3f, W * 0.08f, W * 0.5f};
+      fire1->radius           = W * 0.06f;
+      fire1->inflowVelocity   = {0.0f, 2.0f, 0.0f};
+      fire1->densityRate      = 0.5f;
+      fire1->temperatureRate  = 3.0f;
+      fire1->fuelRate         = 2.0f;
+      fire1->step_count       = 0; // 無限
+      engine.addEmitter(fire1);
 
-      PyroSource fire2;
-      fire2.shape           = PyroSourceShape::SPHERE;
-      fire2.center           = {W * 0.7f, W * 0.08f, W * 0.5f};
-      fire2.size             = glm::vec3(W * 0.05f);
-      fire2.center_vel       = {0.0f, 0.0f, 0.3f}; // Z方向へゆっくり移動
-      fire2.inflowVelocity   = {0.0f, 1.8f, 0.0f};
-      fire2.densityRate      = 0.4f;
-      fire2.temperatureRate  = 2.5f;
-      fire2.fuelRate         = 1.6f;
-      fire2.step_count       = 0;
-      engine.addSource(fire2);
+      auto fire2 = std::make_shared<SphereEmitter>();
+      fire2->center           = {W * 0.7f, W * 0.08f, W * 0.5f};
+      fire2->radius           = W * 0.05f;
+      fire2->center_vel       = {0.0f, 0.0f, 0.3f}; // Z方向へゆっくり移動
+      fire2->inflowVelocity   = {0.0f, 1.8f, 0.0f};
+      fire2->densityRate      = 0.4f;
+      fire2->temperatureRate  = 2.5f;
+      fire2->fuelRate         = 1.6f;
+      fire2->step_count       = 0;
+      engine.addEmitter(fire2);
 
-      PyroSource smoke3;
-      smoke3.shape          = PyroSourceShape::ELLIPSE;
-      smoke3.center          = {W * 0.5f, W * 0.15f, W * 0.25f};
-      smoke3.size            = {W * 0.08f, W * 0.03f, W * 0.08f};
-      smoke3.center_vel      = {0.15f, 0.0f, 0.0f}; // X方向へ移動 (燃料なし、煙のみ)
-      smoke3.inflowVelocity  = {0.0f, 1.0f, 0.0f};
-      smoke3.densityRate     = 0.6f;
-      smoke3.temperatureRate = 0.8f;
-      smoke3.fuelRate        = 0.0f;
-      smoke3.step_count      = 0;
-      engine.addSource(smoke3);
+      auto smoke3 = std::make_shared<EllipseEmitter>();
+      smoke3->center          = {W * 0.5f, W * 0.15f, W * 0.25f};
+      smoke3->semiA           = W * 0.08f;
+      smoke3->halfHeightY     = W * 0.03f;
+      smoke3->semiB           = W * 0.08f;
+      smoke3->center_vel      = {0.15f, 0.0f, 0.0f}; // X方向へ移動 (燃料なし、煙のみ)
+      smoke3->inflowVelocity  = {0.0f, 1.0f, 0.0f};
+      smoke3->densityRate     = 0.6f;
+      smoke3->temperatureRate = 0.8f;
+      smoke3->fuelRate        = 0.0f;
+      smoke3->step_count      = 0;
+      engine.addEmitter(smoke3);
     }
 
     // ── 移動 STL 障害物 (--obstacle-rebuild-interval フレームごとに SDF 再構築) ──

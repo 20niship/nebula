@@ -16,6 +16,12 @@ add_executable(vulkan_tests
     helpers/PhysicsHarness.cpp
     helpers/PBFHarness.cpp
     helpers/MPMHarness.cpp
+    test_string2d.cpp
+    # test_string3d.cpp
+    test_fluid.cpp
+    # test_pbf_fluid.cpp
+    # test_pbf.cpp
+    test_mpm.cpp
     test_pyro.cpp
 )
 

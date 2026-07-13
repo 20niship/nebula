@@ -8,22 +8,23 @@ layout(local_size_x = 256) in;
 void main() {
     uint i = gl_GlobalInvocationID.x;
     if (i >= pc.particleCount) return;
+    uint idx = i + pc.fluidStart;
 
-    float invM = readVec4(pc.invMassIdx, i).x;
+    float invM = readVec4(pc.invMassIdx, idx).x;
 
     if (invM == 0.0) {
-        writeVec4(pc.predPIdx, i, readVec4(pc.posIdx, i));
+        writeVec4(pc.predPIdx, idx, readVec4(pc.posIdx, idx));
         return;
     }
 
-    vec4 p = readVec4(pc.posIdx, i);
-    vec4 v = readVec4(pc.velIdx, i);
+    vec4 p = readVec4(pc.posIdx, idx);
+    vec4 v = readVec4(pc.velIdx, idx);
 
     // 重力 (Z-up)
     v.z += pc.gravity * pc.dt;
 
     // 布頂点 (typeFlag == 2) には風力を追加
-    uint flag = readUint(pc.typeFlagIdx, i);
+    uint flag = readUint(pc.typeFlagIdx, idx);
     if (flag == 2u) {
         v.x += pc.windX * pc.dt;
         v.y += pc.windZ * pc.dt;
@@ -44,6 +45,6 @@ void main() {
     float hi = pc.worldMax - r;
     predP.xyz = clamp(predP.xyz, vec3(lo), vec3(hi));
 
-    writeVec4(pc.velIdx,   i, v);       // 重力・風を積分した速度（衝突応答はしない）
-    writeVec4(pc.predPIdx, i, predP);
+    writeVec4(pc.velIdx,   idx, v);       // 重力・風を積分した速度（衝突応答はしない）
+    writeVec4(pc.predPIdx, idx, predP);
 }

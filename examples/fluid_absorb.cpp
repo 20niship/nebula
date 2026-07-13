@@ -164,7 +164,7 @@ private:
     engine_.loadBoundaryParticles(allBoundary);
     engine_.initKinematicBoundaryStaging(nMoving_);
 
-    movingBoundaryStart_ = cfg.fluidCount() + nStaticBoundary;
+    movingBoundaryStart_ = nStaticBoundary; // 境界パーティクルは常に buffer index 0 から配置される
     movingPos_.resize(nMoving_);
     movingVel_.resize(nMoving_);
 
@@ -187,6 +187,10 @@ private:
   }
 
   void recordComputeCmd(VkCommandBuffer cmd) {
+    // 容量拡張によるバッファ再確保は、下の recordKinematicBoundaryUpdate が
+    // その時点の VkBuffer ハンドルをコマンドバッファへ焼き込む前に解決しておく
+    engine_.emitFromEmitters(dt_);
+
     VkCommandBufferBeginInfo bi{};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -252,6 +256,7 @@ private:
     pc.particleCount = engine_.nFluid();
     pc.worldMin      = 0.0f;
     pc.worldMax      = engine_.config().world_size;
+    pc.boundaryStart = engine_.config().max_boundary; // 流体パーティクル領域の開始オフセット
 
     graphicsPipe_.draw(cmd, engine_.descriptorSet, pc, engine_.nFluid());
 

@@ -57,6 +57,14 @@ public:
   void init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const FluidConfig& cfg = {});
   void cleanup();
 
+  // emitter からの粒子生成 (容量不足時は内部で growFluidCapacity() を呼び、
+  // P/v/predP/... バッファを再確保する)。バッファが再確保されると
+  // attrBuf_.getBuffer(...) / getPositionBuffer() の返す VkBuffer は別ハンドルになるため、
+  // 呼び出し側がその時点の VkBuffer ハンドルをコマンドバッファに焼き込む
+  // (vkCmdCopyBuffer など、例: recordKinematicBoundaryUpdate) 前に、
+  // 必ず1フレームにつき1回・最初に呼び出すこと。step() はこれを呼ばない。
+  void emitFromEmitters(float dt);
+
   void step(VkCommandBuffer cmd, float dt);
   void resetParticles(); // 粒子を初期位置・速度にリセット（バッファ/パイプラインは再生成しない）
 
@@ -146,6 +154,14 @@ private:
 
   AttributeBuffer attrBuf_;
 
+  // ── 動的粒子数確保 (Issue #13) ──────────────────────────────────────────
+  // バッファレイアウト: [0, max_boundary) 境界(固定) | [max_boundary, max_boundary+fluidCapacity_) 流体(可変長)
+  //                     | 末尾 kDispatchPad 要素は端数ワークグループの安全マージン
+  uint32_t fluidCapacity_ = 0; // 現在確保済みの流体パーティクル容量 (>= nFluid_)
+  static constexpr uint32_t kDispatchPad = 256; // ローカルワークグループサイズと同じ
+  uint32_t totalBufferCapacity() const { return cfg_.max_boundary + fluidCapacity_ + kDispatchPad; }
+  void growFluidCapacity(uint32_t minRequired);
+
   uint32_t cellCountIdx_  = 0;
   uint32_t cellOffsetIdx_ = 0;
   uint32_t sortedIdxIdx_  = 0;
@@ -187,6 +203,5 @@ private:
   uint32_t nFluid_ = 0;
   std::mt19937 emitterRng_{12345};
 
-  void emitFromEmitters(float dt);
   void computeBarrier(VkCommandBuffer cmd);
 };

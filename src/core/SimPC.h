@@ -62,5 +62,11 @@ struct SimPC {
   // ── 吸収ポート (fluid_absorb 専用; 他シェーダーは宣言のみで不使用) ──────
   uint32_t absorberBufIdx; // 吸収形状バッファの bindless index (8 floats × absorberCount)
   uint32_t absorberCount;  // 有効な吸収形状数 (0 = 吸収パスをスキップ)
+
+  uint32_t fluidStart; // 流体パーティクル領域の開始オフセット (= FluidEngine の cfg_.max_boundary)。
+                        // predict_sdf/sdf_collision/pbf_density/pbf_delta_p/update_velocity/
+                        // pbf_viscosity/vorticity/absorb など「流体のみ」を対象とする FluidEngine
+                        // 専用ディスパッチで i に加算し実バッファ添字を得る。既定値0=オフセットなし
+                        // のため、このフィールドを設定しない他エンジンは影響を受けない。
 };
-static_assert(sizeof(SimPC) == 168, "SimPC must be 168 bytes");
+static_assert(sizeof(SimPC) == 172, "SimPC must be 172 bytes");

@@ -79,6 +79,9 @@ private:
   }
 
   void recordComputeCmd(VkCommandBuffer cmd) {
+    // 容量拡張によるバッファ再確保はコマンドバッファ記録前に解決しておく
+    engine_.emitFromEmitters(dt_);
+
     VkCommandBufferBeginInfo bi{};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -127,15 +130,21 @@ private:
     sc.extent = base_.ctx.swapchainExtent;
     vkCmdSetScissor(cmd, 0, 1, &sc);
 
-    uint32_t totalN = engine_.config().fluidCount() + engine_.nBoundary;
     SimPC pc{};
-    pc.posIdx        = engine_.posIdx;
-    pc.velIdx        = engine_.velIdx;
-    pc.particleCount = totalN;
-    pc.worldMin      = 0.0f;
-    pc.worldMax      = engine_.config().world_size;
+    pc.posIdx   = engine_.posIdx;
+    pc.velIdx   = engine_.velIdx;
+    pc.worldMin = 0.0f;
+    pc.worldMax = engine_.config().world_size;
 
-    graphicsPipe_.draw(cmd, engine_.descriptorSet, pc, totalN);
+    // 境界: buffer index 0 から
+    pc.boundaryStart = 0;
+    pc.particleCount = engine_.nBoundary;
+    graphicsPipe_.draw(cmd, engine_.descriptorSet, pc, engine_.nBoundary);
+
+    // 流体
+    pc.boundaryStart = engine_.config().max_boundary;
+    pc.particleCount = engine_.nFluid();
+    graphicsPipe_.draw(cmd, engine_.descriptorSet, pc, engine_.nFluid());
 
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     vkCmdEndRenderPass(cmd);

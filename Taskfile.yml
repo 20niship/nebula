@@ -187,3 +187,11 @@ tasks:
     cmds:
       - task --list
     silent: true
+
+  format:
+    desc: "clang-format でコードを整形"
+    cmds:
+      - python3 tools/format.py examples/
+      - python3 tools/format.py tests/
+      - python3 tools/format.py src/
+

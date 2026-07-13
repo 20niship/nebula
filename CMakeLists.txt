@@ -153,53 +153,6 @@ endforeach()
 
 add_custom_target(shaders ALL DEPENDS ${SHADER_SPV})
 
-# ── 共通設定ヘルパー ─────────────────────────────────────────────────────
-set(SIM_INCLUDE_DIRS
-    src
-    src/core
-    src/engine
-    src/graphics
-    ${IMGUI_DIR}
-    ${IMGUI_DIR}/backends
-    third_party/VulkanMemoryAllocator/include
-    third_party/argparse/include
-    ${NANOVDB_INCLUDE_DIR}  # NanoVDB: #include <nanovdb/NanoVDB.h>
-)
-set(SIM_LINK_LIBS
-    Vulkan::Vulkan
-    glfw
-    glm::glm
-    imgui
-    GPUOpen::VulkanMemoryAllocator
-)
-
-function(add_sim_example TARGET)
-    # ARGN = source files
-    if(APPLE)
-        add_executable(${TARGET} ${ARGN} src/VkSafeAlloc.mm)
-    else()
-        add_executable(${TARGET} ${ARGN})
-    endif()
-    add_dependencies(${TARGET} shaders)
-    target_include_directories(${TARGET} PRIVATE ${SIM_INCLUDE_DIRS})
-    target_link_libraries(${TARGET} PRIVATE ${SIM_LINK_LIBS})
-    target_compile_definitions(${TARGET} PRIVATE
-        SHADER_DIR="${SHADER_OUT_DIR}"
-        ASSET_DIR="${CMAKE_SOURCE_DIR}/assets"
-    )
-    if(APPLE)
-        set_target_properties(${TARGET} PROPERTIES
-            BUILD_RPATH   "${VULKAN_SDK}/lib"
-            INSTALL_RPATH "${VULKAN_SDK}/lib"
-        )
-        target_compile_definitions(${TARGET} PRIVATE VK_USE_PLATFORM_METAL_EXT)
-        target_link_libraries(${TARGET} PRIVATE "-framework Foundation")
-    endif()
-    target_compile_definitions(${TARGET} PRIVATE
-        $<$<CONFIG:Debug>:VULKAN_VALIDATION>
-    )
-endfunction()
-
 # ── doctest (ヘッダオンリー、FetchContent 経由) ───────────────────────────
 include(FetchContent)
 FetchContent_Declare(
@@ -223,235 +176,76 @@ FetchContent_MakeAvailable(tinyobjloader)
 # assets ディレクトリ
 set(ASSET_DIR ${CMAKE_SOURCE_DIR}/assets)
 
+add_subdirectory(src)
+
+# ── 共通設定ヘルパー ─────────────────────────────────────────────────────
+function(add_sim_example TARGET)
+    # ARGN = source files
+    add_executable(${TARGET} ${ARGN})
+    add_dependencies(${TARGET} shaders)
+    target_link_libraries(${TARGET} PRIVATE nebula)
+    if(APPLE)
+        set_target_properties(${TARGET} PROPERTIES
+            BUILD_RPATH   "${VULKAN_SDK}/lib"
+            INSTALL_RPATH "${VULKAN_SDK}/lib"
+        )
+    endif()
+endfunction()
+
 enable_testing()
 add_subdirectory(tests)
 
 # ── cloth_3d: 3D 布シミュレーション (Phase 3) ─────────────────────────────
-add_sim_example(cloth_3d
-    src/core/VulkanContext.cpp
-    src/core/AttributeBuffer.cpp
-    src/core/ComputePipeline.cpp
-    src/graphics/GraphicsPipeline.cpp
-    src/engine/ClothMesh.cpp
-    src/graphics/ClothRenderer.cpp
-    src/engine/SimulationEngine.cpp
-    src/App.cpp
-    examples/cloth_3d.cpp
-)
+add_sim_example(cloth_3d examples/cloth_3d.cpp)
 
 # ── string_2d: 2D 糸シミュレーション (自己衝突検証) ──────────────────────
-add_sim_example(string_2d
-    src/core/VulkanContext.cpp
-    src/core/AttributeBuffer.cpp
-    src/core/ComputePipeline.cpp
-    examples/string_2d.cpp
-)
+add_sim_example(string_2d examples/string_2d.cpp)
 
 # ── fluid_pbf: Phase 4 PBF 流体シミュレーション ───────────────────────────
-add_sim_example(fluid_pbf
-    src/core/VulkanContext.cpp
-    src/core/AttributeBuffer.cpp
-    src/core/ComputePipeline.cpp
-    src/graphics/GraphicsPipeline.cpp
-    src/engine/FluidEngine.cpp
-    src/engine/BoundaryParticles.cpp
-    src/App.cpp
-    examples/fluid_pbf.cpp
-)
-target_link_libraries(fluid_pbf PRIVATE tinyobjloader)
+add_sim_example(fluid_pbf examples/fluid_pbf.cpp)
 
 # ── fluid_absorb: 楕円水たまり + 移動円柱吸収ポート ────────────────────────────
-add_sim_example(fluid_absorb
-    src/core/VulkanContext.cpp
-    src/core/AttributeBuffer.cpp
-    src/core/ComputePipeline.cpp
-    src/graphics/GraphicsPipeline.cpp
-    src/engine/FluidEngine.cpp
-    src/engine/BoundaryParticles.cpp
-    src/App.cpp
-    examples/fluid_absorb.cpp
-)
-target_link_libraries(fluid_absorb PRIVATE tinyobjloader)
+add_sim_example(fluid_absorb examples/fluid_absorb.cpp)
 
 # ── fluid_sphere: 球体容器内 PBF 流体 (UI なし自動スポーン) ──────────────────
-add_sim_example(fluid_sphere
-    src/core/VulkanContext.cpp
-    src/core/AttributeBuffer.cpp
-    src/core/ComputePipeline.cpp
-    src/graphics/GraphicsPipeline.cpp
-    src/engine/FluidEngine.cpp
-    src/engine/BoundaryParticles.cpp
-    src/App.cpp
-    examples/fluid_sphere.cpp
-)
-target_link_libraries(fluid_sphere PRIVATE tinyobjloader)
+add_sim_example(fluid_sphere examples/fluid_sphere.cpp)
 
 # ── smoke: 煙パーティクルシミュレーション ─────────────────────────────────────
-add_sim_example(smoke
-    src/core/VulkanContext.cpp
-    src/core/AttributeBuffer.cpp
-    src/core/ComputePipeline.cpp
-    src/graphics/GraphicsPipeline.cpp
-    src/engine/FluidEngine.cpp
-    src/engine/BoundaryParticles.cpp
-    src/App.cpp
-    examples/smoke.cpp
-)
-target_link_libraries(smoke PRIVATE tinyobjloader)
+add_sim_example(smoke examples/smoke.cpp)
 
 # ── screw_fluid: TC8 回転スクリュー in PBF 流体 ──────────────────────────────
-add_sim_example(screw_fluid
-    src/core/VulkanContext.cpp
-    src/core/AttributeBuffer.cpp
-    src/core/ComputePipeline.cpp
-    src/graphics/GraphicsPipeline.cpp
-    src/engine/FluidEngine.cpp
-    src/engine/BoundaryParticles.cpp
-    src/App.cpp
-    examples/screw_fluid.cpp
-)
-target_link_libraries(screw_fluid PRIVATE tinyobjloader)
+add_sim_example(screw_fluid examples/screw_fluid.cpp)
 
 # ── cloth_scene: TC5 布2枚 / TC7 4隅ねじれ ──────────────────────────────────
-add_sim_example(cloth_scene
-    src/core/VulkanContext.cpp
-    src/core/AttributeBuffer.cpp
-    src/core/ComputePipeline.cpp
-    src/graphics/GraphicsPipeline.cpp
-    src/graphics/ClothRenderer.cpp
-    src/engine/ClothMesh.cpp
-    src/engine/ClothSceneEngine.cpp
-    src/App.cpp
-    examples/cloth_scene.cpp
-)
+add_sim_example(cloth_scene examples/cloth_scene.cpp)
 
 # ── xpbd_softbody: XPBD 四面体ソフトボディシミュレーション ──────────────────
-add_sim_example(xpbd_softbody
-    src/core/VulkanContext.cpp
-    src/core/AttributeBuffer.cpp
-    src/core/ComputePipeline.cpp
-    src/graphics/GraphicsPipeline.cpp
-    src/engine/SoftBodyEngine.cpp
-    src/App.cpp
-    examples/xpbd_softbody.cpp
-)
+add_sim_example(xpbd_softbody examples/xpbd_softbody.cpp)
 
 # ── multi_physics: Phase 5 布×流体 双方向連成 ────────────────────────────────
-add_sim_example(multi_physics
-    src/core/VulkanContext.cpp
-    src/core/AttributeBuffer.cpp
-    src/core/ComputePipeline.cpp
-    src/graphics/GraphicsPipeline.cpp
-    src/engine/ClothMesh.cpp
-    src/graphics/ClothRenderer.cpp
-    src/engine/MultiPhysicsEngine.cpp
-    src/App.cpp
-    examples/multi_physics.cpp
-)
+add_sim_example(multi_physics examples/multi_physics.cpp)
 
 # ── mpm_elastic: GPU MPM 弾性/塑性シミュレーション ─────────────────────────
-add_sim_example(mpm_elastic
-    src/core/VulkanContext.cpp
-    src/core/AttributeBuffer.cpp
-    src/core/ComputePipeline.cpp
-    src/graphics/GraphicsPipeline.cpp
-    src/engine/MPMEngine.cpp
-    src/App.cpp
-    examples/mpm_elastic.cpp
-)
-# Apple libc++ (SDK 14) は std::atomic_ref を未実装のため、
-# NanoVDB Util.h が C++20 ブランチに入らないよう MPMEngine.cpp のみ C++17 でコンパイル。
-if(APPLE)
-    set_source_files_properties(src/engine/MPMEngine.cpp
-        PROPERTIES COMPILE_OPTIONS "-std=c++17")
-endif()
-
-# ── mpm_granular: Drucker-Prager 砂柱崩壊 ────────────────────────────────
-add_sim_example(mpm_granular
-    src/core/VulkanContext.cpp
-    src/core/AttributeBuffer.cpp
-    src/core/ComputePipeline.cpp
-    src/graphics/GraphicsPipeline.cpp
-    src/engine/MPMEngine.cpp
-    src/App.cpp
-    examples/mpm_granular.cpp
-)
+add_sim_example(mpm_elastic examples/mpm_elastic.cpp)
 
 # ── mpm_multimaterial: 弾性体 + 砂 混在シミュレーション ─────────────────
-add_sim_example(mpm_multimaterial
-    src/core/VulkanContext.cpp
-    src/core/AttributeBuffer.cpp
-    src/core/ComputePipeline.cpp
-    src/graphics/GraphicsPipeline.cpp
-    src/engine/MPMEngine.cpp
-    src/App.cpp
-    examples/mpm_multimaterial.cpp
-)
-
-# ── mpm_fountain: コライダー + ソースエミッタ (Phase 3/4) ────────────────
-add_sim_example(mpm_fountain
-    src/core/VulkanContext.cpp
-    src/core/AttributeBuffer.cpp
-    src/core/ComputePipeline.cpp
-    src/graphics/GraphicsPipeline.cpp
-    src/engine/MPMEngine.cpp
-    src/App.cpp
-    examples/mpm_fountain.cpp
-)
+add_sim_example(mpm_multimaterial examples/mpm_multimaterial.cpp)
 
 # ── mpm_avalanche: 山岳地形 + Drucker-Prager 雪崩 (~80K 粒子) ───────────
-add_sim_example(mpm_avalanche
-    src/core/VulkanContext.cpp
-    src/core/AttributeBuffer.cpp
-    src/core/ComputePipeline.cpp
-    src/graphics/GraphicsPipeline.cpp
-    src/engine/MPMEngine.cpp
-    src/App.cpp
-    examples/mpm_avalanche.cpp
-)
-
-# ── mpm_stl_drop: 任意 STL 障害物 SDF + 上部からパーティクル落下 ──────────
-add_sim_example(mpm_stl_drop
-    src/core/VulkanContext.cpp
-    src/core/AttributeBuffer.cpp
-    src/core/ComputePipeline.cpp
-    src/graphics/GraphicsPipeline.cpp
-    src/engine/MPMEngine.cpp
-    src/App.cpp
-    examples/mpm_stl_drop.cpp
-)
+add_sim_example(mpm_avalanche examples/mpm_avalanche.cpp)
 
 # ── mpm_geolayer: 地層崩壊 (複数マテリアル) ──────────────────────────────────
-add_sim_example(mpm_geolayer
-    src/core/VulkanContext.cpp
-    src/core/AttributeBuffer.cpp
-    src/core/ComputePipeline.cpp
-    src/graphics/GraphicsPipeline.cpp
-    src/engine/MPMEngine.cpp
-    src/App.cpp
-    examples/mpm_geolayer.cpp
-)
+add_sim_example(mpm_geolayer examples/mpm_geolayer.cpp)
 
 # ── mpm_snow_impact: 移動箱 SDF による雪衝突 ─────────────────────────────────
-add_sim_example(mpm_snow_impact
-    src/core/VulkanContext.cpp
-    src/core/AttributeBuffer.cpp
-    src/core/ComputePipeline.cpp
-    src/graphics/GraphicsPipeline.cpp
-    src/engine/MPMEngine.cpp
-    src/App.cpp
-    examples/mpm_snow_impact.cpp
-)
+add_sim_example(mpm_snow_impact examples/mpm_snow_impact.cpp)
 
 # ── Pyro (グリッドベース煙・火炎) ヘッドレス実行例 ───────────────────────────
 # ウィンドウ/ImGui を使わないため add_sim_example ではなく tests/vulkan_tests と
 # 同じ最小構成 (HeadlessCtx) を用いる。ボクセルを .pvox にダンプするのみで、
 # 可視化は tools/pyro_raymarch.py (Python) 側で行う。
 if(APPLE)
-    set(PYRO_PLATFORM_WRAPPERS
-        tests/helpers/VkWrapper.mm
-        src/VkSafeAlloc.mm
-    )
+    set(PYRO_PLATFORM_WRAPPERS tests/helpers/VkWrapper.mm)
 else()
     set(PYRO_PLATFORM_WRAPPERS "")
 endif()
@@ -461,32 +255,11 @@ function(add_pyro_example TARGET SOURCE_FILE)
         ${SOURCE_FILE}
         tests/helpers/HeadlessCtx.cpp
         ${PYRO_PLATFORM_WRAPPERS}
-        src/core/AttributeBuffer.cpp
-        src/core/ComputePipeline.cpp
-        src/engine/PyroEngine.cpp
     )
     add_dependencies(${TARGET} shaders)
-
-    target_include_directories(${TARGET} PRIVATE
-        src
-        src/core
-        src/engine
-        tests
-        third_party/VulkanMemoryAllocator/include
-        third_party/argparse/include
-    )
-    target_compile_definitions(${TARGET} PRIVATE
-        SHADER_DIR="${SHADER_OUT_DIR}"
-        ASSET_DIR="${CMAKE_SOURCE_DIR}/assets"
-    )
-    target_link_libraries(${TARGET} PRIVATE
-        Vulkan::Vulkan
-        glm::glm
-        GPUOpen::VulkanMemoryAllocator
-    )
+    target_include_directories(${TARGET} PRIVATE tests)
+    target_link_libraries(${TARGET} PRIVATE nebula)
     if(APPLE)
-        target_compile_definitions(${TARGET} PRIVATE VK_USE_PLATFORM_METAL_EXT)
-        target_link_libraries(${TARGET} PRIVATE "-framework Foundation")
         set_target_properties(${TARGET} PROPERTIES
             BUILD_RPATH   "${VULKAN_SDK}/lib"
             INSTALL_RPATH "${VULKAN_SDK}/lib"

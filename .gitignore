@@ -81,3 +81,7 @@ venv/
 # Generated/temporary files
 _skipped.face
 _skipped.node
+
+__pycache__/
+*.py[cod]
+*.pyc

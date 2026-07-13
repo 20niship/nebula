@@ -48,13 +48,12 @@ int main(int argc, char* argv[]) {
     cfg.world_size = args.world_size;
 
     PyroEngine engine;
-    engine.init(ctx.device, ctx.allocator, ctx.descriptorPool,
-                ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR, cfg);
+    engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR, cfg);
 
     engine.numSubsteps        = args.substeps;
     engine.numPressureIters   = args.pressure_iters;
     engine.vorticityEps       = args.vorticity_eps;
-    engine.buoyancyAlpha      = 5.0f;  // 強い浮力で急速に立ち上らせる
+    engine.buoyancyAlpha      = 5.0f; // 強い浮力で急速に立ち上らせる
     engine.buoyancyBeta       = 0.5f;
     engine.ambientTemp        = 0.0f;
     engine.densityDissipation = 0.02f; // 傘の煙が長く残るよう減衰を抑える
@@ -62,37 +61,36 @@ int main(int argc, char* argv[]) {
     engine.velocityDissipation = args.velocity_dissipation;
     engine.maxVelocity         = args.max_velocity;
     // 燃焼 (fire) パラメータ: 短時間の一気燃焼
-    engine.ignitionTemp       = 1.0f;
-    engine.burnRate           = 4.0f;
-    engine.heatRelease        = 6.0f;
-    engine.smokeYieldPerFuel  = 2.5f;
-    engine.flameBrightness    = 4.0f;
+    engine.ignitionTemp      = 1.0f;
+    engine.burnRate          = 4.0f;
+    engine.heatRelease       = 6.0f;
+    engine.smokeYieldPerFuel = 2.5f;
+    engine.flameBrightness   = 4.0f;
 
     const float W = cfg.world_size;
 
     // ── 地表付近での爆発源 (短時間バースト後、燃焼と浮力のみで自律的に発達) ──
-    PyroSource blast;
-    blast.shape           = PyroSourceShape::SPHERE;
-    blast.center          = {W * 0.5f, W * 0.06f, W * 0.5f};
-    blast.size            = glm::vec3(W * 0.07f);
-    blast.inflowVelocity  = {0.0f, 4.0f, 0.0f}; // 上向きの初速キック
-    blast.densityRate     = 30.0f;
-    blast.temperatureRate = 40.0f;
-    blast.fuelRate        = 25.0f;
-    blast.step_count      = args.burst_frames;
-    engine.addSource(blast);
+    auto blast             = std::make_shared<SphereEmitter>();
+    blast->center          = {W * 0.5f, W * 0.06f, W * 0.5f};
+    blast->radius          = W * 0.07f;
+    blast->inflowVelocity  = {0.0f, 4.0f, 0.0f}; // 上向きの初速キック
+    blast->densityRate     = 30.0f;
+    blast->temperatureRate = 40.0f;
+    blast->fuelRate        = 25.0f;
+    blast->step_count      = args.burst_frames;
+    engine.addEmitter(blast);
 
     std::filesystem::create_directories(args.out_dir);
 
     float simTime = 0.0f;
-    for (int frame = 0; frame < args.n_frames; frame++) {
+    for(int frame = 0; frame < args.n_frames; frame++) {
       VkCommandBuffer cmd = ctx.beginCmd();
       engine.step(cmd, args.dt);
       ctx.submitCmd(cmd);
 
       simTime += args.dt;
 
-      if (args.dump_every > 0 && frame % args.dump_every == 0) {
+      if(args.dump_every > 0 && frame % args.dump_every == 0) {
         char path[512];
         std::snprintf(path, sizeof(path), "%s/frame_%04d.pvox", args.out_dir.c_str(), frame);
         engine.dumpFrame(path, simTime);
@@ -102,7 +100,7 @@ int main(int argc, char* argv[]) {
 
     engine.cleanup();
     ctx.cleanup();
-  } catch (const std::exception& e) {
+  } catch(const std::exception& e) {
     std::fprintf(stderr, "Fatal: %s\n", e.what());
     return 1;
   }

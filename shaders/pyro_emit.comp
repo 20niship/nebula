@@ -2,8 +2,8 @@
 #extension GL_EXT_nonuniform_qualifier : enable
 #include "pyro_common.glsl"
 
-// Pyro ソースエミッタ: pc.sourcesIdx に並んだ PyroSourceGPU (CPU側で現在アクティブな
-// ソースのみに絞り込み済み) をループし、形状内のセルへ density/temperature/fuel を
+// Pyro エミッタ: pc.emittersIdx に並んだ EmitterGPU (CPU側で現在アクティブな
+// エミッタのみに絞り込み済み) をループし、形状内のセルへ density/temperature/fuel を
 // 加算、velocity は inflowVelocity へブレンドする。
 // A バッファ (現在値) へインプレースで読み書きする (B は使わない)。
 // dispatch: (totalCells + 255) / 256
@@ -14,7 +14,7 @@ void main() {
     uint gid = gl_GlobalInvocationID.x;
     uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
     if (gid >= totalCells) return;
-    if (pc.sourceCount == 0u) return;
+    if (pc.emitterCount == 0u) return;
 
     ivec3 ijk = pyroMortonDecodeI(gid);
     vec3  xi  = (vec3(ijk) + 0.5) * pc.cellSize + pc.worldMin;
@@ -26,31 +26,31 @@ void main() {
     float inflowWeight   = 0.0;
 
     // MoltenVK: buffers[] は main() でのみ展開可能なためループも main() 直下に置く
-    for (uint si = 0u; si < pc.sourceCount; si++) {
+    for (uint si = 0u; si < pc.emitterCount; si++) {
         uint  base  = si * 16u;
-        uint  shape = readUint(pc.sourcesIdx, base);
-        vec3  c     = vec3(readFloat(pc.sourcesIdx, base + 1u),
-                            readFloat(pc.sourcesIdx, base + 2u),
-                            readFloat(pc.sourcesIdx, base + 3u));
-        vec3  sz    = vec3(readFloat(pc.sourcesIdx, base + 4u),
-                            readFloat(pc.sourcesIdx, base + 5u),
-                            readFloat(pc.sourcesIdx, base + 6u));
-        float dRate = readFloat(pc.sourcesIdx, base + 7u);
-        vec3  iv    = vec3(readFloat(pc.sourcesIdx, base + 8u),
-                            readFloat(pc.sourcesIdx, base + 9u),
-                            readFloat(pc.sourcesIdx, base + 10u));
-        float tRate = readFloat(pc.sourcesIdx, base + 11u);
-        float fRate = readFloat(pc.sourcesIdx, base + 12u);
+        uint  shape = readUint(pc.emittersIdx, base);
+        vec3  c     = vec3(readFloat(pc.emittersIdx, base + 1u),
+                            readFloat(pc.emittersIdx, base + 2u),
+                            readFloat(pc.emittersIdx, base + 3u));
+        vec3  sz    = vec3(readFloat(pc.emittersIdx, base + 4u),
+                            readFloat(pc.emittersIdx, base + 5u),
+                            readFloat(pc.emittersIdx, base + 6u));
+        float dRate = readFloat(pc.emittersIdx, base + 7u);
+        vec3  iv    = vec3(readFloat(pc.emittersIdx, base + 8u),
+                            readFloat(pc.emittersIdx, base + 9u),
+                            readFloat(pc.emittersIdx, base + 10u));
+        float tRate = readFloat(pc.emittersIdx, base + 11u);
+        float fRate = readFloat(pc.emittersIdx, base + 12u);
 
         vec3  d = xi - c;
         bool  inside;
-        if (shape == PYRO_SRC_SPHERE) {
+        if (shape == EMITTER_SHAPE_SPHERE) {
             inside = dot(d, d) <= sz.x * sz.x;
-        } else if (shape == PYRO_SRC_ELLIPSE) {
+        } else if (shape == EMITTER_SHAPE_ELLIPSE) {
             float e = (d.x * d.x) / (sz.x * sz.x) + (d.z * d.z) / (sz.z * sz.z);
             inside = (e <= 1.0) && (abs(d.y) <= sz.y);
         } else {
-            // PYRO_SRC_AABB
+            // EMITTER_SHAPE_AABB
             inside = abs(d.x) <= sz.x && abs(d.y) <= sz.y && abs(d.z) <= sz.z;
         }
 

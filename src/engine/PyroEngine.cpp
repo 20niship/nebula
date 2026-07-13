@@ -12,32 +12,22 @@ void PyroEngine::computeBarrier(VkCommandBuffer cmd) {
   b.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
   b.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
   b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-  vkCmdPipelineBarrier(cmd,
-      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-      0, 1, &b, 0, nullptr, 0, nullptr);
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &b, 0, nullptr, 0, nullptr);
 }
 
 // ── PyroSimPC を用いた dispatch ヘルパー ──────────────────────────────────
 
 void PyroEngine::dispatchPyro(VkCommandBuffer cmd, ComputePipeline& k, const PyroSimPC& pc) {
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, k.pipeline);
-  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-                          k.pipelineLayout, 0, 1, &attrBuf_.descriptorSet, 0, nullptr);
-  vkCmdPushConstants(cmd, k.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
-                     0, sizeof(PyroSimPC), &pc);
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, k.pipelineLayout, 0, 1, &attrBuf_.descriptorSet, 0, nullptr);
+  vkCmdPushConstants(cmd, k.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PyroSimPC), &pc);
   vkCmdDispatch(cmd, cfg_.nGroups(), 1, 1);
 }
 
 // ── 初期化 ────────────────────────────────────────────────────────────────
 
-void PyroEngine::init(VkDevice device, VmaAllocator allocator,
-                       VkDescriptorPool descriptorPool,
-                       VkCommandPool cmdPool, VkQueue queue,
-                       const std::string& shaderDir, const PyroConfig& cfg) {
-  if (cfg.grid_res == 0 || (cfg.grid_res & (cfg.grid_res - 1)) != 0)
-    throw std::runtime_error("PyroConfig.grid_res must be a power of two (Morton encoding requirement): "
-                              + std::to_string(cfg.grid_res));
+void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const PyroConfig& cfg) {
+  if(cfg.grid_res == 0 || (cfg.grid_res & (cfg.grid_res - 1)) != 0) throw std::runtime_error("PyroConfig.grid_res must be a power of two (Morton encoding requirement): " + std::to_string(cfg.grid_res));
 
   cfg_       = cfg;
   device_    = device;
@@ -61,18 +51,16 @@ void PyroEngine::init(VkDevice device, VmaAllocator allocator,
   pressureIdx_       = attrBuf_.addAttribute("pres",  sizeof(float),     NC);
   divergenceIdx_     = attrBuf_.addAttribute("div",   sizeof(float),     NC);
   curlIdx_           = attrBuf_.addAttribute("curl",  sizeof(glm::vec4), NC);
-  sourcesIdx_        = attrBuf_.addAttribute("pyroSources", sizeof(PyroSourceGPU), cfg_.maxSources);
+  emittersIdx_       = attrBuf_.addAttribute("pyroEmitters", sizeof(EmitterGPU), cfg_.maxEmitters);
   cur_ = 0;
 
   // GPU バッファは未初期化のため、全フィールドを明示的にゼロクリアする
   {
     std::vector<glm::vec4> zeroVec4(NC, glm::vec4(0.0f));
-    std::vector<float>     zeroFloat(NC, 0.0f);
-    auto up = [&](const std::string& name, const void* data, size_t bytes) {
-      attrBuf_.upload(name, data, bytes, cmdPool_, queue_);
-    };
-    up("velA",  zeroVec4.data(),  NC * sizeof(glm::vec4));
-    up("velB",  zeroVec4.data(),  NC * sizeof(glm::vec4));
+    std::vector<float> zeroFloat(NC, 0.0f);
+    auto up = [&](const std::string& name, const void* data, size_t bytes) { attrBuf_.upload(name, data, bytes, cmdPool_, queue_); };
+    up("velA", zeroVec4.data(), NC * sizeof(glm::vec4));
+    up("velB", zeroVec4.data(), NC * sizeof(glm::vec4));
     up("densA", zeroFloat.data(), NC * sizeof(float));
     up("densB", zeroFloat.data(), NC * sizeof(float));
     up("tempA", zeroFloat.data(), NC * sizeof(float));
@@ -114,53 +102,54 @@ void PyroEngine::cleanup() {
 // ── 障害物 SDF ────────────────────────────────────────────────────────────
 
 void PyroEngine::setColliderSDF(const std::vector<float>& mortonSDF) {
-  if (colliderSDFIdx_ == 0) {
+  if(colliderSDFIdx_ == 0) {
     colliderSDFIdx_ = attrBuf_.addAttribute("colliderSDF", sizeof(float), cfg_.totalCells());
   }
-  attrBuf_.upload("colliderSDF", mortonSDF.data(),
-                  mortonSDF.size() * sizeof(float), cmdPool_, queue_);
+  attrBuf_.upload("colliderSDF", mortonSDF.data(), mortonSDF.size() * sizeof(float), cmdPool_, queue_);
 }
 
 void PyroEngine::clearCollider() { colliderSDFIdx_ = 0; }
 
-// ── Source ────────────────────────────────────────────────────────────────
+// ── Emitter ───────────────────────────────────────────────────────────────
 
-void PyroEngine::addSource(const PyroSource& src) {
-  sources_.push_back(src);
-  sourceStepsDone_.push_back(0);
+void PyroEngine::addEmitter(std::shared_ptr<Emitter> emitter) {
+  emitters_.push_back(std::move(emitter));
+  emitterStepsDone_.push_back(0);
 }
 
-void PyroEngine::clearSources() {
-  sources_.clear();
-  sourceStepsDone_.clear();
+void PyroEngine::clearEmitters() {
+  emitters_.clear();
+  emitterStepsDone_.clear();
 }
 
-void PyroEngine::updateSources(float dt) {
-  sourcesActiveCount_ = 0;
-  if (sources_.empty()) return;
+void PyroEngine::updateEmitters(float dt) {
+  emittersActiveCount_ = 0;
+  if(emitters_.empty()) return;
 
-  std::vector<PyroSourceGPU> active;
-  active.reserve(sources_.size());
+  std::vector<EmitterGPU> active;
+  active.reserve(emitters_.size());
 
-  for (size_t si = 0; si < sources_.size(); si++) {
-    PyroSource& src  = sources_[si];
-    int&        done = sourceStepsDone_[si];
+  for(size_t si = 0; si < emitters_.size(); si++) {
+    Emitter& emitter = *emitters_[si];
+    int& done        = emitterStepsDone_[si];
 
     bool shouldEmit;
-    if      (src.step_count == -1) shouldEmit = (done == 0);
-    else if (src.step_count ==  0) shouldEmit = true;
-    else                           shouldEmit = (done < src.step_count);
+    if(emitter.step_count == -1)
+      shouldEmit = (done == 0);
+    else if(emitter.step_count == 0)
+      shouldEmit = true;
+    else
+      shouldEmit = (done < emitter.step_count);
 
-    if (!shouldEmit) continue;
-    if (active.size() < cfg_.maxSources) active.push_back(toPyroSourceGPU(src));
+    if(!shouldEmit) continue;
+    if(active.size() < cfg_.maxEmitters) active.push_back(emitter.pack());
     done++;
-    src.center += src.center_vel * dt;
+    emitter.center += emitter.center_vel * dt;
   }
 
-  if (active.empty()) return;
-  attrBuf_.upload("pyroSources", active.data(),
-                  active.size() * sizeof(PyroSourceGPU), cmdPool_, queue_);
-  sourcesActiveCount_ = uint32_t(active.size());
+  if(active.empty()) return;
+  attrBuf_.upload("pyroEmitters", active.data(), active.size() * sizeof(EmitterGPU), cmdPool_, queue_);
+  emittersActiveCount_ = uint32_t(active.size());
 }
 
 // ── Push Constants 構築 ──────────────────────────────────────────────────
@@ -181,10 +170,10 @@ PyroSimPC PyroEngine::buildPC(float dt) const {
   pc.divergenceIdx   = divergenceIdx_;
   pc.curlIdx         = curlIdx_;
   pc.colliderSDFIdx  = colliderSDFIdx_;
-  // sourcesIdx/sourceCount は updateSources() 後に step() 側で設定する (0=無効)
-  pc.sourcesIdx  = 0;
-  pc.sourceCount = 0;
-  pc.gridRes     = cfg_.grid_res;
+  // emittersIdx/emitterCount は updateEmitters() 後に step() 側で設定する (0=無効)
+  pc.emittersIdx  = 0;
+  pc.emitterCount = 0;
+  pc.gridRes      = cfg_.grid_res;
 
   pc.dt       = dt;
   pc.cellSize = cfg_.cellSize();
@@ -214,16 +203,16 @@ PyroSimPC PyroEngine::buildPC(float dt) const {
 void PyroEngine::step(VkCommandBuffer cmd, float dt) {
   const float subDt = dt / float(std::max(1, numSubsteps));
 
-  for (int s = 0; s < numSubsteps; s++) {
-    updateSources(subDt);
+  for(int s = 0; s < numSubsteps; s++) {
+    updateEmitters(subDt);
 
     PyroSimPC pc = buildPC(subDt);
-    if (sourcesActiveCount_ > 0) {
-      pc.sourcesIdx  = sourcesIdx_;
-      pc.sourceCount = sourcesActiveCount_;
+    if(emittersActiveCount_ > 0) {
+      pc.emittersIdx  = emittersIdx_;
+      pc.emitterCount = emittersActiveCount_;
     }
 
-    // ① Source 注入 (A バッファへインプレース)
+    // ① Emitter 注入 (A バッファへインプレース)
     dispatchPyro(cmd, kEmit_, pc);
     computeBarrier(cmd);
 
@@ -236,7 +225,7 @@ void PyroEngine::step(VkCommandBuffer cmd, float dt) {
     computeBarrier(cmd);
 
     // ②b 渦度閉じ込め (2パス: curl → 閉じ込め力適用、A バッファへインプレース)
-    if (vorticityEps > 0.0f) {
+    if(vorticityEps > 0.0f) {
       dispatchPyro(cmd, kCurl_, pc);
       computeBarrier(cmd);
       dispatchPyro(cmd, kVorticityForce_, pc);
@@ -280,7 +269,7 @@ void PyroEngine::step(VkCommandBuffer cmd, float dt) {
 
     // ⑤ 障害物 BC (移流後, B バッファへインプレース)
     PyroSimPC pcPost = pc;
-    pcPost.velIdxA = pc.velIdxB;
+    pcPost.velIdxA   = pc.velIdxB;
     dispatchPyro(cmd, kObstacleBC_, pcPost);
     computeBarrier(cmd);
 
@@ -291,11 +280,11 @@ void PyroEngine::step(VkCommandBuffer cmd, float dt) {
 
 // ── バッファ取得 ──────────────────────────────────────────────────────────
 
-VkBuffer PyroEngine::getDensityBuffer()     const { return attrBuf_.getBuffer(cur_ == 0 ? "densA" : "densB"); }
+VkBuffer PyroEngine::getDensityBuffer() const { return attrBuf_.getBuffer(cur_ == 0 ? "densA" : "densB"); }
 VkBuffer PyroEngine::getTemperatureBuffer() const { return attrBuf_.getBuffer(cur_ == 0 ? "tempA" : "tempB"); }
-VkBuffer PyroEngine::getFuelBuffer()        const { return attrBuf_.getBuffer(cur_ == 0 ? "fuelA" : "fuelB"); }
-VkBuffer PyroEngine::getFlameBuffer()       const { return attrBuf_.getBuffer("flame"); }
-VkBuffer PyroEngine::getVelocityBuffer()    const { return attrBuf_.getBuffer(cur_ == 0 ? "velA" : "velB"); }
+VkBuffer PyroEngine::getFuelBuffer() const { return attrBuf_.getBuffer(cur_ == 0 ? "fuelA" : "fuelB"); }
+VkBuffer PyroEngine::getFlameBuffer() const { return attrBuf_.getBuffer("flame"); }
+VkBuffer PyroEngine::getVelocityBuffer() const { return attrBuf_.getBuffer(cur_ == 0 ? "velA" : "velB"); }
 
 // ── ボクセルダンプ ────────────────────────────────────────────────────────
 
@@ -309,7 +298,9 @@ void PyroEngine::readBufferToCPU(VkBuffer src, void* dst, size_t bytes) const {
   aci.usage = VMA_MEMORY_USAGE_GPU_TO_CPU;
   aci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
 
-  VkBuffer stageBuf; VmaAllocation stageAlloc; VmaAllocationInfo info;
+  VkBuffer stageBuf;
+  VmaAllocation stageAlloc;
+  VmaAllocationInfo info;
   vmaCreateBuffer(allocator_, &bci, &aci, &stageBuf, &stageAlloc, &info);
 
   VkCommandBufferAllocateInfo ai{};
@@ -346,28 +337,24 @@ namespace {
 // GPU 側 pyroMortonCompact/pyroMortonDecodeI (shaders/pyro_common.glsl) と同一ロジック
 uint32_t mortonCompact(uint32_t v) {
   v &= 0x09249249u;
-  v = (v | (v >>  2u)) & 0x030C30C3u;
-  v = (v | (v >>  4u)) & 0x0300F00Fu;
-  v = (v | (v >>  8u)) & 0x030000FFu;
+  v = (v | (v >> 2u)) & 0x030C30C3u;
+  v = (v | (v >> 4u)) & 0x0300F00Fu;
+  v = (v | (v >> 8u)) & 0x030000FFu;
   v = (v | (v >> 16u)) & 0x000003FFu;
   return v;
 }
-glm::ivec3 mortonDecode(uint32_t code) {
-  return {int(mortonCompact(code)), int(mortonCompact(code >> 1u)), int(mortonCompact(code >> 2u))};
-}
+glm::ivec3 mortonDecode(uint32_t code) { return {int(mortonCompact(code)), int(mortonCompact(code >> 1u)), int(mortonCompact(code >> 2u))}; }
 
 // Morton 順の配列を線形 (x + y*nx + z*nx*ny) 順に並べ替えて channelsOut へ追記する。
 // components=1: float スカラー。components=3: vec4 の xyz のみ (w は捨てる)。
-void appendChannelLinear(const std::vector<uint8_t>& mortonRaw, uint32_t gridRes,
-                          uint32_t components, std::vector<float>& out) {
+void appendChannelLinear(const std::vector<uint8_t>& mortonRaw, uint32_t gridRes, uint32_t components, std::vector<float>& out) {
   const uint32_t NC = gridRes * gridRes * gridRes;
   out.resize(size_t(NC) * components);
   const float* src = reinterpret_cast<const float*>(mortonRaw.data());
-  for (uint32_t code = 0; code < NC; ++code) {
-    glm::ivec3 c    = mortonDecode(code);
-    size_t     lin  = size_t(c.x) + size_t(c.y) * gridRes + size_t(c.z) * gridRes * gridRes;
-    for (uint32_t k = 0; k < components; ++k)
-      out[lin * components + k] = src[size_t(code) * (components == 1 ? 1u : 4u) + k];
+  for(uint32_t code = 0; code < NC; ++code) {
+    glm::ivec3 c = mortonDecode(code);
+    size_t lin   = size_t(c.x) + size_t(c.y) * gridRes + size_t(c.z) * gridRes * gridRes;
+    for(uint32_t k = 0; k < components; ++k) out[lin * components + k] = src[size_t(code) * (components == 1 ? 1u : 4u) + k];
   }
 }
 
@@ -379,31 +366,32 @@ void PyroEngine::dumpFrame(const std::string& path, float simTime) const {
 
   // sdf は障害物未設定 (hasCollider()==false) だと GPU バッファが存在しないため、
   // その場合のみ GPU 読み戻しをスキップし全セル背景値 (1e6 = 障害物なし) を書く。
-  struct Channel { const char* name; uint32_t components; VkBuffer buf; bool present; };
+  struct Channel {
+    const char* name;
+    uint32_t components;
+    VkBuffer buf;
+    bool present;
+  };
   const Channel channels[] = {
-      {"density",     1u, getDensityBuffer(),     true},
-      {"temperature", 1u, getTemperatureBuffer(), true},
-      {"fuel",        1u, getFuelBuffer(),        true},
-      {"flame",       1u, getFlameBuffer(),       true},
-      {"velocity",    3u, getVelocityBuffer(),    true},
-      {"sdf",         1u, hasCollider() ? attrBuf_.getBuffer("colliderSDF") : VK_NULL_HANDLE, hasCollider()},
+    {"density", 1u, getDensityBuffer(), true}, {"temperature", 1u, getTemperatureBuffer(), true}, {"fuel", 1u, getFuelBuffer(), true},
+    {"flame", 1u, getFlameBuffer(), true},     {"velocity", 3u, getVelocityBuffer(), true},       {"sdf", 1u, hasCollider() ? attrBuf_.getBuffer("colliderSDF") : VK_NULL_HANDLE, hasCollider()},
   };
 
   std::vector<std::vector<float>> linearData(std::size(channels));
-  for (size_t i = 0; i < std::size(channels); ++i) {
+  for(size_t i = 0; i < std::size(channels); ++i) {
     const auto& ch = channels[i];
-    if (!ch.present) {
+    if(!ch.present) {
       linearData[i].assign(size_t(NC), 1e6f);
       continue;
     }
-    const VkDeviceSize   elemBytes = ch.components == 1 ? sizeof(float) : sizeof(glm::vec4);
+    const VkDeviceSize elemBytes = ch.components == 1 ? sizeof(float) : sizeof(glm::vec4);
     std::vector<uint8_t> raw(size_t(NC) * elemBytes);
     readBufferToCPU(ch.buf, raw.data(), raw.size());
     appendChannelLinear(raw, gridRes, ch.components, linearData[i]);
   }
 
   std::ofstream f(path, std::ios::binary);
-  if (!f) throw std::runtime_error("dumpFrame: failed to open " + path);
+  if(!f) throw std::runtime_error("dumpFrame: failed to open " + path);
 
   f.write("PVX1", 4);
   f.write(reinterpret_cast<const char*>(&gridRes), sizeof(uint32_t));
@@ -415,12 +403,11 @@ void PyroEngine::dumpFrame(const std::string& path, float simTime) const {
   uint32_t numChannels = uint32_t(std::size(channels));
   f.write(reinterpret_cast<const char*>(&numChannels), sizeof(uint32_t));
 
-  for (const auto& ch : channels) {
+  for(const auto& ch : channels) {
     char name[16] = {};
     std::strncpy(name, ch.name, sizeof(name) - 1);
     f.write(name, sizeof(name));
     f.write(reinterpret_cast<const char*>(&ch.components), sizeof(uint32_t));
   }
-  for (const auto& data : linearData)
-    f.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size() * sizeof(float)));
+  for(const auto& data : linearData) f.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size() * sizeof(float)));
 }

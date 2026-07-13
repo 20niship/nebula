@@ -57,6 +57,9 @@ layout(push_constant) uniform PC {
     uint  absorberCount;    // 有効な吸収形状数 (0 = 吸収パスをスキップ)
     // PBF 密度制約 under-relaxation (IPBF 風; 他シェーダーは不使用)
     float relaxOmega;       // pbf_delta_p.comp の ΔP に乗じる緩和係数 (1.0=標準PBF互換)
+    // 流体パーティクル領域の開始オフセット (= FluidEngine の cfg_.max_boundary)。
+    // 既定値0=オフセットなしのため、設定しない他エンジンのシェーダーは影響を受けない。
+    uint  fluidStart;
 } pc;
 
 // ── vec4 読み書き（FP32, MoltenVK 関数化バグ回避のためマクロ）────

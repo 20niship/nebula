@@ -1,6 +1,6 @@
 #include "App.h"
-#include "engine/MPMEngine.h"
 #include "MaterialParams.h"
+#include "engine/MPMEngine.h"
 #include "graphics/GraphicsPipeline.h"
 
 #include <argparse/argparse.hpp>
@@ -17,12 +17,12 @@ static const std::string SHADER_DIR_STR = SHADER_DIR;
 // ── CLI ───────────────────────────────────────────────────────────────────
 
 struct MpmMultiArgs : public argparse::Args {
-  int&   n          = kwarg("n",   "particle grid N (N×N×N)").set_default(16);
-  float& world_size = kwarg("world-size", "world size [m]").set_default(10.0f);
-  int&   grid_res   = kwarg("grid-res", "MPM grid resolution").set_default(64);
-  float& dt         = kwarg("dt",  "frame timestep [s]").set_default(1.0f / 60.0f);
-  int&   substeps   = kwarg("substeps", "substeps per frame").set_default(25);
-  int&   n_shots    = kwarg("n-shots",  "screenshot count (0=disabled)").set_default(0);
+  int& n                      = kwarg("n", "particle grid N (N×N×N)").set_default(16);
+  float& world_size           = kwarg("world-size", "world size [m]").set_default(10.0f);
+  int& grid_res               = kwarg("grid-res", "MPM grid resolution").set_default(64);
+  float& dt                   = kwarg("dt", "frame timestep [s]").set_default(1.0f / 60.0f);
+  int& substeps               = kwarg("substeps", "substeps per frame").set_default(25);
+  int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
 };
 
@@ -31,7 +31,7 @@ struct MpmMultiArgs : public argparse::Args {
 class MpmMultiApp {
 public:
   void run(const MpmMultiArgs& args) {
-    dt_ = args.dt;
+    dt_                 = args.dt;
     base_.screenshotDir = args.screenshot_dir;
 
     MPMConfig cfg;
@@ -48,8 +48,8 @@ public:
   }
 
 private:
-  BaseApp          base_;
-  MPMEngine        engine_;
+  BaseApp base_;
+  MPMEngine engine_;
   GraphicsPipeline graphicsPipe_;
   float dt_      = 1.0f / 60.0f;
   float simTime_ = 0.0f;
@@ -58,9 +58,7 @@ private:
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
-    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool,
-                 base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue,
-                 SHADER_DIR_STR, cfg);
+    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
     engine_.numSubsteps = substeps;
     engine_.gravity     = -9.8f;
 
@@ -75,16 +73,13 @@ private:
     const uint32_t nx = cfg.nx;
     const uint32_t ny = cfg.ny;
     std::vector<uint32_t> matIds(N);
-    for (uint32_t i = 0; i < N; i++) {
-        uint32_t iy = (i / nx) % ny;
-        matIds[i] = (iy >= ny / 2) ? 1u : 0u;  // 上半分=砂
+    for(uint32_t i = 0; i < N; i++) {
+      uint32_t iy = (i / nx) % ny;
+      matIds[i]   = (iy >= ny / 2) ? 1u : 0u; // 上半分=砂
     }
     engine_.setParticleMaterialIds(matIds);
 
-    graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass,
-                       engine_.descriptorSetLayout,
-                       SHADER_DIR_STR + "/particle.vert.spv",
-                       SHADER_DIR_STR + "/particle.frag.spv");
+    graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/particle.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");
 
     base_.createFrameData();
     base_.initImGui();
@@ -107,10 +102,7 @@ private:
     barrier.buffer              = engine_.getPositionBuffer();
     barrier.offset              = 0;
     barrier.size                = VK_WHOLE_SIZE;
-    vkCmdPipelineBarrier(cmd,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
-        0, 0, nullptr, 1, &barrier, 0, nullptr);
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0, 0, nullptr, 1, &barrier, 0, nullptr);
 
     vkEndCommandBuffer(cmd);
   }
@@ -138,7 +130,8 @@ private:
     vp.height   = float(base_.ctx.swapchainExtent.height);
     vp.maxDepth = 1.0f;
     vkCmdSetViewport(cmd, 0, 1, &vp);
-    VkRect2D sc{}; sc.extent = base_.ctx.swapchainExtent;
+    VkRect2D sc{};
+    sc.extent = base_.ctx.swapchainExtent;
     vkCmdSetScissor(cmd, 0, 1, &sc);
 
     SimPC renderPc{};
@@ -148,8 +141,7 @@ private:
     renderPc.worldMin      = 0.0f;
     renderPc.worldMax      = engine_.config().world_size;
 
-    graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc,
-                       engine_.liveParticleCount());
+    graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.liveParticleCount());
 
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     vkCmdEndRenderPass(cmd);
@@ -161,10 +153,11 @@ private:
     vkWaitForFences(base_.ctx.device, 1, &f.inFlightFence, VK_TRUE, UINT64_MAX);
 
     uint32_t imageIdx;
-    VkResult result = vkAcquireNextImageKHR(base_.ctx.device, base_.ctx.swapchain,
-                                             UINT64_MAX, f.imageAvailable,
-                                             VK_NULL_HANDLE, &imageIdx);
-    if (result == VK_ERROR_OUT_OF_DATE_KHR) { base_.ctx.recreateSwapchain(); return; }
+    VkResult result = vkAcquireNextImageKHR(base_.ctx.device, base_.ctx.swapchain, UINT64_MAX, f.imageAvailable, VK_NULL_HANDLE, &imageIdx);
+    if(result == VK_ERROR_OUT_OF_DATE_KHR) {
+      base_.ctx.recreateSwapchain();
+      return;
+    }
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
@@ -176,9 +169,7 @@ private:
     ImGui::SetNextWindowSize({310, 0}, ImGuiCond_Once);
     ImGui::Begin("MPM Multi-Material");
     const auto& cfg = engine_.config();
-    ImGui::Text("FPS: %.1f | N=%u | gridRes=%u",
-                ImGui::GetIO().Framerate,
-                engine_.liveParticleCount(), cfg.grid_res);
+    ImGui::Text("FPS: %.1f | N=%u | gridRes=%u", ImGui::GetIO().Framerate, engine_.liveParticleCount(), cfg.grid_res);
     ImGui::Text("t=%.2f s | %u^3 particles", simTime_, cfg.nx);
     ImGui::Text("[下半分] slot 0: Hencky 弾性体 (E=10kPa, nu=0.4)");
     ImGui::Text("[上半分] slot 1: Drucker-Prager 砂 (E=50kPa, M=0.577)");
@@ -217,10 +208,8 @@ private:
     tsWait.waitSemaphoreValueCount = 2;
     tsWait.pWaitSemaphoreValues    = waitVals.data();
 
-    std::array<VkSemaphore, 2>          waitSems   = {f.imageAvailable, f.timelineSemaphore};
-    std::array<VkPipelineStageFlags, 2> waitStages = {
-        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        VK_PIPELINE_STAGE_VERTEX_SHADER_BIT};
+    std::array<VkSemaphore, 2> waitSems            = {f.imageAvailable, f.timelineSemaphore};
+    std::array<VkPipelineStageFlags, 2> waitStages = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT};
 
     VkSubmitInfo grSub{};
     grSub.sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -241,10 +230,9 @@ private:
     present.swapchainCount     = 1;
     present.pSwapchains        = &base_.ctx.swapchain;
     present.pImageIndices      = &imageIdx;
-    if (nShots > 0) base_.saveScreenshot(imageIdx, nShots);
+    if(nShots > 0) base_.saveScreenshot(imageIdx, nShots);
     result = vkQueuePresentKHR(base_.ctx.graphicsQueue, &present);
-    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR
-        || base_.framebufferResized) {
+    if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || base_.framebufferResized) {
       base_.framebufferResized = false;
       base_.ctx.recreateSwapchain();
     }
@@ -252,7 +240,7 @@ private:
   }
 
   void mainLoop(int nShots) {
-    while (!glfwWindowShouldClose(base_.window) && !base_.shouldExit) {
+    while(!glfwWindowShouldClose(base_.window) && !base_.shouldExit) {
       glfwPollEvents();
       drawFrame(nShots);
     }
@@ -273,7 +261,7 @@ int main(int argc, char* argv[]) {
   MpmMultiApp app;
   try {
     app.run(args);
-  } catch (const std::exception& e) {
+  } catch(const std::exception& e) {
     std::fprintf(stderr, "Fatal: %s\n", e.what());
     return 1;
   }

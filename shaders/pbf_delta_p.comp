@@ -12,16 +12,17 @@ layout(local_size_x = 256) in;
 void main() {
     uint i = gl_GlobalInvocationID.x;
     if (i >= pc.particleCount) return;
+    uint idx = i + pc.fluidStart;
 
-    uint fi = readUint(pc.typeFlagIdx, i);
+    uint fi = readUint(pc.typeFlagIdx, idx);
     if (fi != 1u && fi != 5u) return; // 流体・粉体のみ
 
-    vec4 pi4  = readVec4(pc.predPIdx, i);
+    vec4 pi4  = readVec4(pc.predPIdx, idx);
     vec3 pi   = pi4.xyz;
     float h   = pc.cellSize;
     float h2  = h * h;
     float rho0 = pc.stretchCompliance;
-    float lambda_i = readFloat(pc.lambdaPbfIdx, i);
+    float lambda_i = readFloat(pc.lambdaPbfIdx, idx);
 
     float spiky_coeff = 45.0 / (3.14159265 * h2 * h2 * h2);
     float poly6_coeff = 315.0 / (64.0 * 3.14159265 * h2 * h2 * h2 * h2 * h);
@@ -53,7 +54,7 @@ void main() {
 
         for (uint k = start; k < start + cnt; ++k) {
             uint j  = readUint(pc.sortedIdxIdx, k);
-            if (j == i) continue;
+            if (j == idx) continue;
             uint fj = readUint(pc.typeFlagIdx, j);
             if (fj != 1u && fj != 3u && fj != 5u) continue; // 流体・境界・粉体
 
@@ -94,5 +95,5 @@ void main() {
     if (dpLen > maxDP) deltaP *= maxDP / dpLen;
 
     vec4 newP = vec4(pi + deltaP, pi4.w);
-    writeVec4(pc.predPIdx, i, newP);
+    writeVec4(pc.predPIdx, idx, newP);
 }

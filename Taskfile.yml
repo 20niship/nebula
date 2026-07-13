@@ -32,6 +32,7 @@ tasks:
     desc: "CMake を構成する (BUILD_TYPE={{.BUILD_TYPE}})"
     cmds:
       - |
+        git submodule update --init --recursive
         cmake -B {{.BUILD_DIR}} \
           -DCMAKE_BUILD_TYPE={{.BUILD_TYPE}} \
           -DVULKAN_SDK={{.VULKAN_SDK}}
@@ -186,3 +187,11 @@ tasks:
     cmds:
       - task --list
     silent: true
+
+  format:
+    desc: "clang-format でコードを整形"
+    cmds:
+      - python3 tools/format.py examples/
+      - python3 tools/format.py tests/
+      - python3 tools/format.py src/
+

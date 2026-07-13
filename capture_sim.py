@@ -18,17 +18,12 @@
   TC10: XPBD 四面体ソフトボディ                               xpbd_softbody
   TC-A: MPM Elastic — PIC  (flip_ratio=0.00)                  mpm_elastic
   TC-B: MPM Elastic — APIC (flip_ratio=-1.00)                 mpm_elastic
-  TC-C: MPM Elastic — FLIP (flip_ratio=0.95)                  mpm_elastic
-  TC-D: MPM Fountain — FLIP (flip_ratio=0.95)                 mpm_fountain
   TC-E: MPM Mountain Avalanche — Drucker-Prager                mpm_avalanche
   TC-F: MPM マルチマテリアル — 弾性体 + Drucker-Prager 砂      mpm_multimaterial
-  TC-G: MPM 雪衝突 — 移動箱SDF (粒子50倍・高速・半サイズ箱)   mpm_snow_impact
+  TC-G: MPM 雪衝突 — 移動箱SDF (粒子50倍・高速・半サイズ箱・固定フレーム自動衝突) mpm_snow_impact
   TC-H: MPM 地層崩壊 — 硬岩/弱粘土/緩土 3層                  mpm_geolayer
-  TC-I: MPM 砂柱崩壊 — Drucker-Prager 粒状体                  mpm_granular
-  TC-J: MPM STL落下 — 球体STL障害物 SDF                       mpm_stl_drop
   TC-K: Pyro 牛への爆風 — 流速ヒートマップ表示                 pyro_cow_blast
   TC-L: Pyro 爆発 (キノコ雲) — smoke/fire ボリューム表示       pyro_explosion
-
 使い方:
   python3 capture_sim.py [--frames N] [--fps F]
 """
@@ -57,7 +52,7 @@ VIDEO_FPS = 60     # 出力動画 FPS
 THUMB_W   = 480    # 4列 × 480 = 1920px (ffmpeg scale と一致)
 THUMB_H   = 270    # 16:9
 GRID_COLS = 4
-GRID_ROWS = 6      # 4×6=24 セル; TC1–TC10 + TC-A–TC-L (22使用 + 空き2)
+GRID_ROWS = 5      # 4×5=20 セル; TC1–TC10 + TC-A,B,E,F,G,H,K,L (TC-C/D/I/J除外、18使用 + 空き2)
 
 # テストケース定義
 # exe=None のエントリは空きセル（グリッドのパディング用）
@@ -151,26 +146,6 @@ SIMS = [
         "params": "nx=ny=nz=20 | flip=-1.00 | 角運動量保存",
     },
     {
-        "id": "tc_flip", "exe": "mpm_elastic",
-        "title": "TC-C: MPM Elastic — FLIP",
-        "env": {},
-        "extra_args": [
-            "--nx", "20", "--ny", "20", "--nz", "20",
-            "--grid-res", "64", "--substeps", "25", "--flip-ratio", "0.95",
-        ],
-        "params": "nx=ny=nz=20 | flip=0.95 | 散逸最小",
-    },
-    {
-        "id": "tc_fountain", "exe": "mpm_fountain",
-        "title": "TC-D: MPM Fountain — FLIP",
-        "env": {},
-        "extra_args": [
-            "--max-n", "32768", "--emit-n", "512",
-            "--grid-res", "64", "--substeps", "25", "--flip-ratio", "0.95",
-        ],
-        "params": "N≤32768 | emit=512/step | 球コライダー",
-    },
-    {
         "id": "tc_avalanche", "exe": "mpm_avalanche",
         "title": "TC-E: MPM Avalanche — Snow",
         "env": {},
@@ -200,9 +175,8 @@ SIMS = [
             "--grid-res", "64", "--substeps", "25",
             "--box-speed", "6.0",
             "--box-scale", "0.5",
-            "--auto-launch", "1",
         ],
-        "params": "N~85K | VON_MISES雪 | 箱速6m/s・半サイズ | 自動衝突",
+        "params": "N~85K | VON_MISES雪 | 箱速6m/s・半サイズ | 固定フレームで自動衝突",
     },
     {
         "id": "tc_geolayer", "exe": "mpm_geolayer",
@@ -212,25 +186,6 @@ SIMS = [
             "--grid-res", "64", "--substeps", "25",
         ],
         "params": "N=1920 | 下=硬岩ELASTIC | 中=弱粘土VON_MISES | 上=緩土D-P",
-    },
-    {
-        "id": "tc_granular", "exe": "mpm_granular",
-        "title": "TC-I: MPM Granular — Sand Column",
-        "env": {},
-        "extra_args": [
-            "--nx", "8", "--ny", "32", "--nz", "8",
-            "--grid-res", "64", "--substeps", "25",
-        ],
-        "params": "N=2048 | Drucker-Prager砂柱崩壊 | E=50kPa rho=1600",
-    },
-    {
-        "id": "tc_stl", "exe": "mpm_stl_drop",
-        "title": "TC-J: MPM STL Drop",
-        "env": {},
-        "extra_args": [
-            "--grid-res", "64", "--substeps", "25",
-        ],
-        "params": "N~16K | 球体STL SDF障害物 | パーティクル落下",
     },
     # ── Pyro (グリッドベース煙・火炎) ────────────────────────────────────────
     {

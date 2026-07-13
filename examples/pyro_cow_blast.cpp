@@ -9,8 +9,8 @@
  * 減衰は抑えめにして煙の広がり (乱流構造) が長く残るようにする。
  */
 
-#include "engine/PyroEngine.h"
 #include "core/MeshSDF.h"
+#include "engine/PyroEngine.h"
 #include "helpers/HeadlessCtx.h"
 
 #include <argparse/argparse.hpp>
@@ -56,16 +56,15 @@ int main(int argc, char* argv[]) {
     cfg.world_size = args.world_size;
 
     PyroEngine engine;
-    engine.init(ctx.device, ctx.allocator, ctx.descriptorPool,
-                ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR, cfg);
+    engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR, cfg);
 
     engine.numSubsteps        = args.substeps;
     engine.numPressureIters   = args.pressure_iters;
     engine.vorticityEps       = args.vorticity_eps;
     // 爆風は運動量が主体で熱源ではないため浮力はごく弱めに (吹き飛ばされた後にわずかに立ち上る程度)
-    engine.buoyancyAlpha      = 0.3f;
-    engine.buoyancyBeta       = 0.0f;
-    engine.ambientTemp        = 0.0f;
+    engine.buoyancyAlpha = 0.3f;
+    engine.buoyancyBeta  = 0.0f;
+    engine.ambientTemp   = 0.0f;
     // 乱流構造が長く見えるよう減衰を抑える (fire/fuelは使わない)
     engine.densityDissipation = 0.01f;
     engine.tempDissipation    = 0.2f;
@@ -81,28 +80,29 @@ int main(int argc, char* argv[]) {
     engine.setColliderSDF(buildMeshSDF(cowTris, cfg.grid_res, cfg.world_size));
 
     // ── 超高密度・高速の爆風バースト (-X 側から牛へ向けて) ──────────────────
-    PyroSource blast;
-    blast.shape           = PyroSourceShape::AABB;
-    blast.center          = {W * 0.08f, W * 0.20f, W * 0.5f};
-    blast.size            = glm::vec3(W * 0.05f, W * 0.15f, W * 0.15f);
-    blast.inflowVelocity  = {args.blast_speed, 0.0f, 0.0f};
-    blast.densityRate     = args.blast_density;
-    blast.temperatureRate = 0.0f; // fire なし
-    blast.fuelRate        = 0.0f; // fire なし
-    blast.step_count      = args.blast_frames; // 短時間バーストのみ
-    engine.addSource(blast);
+    // AABBEmitter::size は全辺長 (pack() が内部で半分にする) のため、旧
+    // PyroSource(AABB) の半辺長 (W*0.05, W*0.15, W*0.15) を2倍して指定する。
+    auto blast             = std::make_shared<AABBEmitter>();
+    blast->center          = {W * 0.08f, W * 0.20f, W * 0.5f};
+    blast->size            = glm::vec3(W * 0.10f, W * 0.30f, W * 0.30f);
+    blast->inflowVelocity  = {args.blast_speed, 0.0f, 0.0f};
+    blast->densityRate     = args.blast_density;
+    blast->temperatureRate = 0.0f;              // fire なし
+    blast->fuelRate        = 0.0f;              // fire なし
+    blast->step_count      = args.blast_frames; // 短時間バーストのみ
+    engine.addEmitter(blast);
 
     std::filesystem::create_directories(args.out_dir);
 
     float simTime = 0.0f;
-    for (int frame = 0; frame < args.n_frames; frame++) {
+    for(int frame = 0; frame < args.n_frames; frame++) {
       VkCommandBuffer cmd = ctx.beginCmd();
       engine.step(cmd, args.dt);
       ctx.submitCmd(cmd);
 
       simTime += args.dt;
 
-      if (args.dump_every > 0 && frame % args.dump_every == 0) {
+      if(args.dump_every > 0 && frame % args.dump_every == 0) {
         char path[512];
         std::snprintf(path, sizeof(path), "%s/frame_%04d.pvox", args.out_dir.c_str(), frame);
         engine.dumpFrame(path, simTime);
@@ -112,7 +112,7 @@ int main(int argc, char* argv[]) {
 
     engine.cleanup();
     ctx.cleanup();
-  } catch (const std::exception& e) {
+  } catch(const std::exception& e) {
     std::fprintf(stderr, "Fatal: %s\n", e.what());
     return 1;
   }

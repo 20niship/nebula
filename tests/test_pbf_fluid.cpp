@@ -383,3 +383,100 @@ TEST_CASE("TC8: average SPH density is within [0.1, 5.0] * rho0 after settling")
   sim8.cleanup();
   ctx.cleanup();
 }
+
+// ── TC9: 動的粒子数確保 (Issue #13) ────────────────────────────────────────
+// 初期容量 (fluidCount()) を小さく設定し、それを超える particles_per_step を持つ
+// emitter を複数フレーム実行して、nFluid_ が初期容量を超えて増え続けることを確認する。
+TEST_CASE("TC9: fluid capacity grows dynamically beyond initial fluidCount() via emitters") {
+    HeadlessCtx ctx; ctx.init();
+
+    FluidConfig cfg;
+    cfg.fluid_nx     = 4;
+    cfg.fluid_ny     = 1;
+    cfg.fluid_nz     = 4; // fluidCount() = 16 (小さい初期容量)
+    cfg.world_size   = 10.0f;
+    cfg.grid_res     = 4;
+    cfg.max_boundary = 0;
+
+    FluidEngine engine;
+    engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
+
+    CHECK(cfg.fluidCount() == 16);
+
+    auto src                = std::make_shared<AABBEmitter>();
+    src->center             = glm::vec3(5.0f, 5.0f, 5.0f);
+    src->size               = glm::vec3(2.0f, 2.0f, 2.0f);
+    src->particles_per_step = 50; // 初期容量 16 を超えるリクエスト → 拡張が必要
+    src->step_count         = 3;
+    src->particleType       = 1u;
+    engine.addEmitter(src);
+
+    const float dt = 1.0f / 60.0f;
+    for(int f = 0; f < 3; ++f) {
+        engine.emitFromEmitters(dt);
+        VkCommandBuffer cmd = ctx.beginCmd();
+        engine.step(cmd, dt);
+        ctx.submitCmd(cmd);
+    }
+
+    // 3フレーム × 50粒子 = 150粒子。initial fluidCount()=16 を大きく超えて増え続けている。
+    CHECK(engine.nFluid() == 150);
+    CHECK(engine.nFluid() > cfg.fluidCount());
+
+    engine.cleanup();
+    ctx.cleanup();
+}
+
+// ── TC10: 動的拡張後も境界パーティクルのデータが破損しないこと (Issue #13) ──────
+// resizeAttribute は先頭バイト列を保持するだけなので、buffer index 0 に固定配置
+// される境界パーティクルは流体容量が何度拡張されても位置が変わらないはず。
+TEST_CASE("TC10: boundary particle data survives fluid capacity growth") {
+    HeadlessCtx ctx; ctx.init();
+
+    FluidConfig cfg;
+    cfg.fluid_nx     = 4;
+    cfg.fluid_ny     = 1;
+    cfg.fluid_nz     = 4; // fluidCount() = 16
+    cfg.world_size   = 10.0f;
+    cfg.grid_res     = 4;
+    cfg.max_boundary = 8;
+
+    FluidEngine engine;
+    engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
+
+    constexpr uint32_t NB = 8;
+    std::vector<glm::vec4> boundaryPts(NB);
+    for(uint32_t i = 0; i < NB; ++i) boundaryPts[i] = glm::vec4(1.0f + float(i), 2.0f, 3.0f, 1.0f);
+    engine.loadBoundaryParticles(boundaryPts);
+
+    auto src                = std::make_shared<AABBEmitter>();
+    src->center             = glm::vec3(8.0f, 8.0f, 8.0f);
+    src->size               = glm::vec3(1.0f, 1.0f, 1.0f);
+    src->particles_per_step = 50; // 初期容量 16 を超えるリクエスト → 拡張が必要
+    src->step_count         = 3;
+    src->particleType       = 1u;
+    engine.addEmitter(src);
+
+    const float dt = 1.0f / 60.0f;
+    for(int f = 0; f < 3; ++f) {
+        engine.emitFromEmitters(dt);
+        VkCommandBuffer cmd = ctx.beginCmd();
+        engine.step(cmd, dt);
+        ctx.submitCmd(cmd);
+    }
+
+    CHECK(engine.nFluid() > cfg.fluidCount()); // 拡張が発生したことを確認
+
+    // 境界パーティクル (typeFlag=3, invMass=0) は速度更新パスの対象外のため、
+    // 拡張後も buffer index 0 からアップロード時の値のまま読み出せるはず。
+    for(uint32_t i = 0; i < NB; ++i) {
+        glm::vec4 p{};
+        ctx.readBuffer(engine.getPositionBuffer(), i * sizeof(glm::vec4), &p, sizeof(p));
+        CHECK(p.x == 1.0f + float(i));
+        CHECK(p.y == 2.0f);
+        CHECK(p.z == 3.0f);
+    }
+
+    engine.cleanup();
+    ctx.cleanup();
+}

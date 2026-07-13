@@ -35,20 +35,35 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
 
   const uint32_t N_GROUPS = (cfg_.totalCells() + 255u) / 256u;
 
-  // 全バッファを N_TOTAL_MAX で確保（流体 + 境界粒子）
+  fluidCapacity_          = cfg_.fluidCount();
+  const uint32_t totalCap = totalBufferCapacity();
+
+  // 全パーティクル用バッファを [0,max_boundary)=境界固定 + [max_boundary,..)=流体可変長 で確保
   // vec4 系は FP16 packed（8 bytes/粒子）でメモリ帯域幅を半減
-  posIdx          = attrBuf_.addAttribute("P", sizeof(glm::vec4), cfg_.nTotalMax());
-  velIdx          = attrBuf_.addAttribute("v", sizeof(glm::vec4), cfg_.nTotalMax());
-  predPIdx        = attrBuf_.addAttribute("predP", sizeof(glm::vec4), cfg_.nTotalMax());
-  invMassIdx      = attrBuf_.addAttribute("invMass", sizeof(glm::vec4), cfg_.nTotalMax());
-  typeFlagIdx     = attrBuf_.addAttribute("typeFlag", sizeof(uint32_t), cfg_.nTotalMax());
+  posIdx          = attrBuf_.addAttribute("P", sizeof(glm::vec4), totalCap);
+  velIdx          = attrBuf_.addAttribute("v", sizeof(glm::vec4), totalCap);
+  predPIdx        = attrBuf_.addAttribute("predP", sizeof(glm::vec4), totalCap);
+  invMassIdx      = attrBuf_.addAttribute("invMass", sizeof(glm::vec4), totalCap);
+  typeFlagIdx     = attrBuf_.addAttribute("typeFlag", sizeof(uint32_t), totalCap);
   cellCountIdx_   = attrBuf_.addAttribute("cellCnt", sizeof(uint32_t), cfg_.totalCells());
   cellOffsetIdx_  = attrBuf_.addAttribute("cellOff", sizeof(uint32_t), cfg_.totalCells() + N_GROUPS);
-  sortedIdxIdx_   = attrBuf_.addAttribute("sorted", sizeof(uint32_t), cfg_.nTotalMax());
-  densityIdx_     = attrBuf_.addAttribute("density", sizeof(float), cfg_.nTotalMax());
-  lambdaPbfIdx_   = attrBuf_.addAttribute("lambdaPbf", sizeof(float), cfg_.nTotalMax());
-  omegaIdx_       = attrBuf_.addAttribute("omega", sizeof(glm::vec4), cfg_.nTotalMax());
+  sortedIdxIdx_   = attrBuf_.addAttribute("sorted", sizeof(uint32_t), totalCap);
+  densityIdx_     = attrBuf_.addAttribute("density", sizeof(float), totalCap);
+  lambdaPbfIdx_   = attrBuf_.addAttribute("lambdaPbf", sizeof(float), totalCap);
+  omegaIdx_       = attrBuf_.addAttribute("omega", sizeof(glm::vec4), totalCap);
   absorberBufIdx_ = attrBuf_.addAttribute("absorbers", sizeof(float), MAX_ABSORBERS * 8u);
+
+  // 境界パーティクル用固定領域 [0, max_boundary) を zero-init する。
+  // hash_count/hash_sort は常にこの領域全体をディスパッチ対象に含むため、
+  // 境界未ロード時のスロットも typeFlag=0（近傍探索の全フィルタで除外される）かつ
+  // predP が有限値である必要がある。
+  if(cfg_.max_boundary > 0) {
+    std::vector<glm::vec4> zeroVec(cfg_.max_boundary, glm::vec4(0.0f));
+    std::vector<uint32_t> zeroFlags(cfg_.max_boundary, 0u);
+    attrBuf_.upload("P", zeroVec.data(), sizeof(glm::vec4) * cfg_.max_boundary, cmdPool, queue);
+    attrBuf_.upload("predP", zeroVec.data(), sizeof(glm::vec4) * cfg_.max_boundary, cmdPool, queue);
+    attrBuf_.upload("typeFlag", zeroFlags.data(), sizeof(uint32_t) * cfg_.max_boundary, cmdPool, queue);
+  }
 
   nFluid_ = 0;
   emitters_.clear();
@@ -85,25 +100,23 @@ void FluidEngine::loadBoundary(const std::string& objPath, float spacing) {
 
   if(pts.empty()) return;
 
-  uint32_t n           = static_cast<uint32_t>(std::min(pts.size(), size_t(cfg_.max_boundary)));
-  VkDeviceSize byteOff = cfg_.fluidCount() * sizeof(glm::vec4);
+  uint32_t n = static_cast<uint32_t>(std::min(pts.size(), size_t(cfg_.max_boundary)));
 
-  // 位置を [FLUID_COUNT, FLUID_COUNT+n) に書き込む
-  attrBuf_.uploadAt("P", pts.data(), sizeof(glm::vec4) * n, byteOff, cmdPool_, queue_);
-  attrBuf_.uploadAt("predP", pts.data(), sizeof(glm::vec4) * n, byteOff, cmdPool_, queue_);
+  // 境界パーティクルは常に buffer index 0 から書き込む（固定領域）
+  attrBuf_.upload("P", pts.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
+  attrBuf_.upload("predP", pts.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
 
   // invMass = 0 (固定)
   std::vector<glm::vec4> zeroMass(n, glm::vec4(0.0f));
-  attrBuf_.uploadAt("invMass", zeroMass.data(), sizeof(glm::vec4) * n, byteOff, cmdPool_, queue_);
+  attrBuf_.upload("invMass", zeroMass.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
 
   // 速度 = 0
   std::vector<glm::vec4> zeroVel(n, glm::vec4(0.0f));
-  attrBuf_.uploadAt("v", zeroVel.data(), sizeof(glm::vec4) * n, byteOff, cmdPool_, queue_);
+  attrBuf_.upload("v", zeroVel.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
 
   // typeFlag = 3 (境界粒子)
   std::vector<uint32_t> flags(n, 3u);
-  VkDeviceSize flagOff = cfg_.fluidCount() * sizeof(uint32_t);
-  attrBuf_.uploadAt("typeFlag", flags.data(), sizeof(uint32_t) * n, flagOff, cmdPool_, queue_);
+  attrBuf_.upload("typeFlag", flags.data(), sizeof(uint32_t) * n, cmdPool_, queue_);
 
   nBoundary = n;
   boundaryTriVerts_.clear();
@@ -115,25 +128,23 @@ void FluidEngine::loadBoundary(const std::string& objPath, float spacing, float 
 
   if(mesh.particles.empty()) return;
 
-  uint32_t n           = static_cast<uint32_t>(std::min(mesh.particles.size(), size_t(cfg_.max_boundary)));
-  VkDeviceSize byteOff = cfg_.fluidCount() * sizeof(glm::vec4);
+  uint32_t n = static_cast<uint32_t>(std::min(mesh.particles.size(), size_t(cfg_.max_boundary)));
 
-  // 位置を [FLUID_COUNT, FLUID_COUNT+n) に書き込む
-  attrBuf_.uploadAt("P", mesh.particles.data(), sizeof(glm::vec4) * n, byteOff, cmdPool_, queue_);
-  attrBuf_.uploadAt("predP", mesh.particles.data(), sizeof(glm::vec4) * n, byteOff, cmdPool_, queue_);
+  // 境界パーティクルは常に buffer index 0 から書き込む（固定領域）
+  attrBuf_.upload("P", mesh.particles.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
+  attrBuf_.upload("predP", mesh.particles.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
 
   // invMass = 0 (固定)
   std::vector<glm::vec4> zeroMass(n, glm::vec4(0.0f));
-  attrBuf_.uploadAt("invMass", zeroMass.data(), sizeof(glm::vec4) * n, byteOff, cmdPool_, queue_);
+  attrBuf_.upload("invMass", zeroMass.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
 
   // 速度 = 0
   std::vector<glm::vec4> zeroVel(n, glm::vec4(0.0f));
-  attrBuf_.uploadAt("v", zeroVel.data(), sizeof(glm::vec4) * n, byteOff, cmdPool_, queue_);
+  attrBuf_.upload("v", zeroVel.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
 
   // typeFlag = 3 (境界粒子)
   std::vector<uint32_t> flags(n, 3u);
-  VkDeviceSize flagOff = cfg_.fluidCount() * sizeof(uint32_t);
-  attrBuf_.uploadAt("typeFlag", flags.data(), sizeof(uint32_t) * n, flagOff, cmdPool_, queue_);
+  attrBuf_.upload("typeFlag", flags.data(), sizeof(uint32_t) * n, cmdPool_, queue_);
 
   nBoundary         = n;
   boundaryTriVerts_ = std::move(mesh.triVerts);
@@ -142,21 +153,20 @@ void FluidEngine::loadBoundary(const std::string& objPath, float spacing, float 
 void FluidEngine::loadBoundaryParticles(const std::vector<glm::vec4>& pts) {
   if(pts.empty()) return;
 
-  uint32_t n           = static_cast<uint32_t>(std::min(pts.size(), size_t(cfg_.max_boundary)));
-  VkDeviceSize byteOff = cfg_.fluidCount() * sizeof(glm::vec4);
+  uint32_t n = static_cast<uint32_t>(std::min(pts.size(), size_t(cfg_.max_boundary)));
 
-  attrBuf_.uploadAt("P", pts.data(), sizeof(glm::vec4) * n, byteOff, cmdPool_, queue_);
-  attrBuf_.uploadAt("predP", pts.data(), sizeof(glm::vec4) * n, byteOff, cmdPool_, queue_);
+  // 境界パーティクルは常に buffer index 0 から書き込む（固定領域）
+  attrBuf_.upload("P", pts.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
+  attrBuf_.upload("predP", pts.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
 
   std::vector<glm::vec4> zeroMass(n, glm::vec4(0.0f));
-  attrBuf_.uploadAt("invMass", zeroMass.data(), sizeof(glm::vec4) * n, byteOff, cmdPool_, queue_);
+  attrBuf_.upload("invMass", zeroMass.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
 
   std::vector<glm::vec4> zeroVel(n, glm::vec4(0.0f));
-  attrBuf_.uploadAt("v", zeroVel.data(), sizeof(glm::vec4) * n, byteOff, cmdPool_, queue_);
+  attrBuf_.upload("v", zeroVel.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
 
   std::vector<uint32_t> flags(n, 3u);
-  VkDeviceSize flagOff = cfg_.fluidCount() * sizeof(uint32_t);
-  attrBuf_.uploadAt("typeFlag", flags.data(), sizeof(uint32_t) * n, flagOff, cmdPool_, queue_);
+  attrBuf_.upload("typeFlag", flags.data(), sizeof(uint32_t) * n, cmdPool_, queue_);
 
   nBoundary = n;
 }
@@ -203,8 +213,12 @@ void FluidEngine::emitFromEmitters(float dt) {
 
     if(!shouldEmit) continue;
 
-    int available = int(cfg_.fluidCount()) - int(nFluid_);
-    int nNew      = std::min(emitter.particles_per_step, available);
+    int available = int(fluidCapacity_) - int(nFluid_);
+    if(available < emitter.particles_per_step) {
+      growFluidCapacity(nFluid_ + uint32_t(std::max(emitter.particles_per_step, 0)));
+      available = int(fluidCapacity_) - int(nFluid_);
+    }
+    int nNew = std::min(emitter.particles_per_step, available);
     if(nNew <= 0) {
       done++;
       continue;
@@ -217,8 +231,8 @@ void FluidEngine::emitFromEmitters(float dt) {
     std::vector<glm::vec4> invM(nNew, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
     std::vector<uint32_t> flags(nNew, emitter.particleType);
 
-    VkDeviceSize byteOff = nFluid_ * sizeof(glm::vec4);
-    VkDeviceSize flagOff = nFluid_ * sizeof(uint32_t);
+    VkDeviceSize byteOff = (cfg_.max_boundary + nFluid_) * sizeof(glm::vec4);
+    VkDeviceSize flagOff = (cfg_.max_boundary + nFluid_) * sizeof(uint32_t);
 
     attrBuf_.uploadAt("P", pos.data(), sizeof(glm::vec4) * nNew, byteOff, cmdPool_, queue_);
     attrBuf_.uploadAt("predP", pos.data(), sizeof(glm::vec4) * nNew, byteOff, cmdPool_, queue_);
@@ -232,6 +246,21 @@ void FluidEngine::emitFromEmitters(float dt) {
     // エミッタ中心を移動
     emitter.center += emitter.center_vel * dt;
   }
+}
+
+// ── 流体パーティクル容量の動的拡張 (Issue #13) ───────────────────────────────────
+
+void FluidEngine::growFluidCapacity(uint32_t minRequired) {
+  if(minRequired <= fluidCapacity_) return;
+  fluidCapacity_ = std::max(minRequired, uint32_t(fluidCapacity_ * 3 / 2)); // 50%増しの余裕を持たせる
+
+  uint32_t newTotal = totalBufferCapacity();
+  for(const char* name : {"P", "predP", "v", "invMass"}) attrBuf_.resizeAttribute(name, newTotal, cmdPool_, queue_);
+  attrBuf_.resizeAttribute("typeFlag", newTotal, cmdPool_, queue_);
+  attrBuf_.resizeAttribute("sorted", newTotal, cmdPool_, queue_);
+  attrBuf_.resizeAttribute("density", newTotal, cmdPool_, queue_);
+  attrBuf_.resizeAttribute("lambdaPbf", newTotal, cmdPool_, queue_);
+  attrBuf_.resizeAttribute("omega", newTotal, cmdPool_, queue_);
 }
 
 // ── 粒子リセット ─────────────────────────────────────────────────────────────
@@ -340,13 +369,16 @@ void FluidEngine::cleanupKinematicBoundaryStaging() {
 // ── 1フレームのシミュレーション ───────────────────────────────────────────────
 
 void FluidEngine::step(VkCommandBuffer cmd, float dt) {
-  emitFromEmitters(dt);
+  // emitFromEmitters() は呼び出し側が事前に(このフレームのコマンドバッファへ
+  // FluidEngine の VkBuffer ハンドルを焼き込む前に)呼び出す想定。ここでは呼ばない
+  // (容量拡張でバッファが再確保されると、先に記録済みのコマンドが古いハンドルを
+  // 参照したままになり GPU 実行時にクラッシュするため)。
 
   if(nFluid_ == 0 && nBoundary == 0) return;
 
   auto ds         = attrBuf_.descriptorSet;
   float subDt     = dt / float(std::max(1, numSubsteps));
-  uint32_t totalN = nFluid_ + nBoundary;
+  uint32_t totalN = cfg_.max_boundary + nFluid_;
 
   for(int sub = 0; sub < numSubsteps; ++sub) {
     SimPC pc{};
@@ -381,7 +413,7 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     pc.windZ             = 0.0f;
     pc.densityIdx        = densityIdx_;
     pc.lambdaPbfIdx      = lambdaPbfIdx_;
-    pc.boundaryStart     = cfg_.fluidCount();
+    pc.fluidStart        = cfg_.max_boundary;
     // PBF 論文準拠パラメータ
     pc.cfmEpsilon       = cfmEpsilon;
     pc.scorrK           = scorrK;

@@ -55,6 +55,9 @@ layout(push_constant) uniform PC {
     // 吸収ポート (fluid_absorb 専用; 他シェーダーは宣言のみで不使用)
     uint  absorberBufIdx;   // 吸収形状バッファの bindless index (8 floats × absorberCount)
     uint  absorberCount;    // 有効な吸収形状数 (0 = 吸収パスをスキップ)
+    // 流体パーティクル領域の開始オフセット (= FluidEngine の cfg_.max_boundary)。
+    // 既定値0=オフセットなしのため、設定しない他エンジンのシェーダーは影響を受けない。
+    uint  fluidStart;
 } pc;
 
 // ── vec4 読み書き（FP32, MoltenVK 関数化バグ回避のためマクロ）────

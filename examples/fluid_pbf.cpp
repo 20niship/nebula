@@ -136,6 +136,9 @@ private:
   }
 
   void recordComputeCmd(VkCommandBuffer cmd) {
+    // 容量拡張によるバッファ再確保はコマンドバッファ記録前に解決しておく
+    engine_.emitFromEmitters(dt_);
+
     VkCommandBufferBeginInfo bi{};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -190,6 +193,7 @@ private:
     pc.particleCount = engine_.nFluid();
     pc.worldMin      = 0.0f;
     pc.worldMax      = engine_.config().world_size;
+    pc.boundaryStart = engine_.config().max_boundary; // 流体パーティクル領域の開始オフセット
 
     graphicsPipe_.draw(cmd, engine_.descriptorSet, pc, engine_.nFluid());
 

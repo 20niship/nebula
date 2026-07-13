@@ -7,19 +7,20 @@ layout(local_size_x = 256) in;
 void main() {
     uint i = gl_GlobalInvocationID.x;
     if (i >= pc.particleCount) return;
+    uint idx = i + pc.fluidStart;
 
-    vec4 p     = readVec4(pc.posIdx,   i);
-    vec4 predP = readVec4(pc.predPIdx, i);
+    vec4 p     = readVec4(pc.posIdx,   idx);
+    vec4 predP = readVec4(pc.predPIdx, idx);
 
     // XPBD/PBD 速度更新: v = (predP - P) / dt
     vec4 v = (predP - p) / pc.dt;
 
     // フレームレート非依存の線形ダンピング: v *= exp(-d*dt)
     // 煙粒子 (typeFlag==4) は smokeDamping を使用して速く拡散させる。
-    uint flag = readUint(pc.typeFlagIdx, i);
+    uint flag = readUint(pc.typeFlagIdx, idx);
     float damp = (flag == 4u) ? pc.smokeDamping : pc.linearDamping;
     v.xyz *= exp(-damp * pc.dt);
 
-    writeVec4(pc.posIdx, i, predP);
-    writeVec4(pc.velIdx, i, v);
+    writeVec4(pc.posIdx, idx, predP);
+    writeVec4(pc.velIdx, idx, v);
 }

@@ -12,14 +12,15 @@ layout(local_size_x = 256) in;
 void main() {
     uint i = gl_GlobalInvocationID.x;
     if (i >= pc.particleCount) return;
+    uint idx = i + pc.fluidStart;
 
-    uint fi = readUint(pc.typeFlagIdx, i);
+    uint fi = readUint(pc.typeFlagIdx, idx);
     if (fi != 1u) return;
 
     // update_velocity 後: posIdx = 最終位置、velIdx = 更新済み速度
-    vec4 pi4 = readVec4(pc.posIdx, i);
+    vec4 pi4 = readVec4(pc.posIdx, idx);
     vec3 pi  = pi4.xyz;
-    vec4 vi4 = readVec4(pc.velIdx, i);
+    vec4 vi4 = readVec4(pc.velIdx, idx);
     vec3 vi  = vi4.xyz;
 
     float h  = pc.cellSize;
@@ -46,7 +47,7 @@ void main() {
 
         for (uint k = start; k < start + cnt; ++k) {
             uint j  = readUint(pc.sortedIdxIdx, k);
-            if (j == i) continue;
+            if (j == idx) continue;
             uint fj = readUint(pc.typeFlagIdx, j);
             if (fj != 1u && fj != 3u) continue; // 流体 + 運動学的境界 (TC8)
 
@@ -64,5 +65,5 @@ void main() {
 
     // ρ₀ で割って正規化: Σ W_ij ≈ ρ₀ のため、c の意味が正しい XSPH 係数になる
     vi4.xyz = vi + c * vel_corr / pc.stretchCompliance;
-    writeVec4(pc.velIdx, i, vi4);
+    writeVec4(pc.velIdx, idx, vi4);
 }

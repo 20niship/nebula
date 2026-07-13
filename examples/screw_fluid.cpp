@@ -171,7 +171,7 @@ private:
     const float w    = cfg.world_size;
     screw_.pivotXY   = glm::vec2(w * 0.5f, w * 0.5f);
     screw_.angVelZ   = args.ang_vel;
-    screw_.gpuOffset = cfg.fluidCount();
+    screw_.gpuOffset = 0; // 境界パーティクルは常に buffer index 0 から配置される
 
     // 4枚羽根プロペラ：内径 0.3m, 外径 5m, Z=1.5〜7.5m, 粒子間隔 0.15m
     screw_.restPositions = generate4BladePropeller(screw_.pivotXY, 0.01f, 1.0f, 7.0f, 0.3f, 4, 0.15f);
@@ -192,8 +192,8 @@ private:
     src->center             = glm::vec3(w * 0.2f, w * 0.3f, 4.0f);
     src->size               = glm::vec3(4.0f, 3.0f, 4.0f);
     src->vel                = glm::vec3(0.0f);
-    src->particles_per_step = cfg.fluidCount() / 10;
-    src->step_count         = 100000;
+    src->particles_per_step = 1024;
+    src->step_count         = 210;
     src->particleType       = 1u;
     engine_.addEmitter(src);
 
@@ -204,6 +204,12 @@ private:
   }
 
   void recordComputeCmd(VkCommandBuffer cmd) {
+    // 容量拡張によるバッファ再確保は、下の recordKinematicBoundaryUpdate が
+    // その時点の VkBuffer ハンドルをコマンドバッファへ焼き込む前に解決しておく
+    // (先に解決しないと、再確保で破棄された古いバッファへのコピーが
+    // コマンドバッファに残ってしまい GPU 実行時にクラッシュする)
+    engine_.emitFromEmitters(dt_);
+
     VkCommandBufferBeginInfo bi{};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -255,15 +261,22 @@ private:
     sc.extent = base_.ctx.swapchainExtent;
     vkCmdSetScissor(cmd, 0, 1, &sc);
 
-    // 流体粒子 + 境界（スクリュー）をまとめて描画
-    uint32_t drawCount = engine_.nFluid() + engine_.nBoundary;
+    // 流体粒子 + 境界（スクリュー）を描画（バッファ上は非連続のため2回に分けて描画）
     SimPC pc{};
-    pc.posIdx        = engine_.posIdx;
-    pc.velIdx        = engine_.velIdx;
-    pc.particleCount = drawCount;
-    pc.worldMin      = 0.0f;
-    pc.worldMax      = engine_.config().world_size;
-    graphicsPipe_.draw(cmd, engine_.descriptorSet, pc, drawCount);
+    pc.posIdx   = engine_.posIdx;
+    pc.velIdx   = engine_.velIdx;
+    pc.worldMin = 0.0f;
+    pc.worldMax = engine_.config().world_size;
+
+    // 境界（スクリュー）: buffer index 0 から
+    pc.boundaryStart = 0;
+    pc.particleCount = engine_.nBoundary;
+    graphicsPipe_.draw(cmd, engine_.descriptorSet, pc, engine_.nBoundary);
+
+    // 流体
+    pc.boundaryStart = engine_.config().max_boundary;
+    pc.particleCount = engine_.nFluid();
+    graphicsPipe_.draw(cmd, engine_.descriptorSet, pc, engine_.nFluid());
 
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     vkCmdEndRenderPass(cmd);

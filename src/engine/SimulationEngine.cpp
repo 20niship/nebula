@@ -65,8 +65,7 @@ void SimulationEngine::initClothBuffers(VkCommandPool cmdPool, VkQueue queue) {
   clothMesh_.build(cfg_.cloth_grid_n, 0.065f, cfg_.world_size * 0.5f, cfg_.world_size * 0.5f, clothZ);
 
   // 上端全行 (i==0) をピン留め (invMass=0)
-  for(int j = 0; j < (int)cfg_.cloth_grid_n; ++j)
-    clothMesh_.invMasses[clothMesh_.idx(0, j)].x = 0.0f;
+  for(int j = 0; j < (int)cfg_.cloth_grid_n; ++j) clothMesh_.invMasses[clothMesh_.idx(0, j)].x = 0.0f;
 
   nColors_        = clothMesh_.nColors;
   colorBatch_cpu_ = clothMesh_.colorBatch;

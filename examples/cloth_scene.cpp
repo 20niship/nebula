@@ -22,12 +22,12 @@ static const std::string SHADER_DIR_STR = SHADER_DIR;
 // ── CLI ───────────────────────────────────────────────────────────────────────
 
 struct SceneArgs : public argparse::Args {
-  int&   scene     = kwarg("scene",      "5=two cloths, 7=4-corner twist").set_default(5);
-  int&   cloth_n   = kwarg("n,cloth-n",  "cloth grid size NxN").set_default(48);
-  float& world_size= kwarg("world-size", "simulation world size").set_default(10.0f);
-  int&   grid_res  = kwarg("grid-res",   "hash grid resolution").set_default(64);
-  float& dt        = kwarg("dt",         "timestep (sec)").set_default(1.0f / 60.0f);
-  int&   n_shots   = kwarg("n-shots",    "screenshot count (0=disabled)").set_default(0);
+  int& scene                  = kwarg("scene", "5=two cloths, 7=4-corner twist").set_default(5);
+  int& cloth_n                = kwarg("n,cloth-n", "cloth grid size NxN").set_default(48);
+  float& world_size           = kwarg("world-size", "simulation world size").set_default(10.0f);
+  int& grid_res               = kwarg("grid-res", "hash grid resolution").set_default(64);
+  float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 60.0f);
+  int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
 };
 
@@ -40,9 +40,7 @@ static glm::vec3 rotateAroundY(const glm::vec3& point, const glm::vec3& pivot, f
   float dz = point.z - pivot.z;
   float c  = glm::cos(angle);
   float s  = glm::sin(angle);
-  return glm::vec3(pivot.x + dx * c + dz * s,
-                   point.y,
-                   pivot.z - dx * s + dz * c);
+  return glm::vec3(pivot.x + dx * c + dz * s, point.y, pivot.z - dx * s + dz * c);
 }
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -50,11 +48,11 @@ static glm::vec3 rotateAroundY(const glm::vec3& point, const glm::vec3& pivot, f
 class ClothSceneApp {
 public:
   void run(const SceneArgs& args) {
-    scene_    = args.scene;
-    dt_       = args.dt;
-    clothN_   = (uint32_t)args.cloth_n;
-    worldSize_= args.world_size;
-    gridRes_  = (uint32_t)args.grid_res;
+    scene_              = args.scene;
+    dt_                 = args.dt;
+    clothN_             = (uint32_t)args.cloth_n;
+    worldSize_          = args.world_size;
+    gridRes_            = (uint32_t)args.grid_res;
     base_.screenshotDir = args.screenshot_dir;
 
     base_.initWindow("Vulkan Sim – Cloth Scene");
@@ -64,17 +62,17 @@ public:
   }
 
 private:
-  BaseApp            base_;
-  ClothSceneEngine   engine_;
-  GraphicsPipeline   particlePipe_;
+  BaseApp base_;
+  ClothSceneEngine engine_;
+  GraphicsPipeline particlePipe_;
   std::vector<ClothRenderer> clothRenderers_;
 
-  int      scene_     = 5;
-  float    dt_        = 1.0f / 60.0f;
-  float    simTime_   = 0.0f;
-  uint32_t clothN_    = 48;
-  float    worldSize_ = 10.0f;
-  uint32_t gridRes_   = 64;
+  int scene_        = 5;
+  float dt_         = 1.0f / 60.0f;
+  float simTime_    = 0.0f;
+  uint32_t clothN_  = 48;
+  float worldSize_  = 10.0f;
+  uint32_t gridRes_ = 64;
 
   // TC7 用: 4隅の初期位置
   glm::vec3 corners_[4]{};
@@ -95,12 +93,8 @@ private:
     uint32_t off2 = engine_.addCloth(m2);
 
     for(int j = 0; j < (int)clothN_; ++j) {
-      engine_.addConstraint({ClothConstraint::Type::Pin,
-          off1 + (uint32_t)m1.idx(0, j),
-          glm::vec3(m1.positions[m1.idx(0, j)])});
-      engine_.addConstraint({ClothConstraint::Type::Pin,
-          off2 + (uint32_t)m2.idx(0, j),
-          glm::vec3(m2.positions[m2.idx(0, j)])});
+      engine_.addConstraint({ClothConstraint::Type::Pin, off1 + (uint32_t)m1.idx(0, j), glm::vec3(m1.positions[m1.idx(0, j)])});
+      engine_.addConstraint({ClothConstraint::Type::Pin, off2 + (uint32_t)m2.idx(0, j), glm::vec3(m2.positions[m2.idx(0, j)])});
     }
 
     meshTriIndices_.push_back(m1.triIndices);
@@ -111,23 +105,23 @@ private:
     float sp = worldSize_ / float(clothN_ + 1) * 0.85f;
     float cx = worldSize_ * 0.5f;
     float cy = worldSize_ * 0.5f;
-    float cz = worldSize_ * 0.5f;  // 中央高さ: 回転時に上下の境界を超えないよう
+    float cz = worldSize_ * 0.5f; // 中央高さ: 回転時に上下の境界を超えないよう
 
     ClothMesh m;
     m.build((int)clothN_, sp, cx, cy, cz);
 
     uint32_t off = engine_.addCloth(m);
-    int N = (int)clothN_;
+    int N        = (int)clothN_;
 
-    corners_[0] = glm::vec3(m.positions[m.idx(0,   0  )]);
-    corners_[1] = glm::vec3(m.positions[m.idx(0,   N-1)]);
-    corners_[2] = glm::vec3(m.positions[m.idx(N-1, 0  )]);
-    corners_[3] = glm::vec3(m.positions[m.idx(N-1, N-1)]);
+    corners_[0] = glm::vec3(m.positions[m.idx(0, 0)]);
+    corners_[1] = glm::vec3(m.positions[m.idx(0, N - 1)]);
+    corners_[2] = glm::vec3(m.positions[m.idx(N - 1, 0)]);
+    corners_[3] = glm::vec3(m.positions[m.idx(N - 1, N - 1)]);
 
-    engine_.addConstraint({ClothConstraint::Type::PinAnimated, off + (uint32_t)m.idx(0,   0  ), corners_[0]});
-    engine_.addConstraint({ClothConstraint::Type::PinAnimated, off + (uint32_t)m.idx(0,   N-1), corners_[1]});
-    engine_.addConstraint({ClothConstraint::Type::PinAnimated, off + (uint32_t)m.idx(N-1, 0  ), corners_[2]});
-    engine_.addConstraint({ClothConstraint::Type::PinAnimated, off + (uint32_t)m.idx(N-1, N-1), corners_[3]});
+    engine_.addConstraint({ClothConstraint::Type::PinAnimated, off + (uint32_t)m.idx(0, 0), corners_[0]});
+    engine_.addConstraint({ClothConstraint::Type::PinAnimated, off + (uint32_t)m.idx(0, N - 1), corners_[1]});
+    engine_.addConstraint({ClothConstraint::Type::PinAnimated, off + (uint32_t)m.idx(N - 1, 0), corners_[2]});
+    engine_.addConstraint({ClothConstraint::Type::PinAnimated, off + (uint32_t)m.idx(N - 1, N - 1), corners_[3]});
 
     meshTriIndices_.push_back(m.triIndices);
   }
@@ -137,34 +131,30 @@ private:
     base_.createDescriptorPool();
 
     // ① メッシュ構築・制約登録 (engine_.init() 前: descriptorSetLayout 未確定)
-    if(scene_ == 5)      buildScene5();
-    else if(scene_ == 7) buildScene7();
-    else throw std::runtime_error("Unknown scene: " + std::to_string(scene_));
+    if(scene_ == 5)
+      buildScene5();
+    else if(scene_ == 7)
+      buildScene7();
+    else
+      throw std::runtime_error("Unknown scene: " + std::to_string(scene_));
 
     // ② エンジン初期化 → descriptorSetLayout が確定する
-    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool,
-                 base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue,
-                 SHADER_DIR_STR, worldSize_, gridRes_);
+    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, worldSize_, gridRes_);
 
     // TC7 は高速回転 (7回転/5秒) のため substep を増やして安定化
     if(scene_ == 7) {
-      engine_.numSubsteps     = 15;
+      engine_.numSubsteps      = 15;
       engine_.solverIterations = 5;
     }
 
     // ③ レンダラー初期化 (engine_.init() 後に descriptorSetLayout を使う)
     clothRenderers_.resize(meshTriIndices_.size());
     for(size_t i = 0; i < meshTriIndices_.size(); ++i) {
-      clothRenderers_[i].init(base_.ctx.device, base_.ctx.allocator, base_.ctx.renderPass,
-                              engine_.descriptorSetLayout, SHADER_DIR_STR);
-      clothRenderers_[i].uploadIndices(meshTriIndices_[i],
-                                       base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue);
+      clothRenderers_[i].init(base_.ctx.device, base_.ctx.allocator, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR);
+      clothRenderers_[i].uploadIndices(meshTriIndices_[i], base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue);
     }
 
-    particlePipe_.init(base_.ctx.device, base_.ctx.renderPass,
-                       engine_.descriptorSetLayout,
-                       SHADER_DIR_STR + "/particle.vert.spv",
-                       SHADER_DIR_STR + "/particle.frag.spv");
+    particlePipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/particle.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");
 
     base_.createFrameData();
     base_.initImGui();
@@ -175,9 +165,9 @@ private:
     // Y軸周りに絞り回転: 左端(dx<0)と右端(dx>0)が同一軸上で逆Z方向へ
     // 300フレーム×(1/60s) = 5秒で 7回転
     const float angVel = glm::two_pi<float>() * 7.0f / 5.0f;
-    float angle = simTime_ * angVel;
-    float cx = worldSize_ * 0.5f;
-    float cz = worldSize_ * 0.5f;
+    float angle        = simTime_ * angVel;
+    float cx           = worldSize_ * 0.5f;
+    float cz           = worldSize_ * 0.5f;
     for(int k = 0; k < 4; ++k) {
       glm::vec3 pivot(cx, corners_[k].y, cz);
       engine_.updateConstraint(k, rotateAroundY(corners_[k], pivot, angle));
@@ -201,9 +191,7 @@ private:
     barrier.buffer              = engine_.getPositionBuffer();
     barrier.offset              = 0;
     barrier.size                = VK_WHOLE_SIZE;
-    vkCmdPipelineBarrier(cmd,
-      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
-      0, 0, nullptr, 1, &barrier, 0, nullptr);
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0, 0, nullptr, 1, &barrier, 0, nullptr);
 
     vkEndCommandBuffer(cmd);
   }
@@ -231,7 +219,8 @@ private:
     vp.height   = (float)base_.ctx.swapchainExtent.height;
     vp.maxDepth = 1.0f;
     vkCmdSetViewport(cmd, 0, 1, &vp);
-    VkRect2D sc{}; sc.extent = base_.ctx.swapchainExtent;
+    VkRect2D sc{};
+    sc.extent = base_.ctx.swapchainExtent;
     vkCmdSetScissor(cmd, 0, 1, &sc);
 
     SimPC pc{};
@@ -244,9 +233,7 @@ private:
     pc.couplingForceIdx = 0;
 
     for(uint32_t i = 0; i < engine_.clothCount(); ++i) {
-      clothRenderers_[i].draw(cmd, engine_.descriptorSet, pc,
-                              engine_.getMesh(i).vertexCount(),
-                              (int32_t)engine_.meshOffset(i));
+      clothRenderers_[i].draw(cmd, engine_.descriptorSet, pc, engine_.getMesh(i).vertexCount(), (int32_t)engine_.meshOffset(i));
     }
     particlePipe_.draw(cmd, engine_.descriptorSet, pc, engine_.totalParticleCount());
 
@@ -260,10 +247,11 @@ private:
     vkWaitForFences(base_.ctx.device, 1, &f.inFlightFence, VK_TRUE, UINT64_MAX);
 
     uint32_t imageIdx;
-    VkResult result = vkAcquireNextImageKHR(base_.ctx.device, base_.ctx.swapchain,
-                                             UINT64_MAX, f.imageAvailable,
-                                             VK_NULL_HANDLE, &imageIdx);
-    if(result == VK_ERROR_OUT_OF_DATE_KHR) { base_.ctx.recreateSwapchain(); return; }
+    VkResult result = vkAcquireNextImageKHR(base_.ctx.device, base_.ctx.swapchain, UINT64_MAX, f.imageAvailable, VK_NULL_HANDLE, &imageIdx);
+    if(result == VK_ERROR_OUT_OF_DATE_KHR) {
+      base_.ctx.recreateSwapchain();
+      return;
+    }
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
@@ -272,19 +260,18 @@ private:
     ImGui::NewFrame();
 
     ImGui::Begin("Cloth Scene Control");
-    ImGui::Text("Scene %d | FPS: %.1f | 頂点: %u | t=%.2fs",
-                scene_, ImGui::GetIO().Framerate, engine_.totalParticleCount(), simTime_);
+    ImGui::Text("Scene %d | FPS: %.1f | 頂点: %u | t=%.2fs", scene_, ImGui::GetIO().Framerate, engine_.totalParticleCount(), simTime_);
     ImGui::Separator();
-    ImGui::SliderFloat("重力",        &engine_.gravity,          -20.0f,  0.0f);
-    ImGui::SliderFloat("反発係数",    &engine_.restitution,        0.0f,  1.0f);
-    ImGui::SliderFloat("摩擦係数",    &engine_.friction,           0.0f,  1.0f);
-    ImGui::SliderFloat("伸び剛性",    &engine_.stretchCompliance,  0.0f,  1e-2f, "%.6f");
-    ImGui::SliderFloat("曲げ剛性",    &engine_.bendCompliance,     0.0f,  1e-1f, "%.6f");
-    ImGui::SliderFloat("風 X",        &engine_.windX,            -10.0f, 10.0f);
-    ImGui::SliderFloat("風 Z",        &engine_.windZ,            -10.0f, 10.0f);
-    ImGui::SliderInt("反復",          &engine_.solverIterations,    1,    10);
-    ImGui::SliderInt("サブステップ",  &engine_.numSubsteps,         1,    20);
-    ImGui::Checkbox("自己衝突",       &engine_.enableSelfCollision);
+    ImGui::SliderFloat("重力", &engine_.gravity, -20.0f, 0.0f);
+    ImGui::SliderFloat("反発係数", &engine_.restitution, 0.0f, 1.0f);
+    ImGui::SliderFloat("摩擦係数", &engine_.friction, 0.0f, 1.0f);
+    ImGui::SliderFloat("伸び剛性", &engine_.stretchCompliance, 0.0f, 1e-2f, "%.6f");
+    ImGui::SliderFloat("曲げ剛性", &engine_.bendCompliance, 0.0f, 1e-1f, "%.6f");
+    ImGui::SliderFloat("風 X", &engine_.windX, -10.0f, 10.0f);
+    ImGui::SliderFloat("風 Z", &engine_.windZ, -10.0f, 10.0f);
+    ImGui::SliderInt("反復", &engine_.solverIterations, 1, 10);
+    ImGui::SliderInt("サブステップ", &engine_.numSubsteps, 1, 20);
+    ImGui::Checkbox("自己衝突", &engine_.enableSelfCollision);
     ImGui::End();
 
     ImGui::Render();
@@ -319,11 +306,8 @@ private:
     tsWait.waitSemaphoreValueCount = 2;
     tsWait.pWaitSemaphoreValues    = waitVals.data();
 
-    std::array<VkSemaphore, 2>          waitSems   = {f.imageAvailable, f.timelineSemaphore};
-    std::array<VkPipelineStageFlags, 2> waitStages = {
-      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-      VK_PIPELINE_STAGE_VERTEX_SHADER_BIT
-    };
+    std::array<VkSemaphore, 2> waitSems            = {f.imageAvailable, f.timelineSemaphore};
+    std::array<VkPipelineStageFlags, 2> waitStages = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT};
 
     VkSubmitInfo grSub{};
     grSub.sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO;

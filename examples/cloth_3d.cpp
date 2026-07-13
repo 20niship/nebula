@@ -1,8 +1,8 @@
 #include "App.h"
 #include "engine/SimulationEngine.h"
-#include "utils.hpp"
 #include "graphics/ClothRenderer.h"
 #include "graphics/GraphicsPipeline.h"
+#include "utils.hpp"
 
 #include <argparse/argparse.hpp>
 #include <imgui.h>
@@ -19,11 +19,11 @@ static const std::string SHADER_DIR_STR = SHADER_DIR;
 // ── CLI ───────────────────────────────────────────────────────────────────────
 
 struct ClothArgs : public argparse::Args {
-  int&   cloth_n    = kwarg("n,cloth-n",    "cloth grid size NxN").set_default(128);
-  float& world_size = kwarg("world-size",   "simulation world size").set_default(10.0f);
-  int&   grid_res   = kwarg("grid-res",     "hash grid resolution").set_default(64);
-  float& dt         = kwarg("dt",           "timestep (sec)").set_default(1.0f / 60.0f);
-  int&   n_shots    = kwarg("n-shots",      "screenshot count (0=disabled)").set_default(0);
+  int& cloth_n                = kwarg("n,cloth-n", "cloth grid size NxN").set_default(128);
+  float& world_size           = kwarg("world-size", "simulation world size").set_default(10.0f);
+  int& grid_res               = kwarg("grid-res", "hash grid resolution").set_default(64);
+  float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 60.0f);
+  int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
 };
 
@@ -32,7 +32,7 @@ struct ClothArgs : public argparse::Args {
 class ClothApp {
 public:
   void run(const ClothArgs& args) {
-    dt_       = args.dt;
+    dt_                 = args.dt;
     base_.screenshotDir = args.screenshot_dir;
 
     ClothConfig cfg;
@@ -47,32 +47,25 @@ public:
   }
 
 private:
-  BaseApp          base_;
+  BaseApp base_;
   SimulationEngine sim_;
   GraphicsPipeline graphicsPipe_;
-  ClothRenderer    clothRenderer_;
+  ClothRenderer clothRenderer_;
 
-  float dt_      = 1.0f / 60.0f;
-  float simTime_ = 0.0f;
-  int   debugFrameCount_ = 0;
+  float dt_            = 1.0f / 60.0f;
+  float simTime_       = 0.0f;
+  int debugFrameCount_ = 0;
 
   void initVulkan(const ClothConfig& cfg) {
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
-    sim_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool,
-              base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue,
-              SHADER_DIR_STR, cfg);
+    sim_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
 
-    graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass,
-                       sim_.descriptorSetLayout,
-                       SHADER_DIR_STR + "/particle.vert.spv",
-                       SHADER_DIR_STR + "/particle.frag.spv");
+    graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, sim_.descriptorSetLayout, SHADER_DIR_STR + "/particle.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");
 
-    clothRenderer_.init(base_.ctx.device, base_.ctx.allocator, base_.ctx.renderPass,
-                        sim_.descriptorSetLayout, SHADER_DIR_STR);
-    clothRenderer_.uploadIndices(sim_.getClothMesh().triIndices,
-                                 base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue);
+    clothRenderer_.init(base_.ctx.device, base_.ctx.allocator, base_.ctx.renderPass, sim_.descriptorSetLayout, SHADER_DIR_STR);
+    clothRenderer_.uploadIndices(sim_.getClothMesh().triIndices, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue);
 
     base_.createFrameData();
     base_.initImGui();
@@ -95,9 +88,7 @@ private:
     barrier.buffer              = sim_.getPositionBuffer();
     barrier.offset              = 0;
     barrier.size                = VK_WHOLE_SIZE;
-    vkCmdPipelineBarrier(cmd,
-      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
-      0, 0, nullptr, 1, &barrier, 0, nullptr);
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0, 0, nullptr, 1, &barrier, 0, nullptr);
 
     vkEndCommandBuffer(cmd);
   }
@@ -125,7 +116,8 @@ private:
     vp.height   = (float)base_.ctx.swapchainExtent.height;
     vp.maxDepth = 1.0f;
     vkCmdSetViewport(cmd, 0, 1, &vp);
-    VkRect2D sc{}; sc.extent = base_.ctx.swapchainExtent;
+    VkRect2D sc{};
+    sc.extent = base_.ctx.swapchainExtent;
     vkCmdSetScissor(cmd, 0, 1, &sc);
 
     const uint32_t clothN = sim_.config().clothVertCount();
@@ -150,14 +142,14 @@ private:
     auto& f = base_.frames[base_.currentFrame];
     vkWaitForFences(base_.ctx.device, 1, &f.inFlightFence, VK_TRUE, UINT64_MAX);
 
-    if (++debugFrameCount_ % 60 == 0)
-      sim_.debugPrintVertices(base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue);
+    if(++debugFrameCount_ % 60 == 0) sim_.debugPrintVertices(base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue);
 
     uint32_t imageIdx;
-    VkResult result = vkAcquireNextImageKHR(base_.ctx.device, base_.ctx.swapchain,
-                                             UINT64_MAX, f.imageAvailable,
-                                             VK_NULL_HANDLE, &imageIdx);
-    if (result == VK_ERROR_OUT_OF_DATE_KHR) { base_.ctx.recreateSwapchain(); return; }
+    VkResult result = vkAcquireNextImageKHR(base_.ctx.device, base_.ctx.swapchain, UINT64_MAX, f.imageAvailable, VK_NULL_HANDLE, &imageIdx);
+    if(result == VK_ERROR_OUT_OF_DATE_KHR) {
+      base_.ctx.recreateSwapchain();
+      return;
+    }
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
@@ -166,8 +158,7 @@ private:
     ImGui::NewFrame();
 
     ImGui::Begin("Cloth Control");
-    ImGui::Text("FPS: %.1f  |  頂点: %u  経過: %.2f s",
-                ImGui::GetIO().Framerate, sim_.config().clothVertCount(), simTime_);
+    ImGui::Text("FPS: %.1f  |  頂点: %u  経過: %.2f s", ImGui::GetIO().Framerate, sim_.config().clothVertCount(), simTime_);
     ImGui::Separator();
     sim_ui::cloth_params(sim_);
     ImGui::End();
@@ -202,11 +193,8 @@ private:
     tsWait.waitSemaphoreValueCount = 2;
     tsWait.pWaitSemaphoreValues    = waitVals.data();
 
-    std::array<VkSemaphore, 2>          waitSems   = {f.imageAvailable, f.timelineSemaphore};
-    std::array<VkPipelineStageFlags, 2> waitStages = {
-      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-      VK_PIPELINE_STAGE_VERTEX_SHADER_BIT
-    };
+    std::array<VkSemaphore, 2> waitSems            = {f.imageAvailable, f.timelineSemaphore};
+    std::array<VkPipelineStageFlags, 2> waitStages = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT};
 
     VkSubmitInfo grSub{};
     grSub.sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -228,10 +216,10 @@ private:
     present.pSwapchains        = &base_.ctx.swapchain;
     present.pImageIndices      = &imageIdx;
 
-    if (nShots > 0) base_.saveScreenshot(imageIdx, nShots);
+    if(nShots > 0) base_.saveScreenshot(imageIdx, nShots);
 
     result = vkQueuePresentKHR(base_.ctx.graphicsQueue, &present);
-    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || base_.framebufferResized) {
+    if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || base_.framebufferResized) {
       base_.framebufferResized = false;
       base_.ctx.recreateSwapchain();
     }
@@ -240,7 +228,7 @@ private:
   }
 
   void mainLoop(int nShots) {
-    while (!glfwWindowShouldClose(base_.window) && !base_.shouldExit) {
+    while(!glfwWindowShouldClose(base_.window) && !base_.shouldExit) {
       glfwPollEvents();
       drawFrame(nShots);
     }
@@ -262,7 +250,7 @@ int main(int argc, char* argv[]) {
   ClothApp app;
   try {
     app.run(args);
-  } catch (const std::exception& e) {
+  } catch(const std::exception& e) {
     std::fprintf(stderr, "Fatal: %s\n", e.what());
     return 1;
   }

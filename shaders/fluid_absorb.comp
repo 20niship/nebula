@@ -35,11 +35,12 @@ float sdf(uint atype, vec3 ac, float ap0, float ap1, float ap2, vec3 p) {
 void main() {
     uint i = gl_GlobalInvocationID.x;
     if (i >= pc.particleCount) return;
+    uint idx = i + pc.fluidStart;
 
     // 流体粒子 (typeFlag==1) のみ対象
-    if (readUint(pc.typeFlagIdx, i) != 1u) return;
+    if (readUint(pc.typeFlagIdx, idx) != 1u) return;
 
-    vec3 p = readVec4(pc.posIdx, i).xyz;
+    vec3 p = readVec4(pc.posIdx, idx).xyz;
 
     for (uint a = 0u; a < pc.absorberCount; ++a) {
         uint  base  = a * 8u;
@@ -57,7 +58,7 @@ void main() {
 
         // 吸収確率チェック: 粒子インデックスと吸収器インデックスをハッシュ
         if (rate < 1.0) {
-            uint h = i * 2654435761u ^ (a * 7654321u) ^ floatBitsToUint(pc.dt * 997.0);
+            uint h = idx * 2654435761u ^ (a * 7654321u) ^ floatBitsToUint(pc.dt * 997.0);
             h ^= (h >> 16u); h *= 0x45d9f3bu; h ^= (h >> 16u);
             float rnd = float(h & 0xFFFFu) / 65535.0;
             if (rnd > rate) continue;
@@ -65,11 +66,11 @@ void main() {
 
         // 粒子を「墓場」へ移動（graveyard pattern）
         float gr = pc.worldMin + pc.particleRadius;
-        writeUint(pc.typeFlagIdx,  i, 0u);
-        writeVec4(pc.invMassIdx,   i, vec4(0.0));
-        writeVec4(pc.posIdx,       i, vec4(gr, gr, gr, 0.0));
-        writeVec4(pc.predPIdx,     i, vec4(gr, gr, gr, 0.0));
-        writeVec4(pc.velIdx,       i, vec4(0.0));
+        writeUint(pc.typeFlagIdx,  idx, 0u);
+        writeVec4(pc.invMassIdx,   idx, vec4(0.0));
+        writeVec4(pc.posIdx,       idx, vec4(gr, gr, gr, 0.0));
+        writeVec4(pc.predPIdx,     idx, vec4(gr, gr, gr, 0.0));
+        writeVec4(pc.velIdx,       idx, vec4(0.0));
         return;
     }
 }

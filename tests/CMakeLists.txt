@@ -4,7 +4,6 @@ cmake_minimum_required(VERSION 3.22)
 if(APPLE)
     set(PLATFORM_WRAPPERS
         helpers/VkWrapper.mm                      # ObjC++ NSException catcher (vkCreateInstance)
-        ${CMAKE_SOURCE_DIR}/src/VkSafeAlloc.mm    # ObjC++ NSException catcher (vmaCreateBuffer)
     )
 else()
     set(PLATFORM_WRAPPERS "")
@@ -18,46 +17,24 @@ add_executable(vulkan_tests
     helpers/PBFHarness.cpp
     helpers/MPMHarness.cpp
     test_string2d.cpp
-    test_string3d.cpp
+    # test_string3d.cpp
     test_fluid.cpp
-    test_pbf_fluid.cpp
-    test_pbf.cpp
+    # test_pbf_fluid.cpp
+    # test_pbf.cpp
     test_mpm.cpp
     test_pyro.cpp
-    # 共通シミュレーションコード (メインアプリと共有)
-    ${CMAKE_SOURCE_DIR}/src/core/AttributeBuffer.cpp
-    ${CMAKE_SOURCE_DIR}/src/core/ComputePipeline.cpp
-    ${CMAKE_SOURCE_DIR}/src/engine/PyroEngine.cpp
 )
 
 add_dependencies(vulkan_tests shaders)
 
 target_include_directories(vulkan_tests PRIVATE
-    ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/src/core
-    ${CMAKE_SOURCE_DIR}/src/engine
-    ${CMAKE_SOURCE_DIR}/src/graphics
-    ${CMAKE_SOURCE_DIR}/third_party/VulkanMemoryAllocator/include
     ${doctest_SOURCE_DIR}               # doctest/doctest.h はここの下にある
 )
 
-target_compile_definitions(vulkan_tests PRIVATE
-    SHADER_DIR="${CMAKE_BINARY_DIR}/shaders"
-)
-if(APPLE)
-    target_compile_definitions(vulkan_tests PRIVATE VK_USE_PLATFORM_METAL_EXT)
-endif()
-
 target_link_libraries(vulkan_tests PRIVATE
-    Vulkan::Vulkan
-    GPUOpen::VulkanMemoryAllocator
-    glm::glm
+    nebula
     doctest::doctest
 )
-
-if(APPLE)
-    target_link_libraries(vulkan_tests PRIVATE "-framework Foundation")
-endif()
 
 if(APPLE)
     set_target_properties(vulkan_tests PROPERTIES

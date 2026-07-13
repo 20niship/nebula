@@ -18,16 +18,16 @@ static const std::string ASSET_DIR_STR  = ASSET_DIR;
 // ── CLI ───────────────────────────────────────────────────────────────────────
 
 struct FluidSphereArgs : public argparse::Args {
-  int&   fluid_nx     = kwarg("nx",           "fluid grid X").set_default(192);
-  int&   fluid_ny     = kwarg("ny",           "fluid grid Y").set_default(3);
-  int&   fluid_nz     = kwarg("nz",           "fluid grid Z").set_default(192);
-  float& world_size   = kwarg("world-size",   "simulation world size").set_default(20.0f);
-  int&   grid_res     = kwarg("grid-res",     "hash grid resolution").set_default(64);
-  int&   max_boundary = kwarg("max-boundary", "max boundary particle count").set_default(50000);
-  float& dt           = kwarg("dt",           "timestep (sec)").set_default(1.0f / 60.0f);
-  std::string& sphere_obj = kwarg("sphere-obj", "sphere OBJ path").set_default(std::string(""));
-  float& boundary_spacing = kwarg("boundary-spacing", "boundary particle spacing").set_default(0.156f);
-  int&   n_shots          = kwarg("n-shots",  "screenshot count (0=disabled)").set_default(0);
+  int& fluid_nx               = kwarg("nx", "fluid grid X").set_default(192);
+  int& fluid_ny               = kwarg("ny", "fluid grid Y").set_default(3);
+  int& fluid_nz               = kwarg("nz", "fluid grid Z").set_default(192);
+  float& world_size           = kwarg("world-size", "simulation world size").set_default(20.0f);
+  int& grid_res               = kwarg("grid-res", "hash grid resolution").set_default(64);
+  int& max_boundary           = kwarg("max-boundary", "max boundary particle count").set_default(50000);
+  float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 60.0f);
+  std::string& sphere_obj     = kwarg("sphere-obj", "sphere OBJ path").set_default(std::string(""));
+  float& boundary_spacing     = kwarg("boundary-spacing", "boundary particle spacing").set_default(0.156f);
+  int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
 };
 
@@ -47,10 +47,8 @@ public:
     cfg.grid_res     = (uint32_t)args.grid_res;
     cfg.max_boundary = (uint32_t)args.max_boundary;
 
-    std::string spherePath = args.sphere_obj.empty()
-                             ? (ASSET_DIR_STR + "/sphere.obj")
-                             : args.sphere_obj;
-    float spacing = args.boundary_spacing;
+    std::string spherePath = args.sphere_obj.empty() ? (ASSET_DIR_STR + "/sphere.obj") : args.sphere_obj;
+    float spacing          = args.boundary_spacing;
 
     base_.initWindow("Fluid Sphere – PBF inside sphere container");
     initVulkan(cfg, spherePath, spacing);
@@ -59,8 +57,8 @@ public:
   }
 
 private:
-  BaseApp          base_;
-  FluidEngine      engine_;
+  BaseApp base_;
+  FluidEngine engine_;
   GraphicsPipeline graphicsPipe_;
 
   float dt_      = 1.0f / 60.0f;
@@ -70,16 +68,11 @@ private:
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
-    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool,
-                 base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue,
-                 SHADER_DIR_STR, cfg);
+    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
 
     engine_.loadBoundary(spherePath, spacing);
 
-    graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass,
-                       engine_.descriptorSetLayout,
-                       SHADER_DIR_STR + "/fluid_particle.vert.spv",
-                       SHADER_DIR_STR + "/fluid.frag.spv");
+    graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/fluid_particle.vert.spv", SHADER_DIR_STR + "/fluid.frag.spv");
 
     base_.createFrameData();
     base_.initImGui();
@@ -102,9 +95,7 @@ private:
     barrier.buffer              = engine_.getPositionBuffer();
     barrier.offset              = 0;
     barrier.size                = VK_WHOLE_SIZE;
-    vkCmdPipelineBarrier(cmd,
-      VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
-      0, 0, nullptr, 1, &barrier, 0, nullptr);
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0, 0, nullptr, 1, &barrier, 0, nullptr);
 
     vkEndCommandBuffer(cmd);
   }
@@ -132,7 +123,8 @@ private:
     vp.height   = (float)base_.ctx.swapchainExtent.height;
     vp.maxDepth = 1.0f;
     vkCmdSetViewport(cmd, 0, 1, &vp);
-    VkRect2D sc{}; sc.extent = base_.ctx.swapchainExtent;
+    VkRect2D sc{};
+    sc.extent = base_.ctx.swapchainExtent;
     vkCmdSetScissor(cmd, 0, 1, &sc);
 
     uint32_t totalN = engine_.config().fluidCount() + engine_.nBoundary;
@@ -155,10 +147,11 @@ private:
     vkWaitForFences(base_.ctx.device, 1, &f.inFlightFence, VK_TRUE, UINT64_MAX);
 
     uint32_t imageIdx;
-    VkResult result = vkAcquireNextImageKHR(base_.ctx.device, base_.ctx.swapchain,
-                                             UINT64_MAX, f.imageAvailable,
-                                             VK_NULL_HANDLE, &imageIdx);
-    if (result == VK_ERROR_OUT_OF_DATE_KHR) { base_.ctx.recreateSwapchain(); return; }
+    VkResult result = vkAcquireNextImageKHR(base_.ctx.device, base_.ctx.swapchain, UINT64_MAX, f.imageAvailable, VK_NULL_HANDLE, &imageIdx);
+    if(result == VK_ERROR_OUT_OF_DATE_KHR) {
+      base_.ctx.recreateSwapchain();
+      return;
+    }
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
@@ -169,9 +162,7 @@ private:
     ImGui::SetNextWindowPos({10, 10}, ImGuiCond_Once);
     ImGui::SetNextWindowSize({320, 0}, ImGuiCond_Once);
     ImGui::Begin("Sphere Fluid");
-    ImGui::Text("FPS: %.1f  |  流体: %u  境界: %u  経過: %.2f s",
-                ImGui::GetIO().Framerate, engine_.config().fluidCount(),
-                engine_.nBoundary, simTime_);
+    ImGui::Text("FPS: %.1f  |  流体: %u  境界: %u  経過: %.2f s", ImGui::GetIO().Framerate, engine_.config().fluidCount(), engine_.nBoundary, simTime_);
     ImGui::Separator();
     sim_ui::fluid_reset_button(engine_, simTime_);
     ImGui::Separator();
@@ -208,11 +199,8 @@ private:
     tsWait.waitSemaphoreValueCount = 2;
     tsWait.pWaitSemaphoreValues    = waitVals.data();
 
-    std::array<VkSemaphore, 2>          waitSems   = {f.imageAvailable, f.timelineSemaphore};
-    std::array<VkPipelineStageFlags, 2> waitStages = {
-      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-      VK_PIPELINE_STAGE_VERTEX_SHADER_BIT
-    };
+    std::array<VkSemaphore, 2> waitSems            = {f.imageAvailable, f.timelineSemaphore};
+    std::array<VkPipelineStageFlags, 2> waitStages = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT};
 
     VkSubmitInfo grSub{};
     grSub.sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -234,10 +222,10 @@ private:
     present.pSwapchains        = &base_.ctx.swapchain;
     present.pImageIndices      = &imageIdx;
 
-    if (nShots > 0) base_.saveScreenshot(imageIdx, nShots);
+    if(nShots > 0) base_.saveScreenshot(imageIdx, nShots);
 
     result = vkQueuePresentKHR(base_.ctx.graphicsQueue, &present);
-    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || base_.framebufferResized) {
+    if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || base_.framebufferResized) {
       base_.framebufferResized = false;
       base_.ctx.recreateSwapchain();
     }
@@ -246,7 +234,7 @@ private:
   }
 
   void mainLoop(int nShots) {
-    while (!glfwWindowShouldClose(base_.window) && !base_.shouldExit) {
+    while(!glfwWindowShouldClose(base_.window) && !base_.shouldExit) {
       glfwPollEvents();
       drawFrame(nShots);
     }
@@ -267,7 +255,7 @@ int main(int argc, char* argv[]) {
   FluidSphereApp app;
   try {
     app.run(args);
-  } catch (const std::exception& e) {
+  } catch(const std::exception& e) {
     std::fprintf(stderr, "Fatal: %s\n", e.what());
     return 1;
   }

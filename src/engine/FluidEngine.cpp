@@ -37,18 +37,18 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
 
   // 全バッファを N_TOTAL_MAX で確保（流体 + 境界粒子）
   // vec4 系は FP16 packed（8 bytes/粒子）でメモリ帯域幅を半減
-  posIdx         = attrBuf_.addAttribute("P", sizeof(glm::vec4), cfg_.nTotalMax());
-  velIdx         = attrBuf_.addAttribute("v", sizeof(glm::vec4), cfg_.nTotalMax());
-  predPIdx       = attrBuf_.addAttribute("predP", sizeof(glm::vec4), cfg_.nTotalMax());
-  invMassIdx     = attrBuf_.addAttribute("invMass", sizeof(glm::vec4), cfg_.nTotalMax());
-  typeFlagIdx    = attrBuf_.addAttribute("typeFlag", sizeof(uint32_t), cfg_.nTotalMax());
-  cellCountIdx_  = attrBuf_.addAttribute("cellCnt", sizeof(uint32_t), cfg_.totalCells());
-  cellOffsetIdx_ = attrBuf_.addAttribute("cellOff", sizeof(uint32_t), cfg_.totalCells() + N_GROUPS);
-  sortedIdxIdx_  = attrBuf_.addAttribute("sorted", sizeof(uint32_t), cfg_.nTotalMax());
-  densityIdx_    = attrBuf_.addAttribute("density", sizeof(float), cfg_.nTotalMax());
-  lambdaPbfIdx_  = attrBuf_.addAttribute("lambdaPbf", sizeof(float), cfg_.nTotalMax());
-  omegaIdx_      = attrBuf_.addAttribute("omega", sizeof(glm::vec4), cfg_.nTotalMax());
-  absorberBufIdx_= attrBuf_.addAttribute("absorbers", sizeof(float), MAX_ABSORBERS * 8u);
+  posIdx          = attrBuf_.addAttribute("P", sizeof(glm::vec4), cfg_.nTotalMax());
+  velIdx          = attrBuf_.addAttribute("v", sizeof(glm::vec4), cfg_.nTotalMax());
+  predPIdx        = attrBuf_.addAttribute("predP", sizeof(glm::vec4), cfg_.nTotalMax());
+  invMassIdx      = attrBuf_.addAttribute("invMass", sizeof(glm::vec4), cfg_.nTotalMax());
+  typeFlagIdx     = attrBuf_.addAttribute("typeFlag", sizeof(uint32_t), cfg_.nTotalMax());
+  cellCountIdx_   = attrBuf_.addAttribute("cellCnt", sizeof(uint32_t), cfg_.totalCells());
+  cellOffsetIdx_  = attrBuf_.addAttribute("cellOff", sizeof(uint32_t), cfg_.totalCells() + N_GROUPS);
+  sortedIdxIdx_   = attrBuf_.addAttribute("sorted", sizeof(uint32_t), cfg_.nTotalMax());
+  densityIdx_     = attrBuf_.addAttribute("density", sizeof(float), cfg_.nTotalMax());
+  lambdaPbfIdx_   = attrBuf_.addAttribute("lambdaPbf", sizeof(float), cfg_.nTotalMax());
+  omegaIdx_       = attrBuf_.addAttribute("omega", sizeof(glm::vec4), cfg_.nTotalMax());
+  absorberBufIdx_ = attrBuf_.addAttribute("absorbers", sizeof(float), MAX_ABSORBERS * 8u);
 
   nFluid_ = 0;
   emitters_.clear();
@@ -145,7 +145,7 @@ void FluidEngine::loadBoundaryParticles(const std::vector<glm::vec4>& pts) {
   uint32_t n           = static_cast<uint32_t>(std::min(pts.size(), size_t(cfg_.max_boundary)));
   VkDeviceSize byteOff = cfg_.fluidCount() * sizeof(glm::vec4);
 
-  attrBuf_.uploadAt("P",     pts.data(), sizeof(glm::vec4) * n, byteOff, cmdPool_, queue_);
+  attrBuf_.uploadAt("P", pts.data(), sizeof(glm::vec4) * n, byteOff, cmdPool_, queue_);
   attrBuf_.uploadAt("predP", pts.data(), sizeof(glm::vec4) * n, byteOff, cmdPool_, queue_);
 
   std::vector<glm::vec4> zeroMass(n, glm::vec4(0.0f));
@@ -169,7 +169,7 @@ void FluidEngine::clearBoundary() {
 // ── 吸収ポート登録 ────────────────────────────────────────────────────────────
 
 void FluidEngine::setAbsorbers(const std::vector<AbsorberDesc>& absorbers) {
-  uint32_t n = static_cast<uint32_t>(std::min(absorbers.size(), size_t(MAX_ABSORBERS)));
+  uint32_t n     = static_cast<uint32_t>(std::min(absorbers.size(), size_t(MAX_ABSORBERS)));
   absorberCount_ = n;
   if(n == 0) return;
   static_assert(sizeof(AbsorberDesc) == 8 * sizeof(float), "AbsorberDesc must be 8 floats");
@@ -191,7 +191,7 @@ void FluidEngine::clearEmitters() {
 void FluidEngine::emitFromEmitters(float dt) {
   for(size_t i = 0; i < emitters_.size(); ++i) {
     Emitter& emitter = *emitters_[i];
-    int&     done     = emitterStepsDone_[i];
+    int& done        = emitterStepsDone_[i];
 
     bool shouldEmit = false;
     if(emitter.step_count == -1)
@@ -205,24 +205,26 @@ void FluidEngine::emitFromEmitters(float dt) {
 
     int available = int(cfg_.fluidCount()) - int(nFluid_);
     int nNew      = std::min(emitter.particles_per_step, available);
-    if(nNew <= 0) { done++; continue; }
+    if(nNew <= 0) {
+      done++;
+      continue;
+    }
 
     std::vector<glm::vec4> pos(nNew);
-    for(int j = 0; j < nNew; ++j)
-      pos[j] = glm::vec4(emitter.sample(emitterRng_), 1.0f);
+    for(int j = 0; j < nNew; ++j) pos[j] = glm::vec4(emitter.sample(emitterRng_), 1.0f);
 
     std::vector<glm::vec4> vel(nNew, glm::vec4(emitter.vel, 0.0f));
     std::vector<glm::vec4> invM(nNew, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
-    std::vector<uint32_t>  flags(nNew, emitter.particleType);
+    std::vector<uint32_t> flags(nNew, emitter.particleType);
 
     VkDeviceSize byteOff = nFluid_ * sizeof(glm::vec4);
     VkDeviceSize flagOff = nFluid_ * sizeof(uint32_t);
 
-    attrBuf_.uploadAt("P",        pos.data(),  sizeof(glm::vec4)  * nNew, byteOff, cmdPool_, queue_);
-    attrBuf_.uploadAt("predP",    pos.data(),  sizeof(glm::vec4)  * nNew, byteOff, cmdPool_, queue_);
-    attrBuf_.uploadAt("v",        vel.data(),  sizeof(glm::vec4)  * nNew, byteOff, cmdPool_, queue_);
-    attrBuf_.uploadAt("invMass",  invM.data(), sizeof(glm::vec4)  * nNew, byteOff, cmdPool_, queue_);
-    attrBuf_.uploadAt("typeFlag", flags.data(),sizeof(uint32_t)   * nNew, flagOff, cmdPool_, queue_);
+    attrBuf_.uploadAt("P", pos.data(), sizeof(glm::vec4) * nNew, byteOff, cmdPool_, queue_);
+    attrBuf_.uploadAt("predP", pos.data(), sizeof(glm::vec4) * nNew, byteOff, cmdPool_, queue_);
+    attrBuf_.uploadAt("v", vel.data(), sizeof(glm::vec4) * nNew, byteOff, cmdPool_, queue_);
+    attrBuf_.uploadAt("invMass", invM.data(), sizeof(glm::vec4) * nNew, byteOff, cmdPool_, queue_);
+    attrBuf_.uploadAt("typeFlag", flags.data(), sizeof(uint32_t) * nNew, flagOff, cmdPool_, queue_);
 
     nFluid_ += uint32_t(nNew);
     done++;
@@ -286,10 +288,7 @@ void FluidEngine::initKinematicBoundaryStaging(uint32_t maxBoundaryCount) {
   }
 }
 
-void FluidEngine::recordKinematicBoundaryUpdate(
-    VkCommandBuffer cmd, uint32_t frameIndex,
-    uint32_t boundaryOffset, uint32_t count,
-    const glm::vec4* positions, const glm::vec4* velocities) {
+void FluidEngine::recordKinematicBoundaryUpdate(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t boundaryOffset, uint32_t count, const glm::vec4* positions, const glm::vec4* velocities) {
   if(kinStagingMaxCount_ == 0 || count == 0) return;
   uint32_t fi = frameIndex % MAX_CONCURRENT_FRAMES;
 
@@ -323,9 +322,7 @@ void FluidEngine::recordKinematicBoundaryUpdate(
   bar.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
   bar.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
   bar.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-  vkCmdPipelineBarrier(cmd,
-      VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-      0, 1, &bar, 0, nullptr, 0, nullptr);
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &bar, 0, nullptr, 0, nullptr);
 }
 
 void FluidEngine::cleanupKinematicBoundaryStaging() {
@@ -392,11 +389,11 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     pc.linearDamping    = linearDamping;
     pc.omegaIdx         = omegaIdx_;
     // 煙・粉体パラメータ
-    pc.smokeRiseAccel   = smokeRiseAccel;
-    pc.smokeDamping     = smokeDamping;
+    pc.smokeRiseAccel = smokeRiseAccel;
+    pc.smokeDamping   = smokeDamping;
     // 吸収ポート（absorberCount_==0 の場合は kAbsorb_ をディスパッチしない）
-    pc.absorberBufIdx   = absorberBufIdx_;
-    pc.absorberCount    = absorberCount_;
+    pc.absorberBufIdx = absorberBufIdx_;
+    pc.absorberCount  = absorberCount_;
     // pc.powderFriction → SimPC では pinnedTargetIdx に転用。FluidEngine では未使用 (0のまま)。
 
     // ① Predict + SDF 壁衝突 (merged: 1 dispatch instead of 2)

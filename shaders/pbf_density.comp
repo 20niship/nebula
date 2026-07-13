@@ -12,11 +12,12 @@ layout(local_size_x = 256) in;
 void main() {
     uint i = gl_GlobalInvocationID.x;
     if (i >= pc.particleCount) return;
+    uint idx = i + pc.fluidStart;
 
-    uint fi = readUint(pc.typeFlagIdx, i);
+    uint fi = readUint(pc.typeFlagIdx, idx);
     if (fi != 1u && fi != 5u) return;  // 流体・粉体のみ処理
 
-    vec4 pi4  = readVec4(pc.predPIdx, i);
+    vec4 pi4  = readVec4(pc.predPIdx, idx);
     vec3 pi   = pi4.xyz;
     float h   = pc.cellSize;
     float h2  = h * h;
@@ -61,7 +62,7 @@ void main() {
             rho += poly6_coeff * hr2 * hr2 * hr2;
 
             // 境界粒子は λ 計算のグラジエント和には含めない
-            if (j == i || (fj != 1u && fj != 5u)) continue;
+            if (j == idx || (fj != 1u && fj != 5u)) continue;
 
             // Spiky グラジエント: ∇_{p_i} W_{ij}
             float rlen = sqrt(r2);
@@ -83,6 +84,6 @@ void main() {
     float denom = dot(grad_ci, grad_ci) / (rho0 * rho0) + sum_grad_sq + pc.cfmEpsilon;
     float lambda = -C / denom;
 
-    writeFloat(pc.densityIdx,   i, rho);
-    writeFloat(pc.lambdaPbfIdx, i, lambda);
+    writeFloat(pc.densityIdx,   idx, rho);
+    writeFloat(pc.lambdaPbfIdx, idx, lambda);
 }

@@ -25,8 +25,13 @@ public:
   // dstOffset バイト目から転送（境界粒子の追記用）
   void uploadAt(const std::string& name, const void* data, VkDeviceSize byteSize, VkDeviceSize dstOffset, VkCommandPool cmdPool, VkQueue queue);
 
+  // 既存データ（先頭からのバイト列）を保持したまま容量を newCount 要素に再確保する。
+  // Bindless index は維持されるため、他の保持済みインデックスは変更不要。
+  void resizeAttribute(const std::string& name, uint32_t newCount, VkCommandPool cmdPool, VkQueue queue);
+
   VkBuffer getBuffer(const std::string& name) const;
   uint32_t getIndex(const std::string& name) const;
+  uint32_t getCount(const std::string& name) const;
 
   // DescriptorSetLayout / DescriptorSet (Bindless配列)
   VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
@@ -38,6 +43,7 @@ private:
     VmaAllocation allocation = VK_NULL_HANDLE;
     uint32_t count           = 0;
     uint32_t bindlessIndex   = 0;
+    VkDeviceSize elementSize = 0;
   };
 
   VkDevice device_        = VK_NULL_HANDLE;

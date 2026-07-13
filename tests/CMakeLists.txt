@@ -23,6 +23,7 @@ add_executable(vulkan_tests
     # test_pbf.cpp
     test_mpm.cpp
     test_pyro.cpp
+    test_attribute_buffer.cpp
 )
 
 add_dependencies(vulkan_tests shaders)

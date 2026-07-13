@@ -15,12 +15,13 @@ layout(local_size_x = 256) in;
 void main() {
     uint i = gl_GlobalInvocationID.x;
     if (i >= pc.particleCount) return;
+    uint idx = i + pc.fluidStart;
 
-    uint fi = readUint(pc.typeFlagIdx, i);
+    uint fi = readUint(pc.typeFlagIdx, idx);
     if (fi != 1u) return; // 流体粒子のみ
 
-    vec3 pi    = readVec4(pc.posIdx,   i).xyz;
-    vec3 omega_i = readVec4(pc.omegaIdx, i).xyz;
+    vec3 pi    = readVec4(pc.posIdx,   idx).xyz;
+    vec3 omega_i = readVec4(pc.omegaIdx, idx).xyz;
 
     float h  = pc.cellSize;
     float h2 = h * h;
@@ -45,7 +46,7 @@ void main() {
 
         for (uint k = start; k < start + cnt; ++k) {
             uint j = readUint(pc.sortedIdxIdx, k);
-            if (j == i) continue;
+            if (j == idx) continue;
             if (readUint(pc.typeFlagIdx, j) != 1u) continue; // 流体のみ
 
             vec3 pj = readVec4(pc.posIdx, j).xyz;
@@ -68,7 +69,7 @@ void main() {
     vec3 N = eta / etaLen;
     vec3 f = pc.vorticityEpsilon * cross(N, omega_i);
 
-    vec4 vi4 = readVec4(pc.velIdx, i);
+    vec4 vi4 = readVec4(pc.velIdx, idx);
     vi4.xyz += f * pc.dt;
-    writeVec4(pc.velIdx, i, vi4);
+    writeVec4(pc.velIdx, idx, vi4);
 }

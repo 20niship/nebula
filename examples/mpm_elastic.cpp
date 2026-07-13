@@ -15,19 +15,19 @@ static const std::string SHADER_DIR_STR = SHADER_DIR;
 // ── CLI ───────────────────────────────────────────────────────────────────
 
 struct MpmElasticArgs : public argparse::Args {
-  int&         nx             = kwarg("nx",             "particle grid X").set_default(20);
-  int&         ny             = kwarg("ny",             "particle grid Y").set_default(20);
-  int&         nz             = kwarg("nz",             "particle grid Z").set_default(20);
-  float&       world_size     = kwarg("world-size",     "world size").set_default(10.0f);
-  int&         grid_res       = kwarg("grid-res",       "MPM grid resolution").set_default(64);
-  float&       E              = kwarg("E",              "Young modulus [Pa]").set_default(1e4f);
-  float&       nu             = kwarg("nu",             "Poisson ratio").set_default(0.3f);
-  float&       rho0           = kwarg("rho0",           "density [kg/m^3]").set_default(1000.0f);
-  float&       dt             = kwarg("dt",             "frame timestep [s]").set_default(1.0f / 60.0f);
-  int&         substeps       = kwarg("substeps",       "substeps per frame").set_default(20);
-  int&         n_shots        = kwarg("n-shots",        "screenshot count (0=disabled)").set_default(0);
+  int& nx                     = kwarg("nx", "particle grid X").set_default(20);
+  int& ny                     = kwarg("ny", "particle grid Y").set_default(20);
+  int& nz                     = kwarg("nz", "particle grid Z").set_default(20);
+  float& world_size           = kwarg("world-size", "world size").set_default(10.0f);
+  int& grid_res               = kwarg("grid-res", "MPM grid resolution").set_default(64);
+  float& E                    = kwarg("E", "Young modulus [Pa]").set_default(1e4f);
+  float& nu                   = kwarg("nu", "Poisson ratio").set_default(0.3f);
+  float& rho0                 = kwarg("rho0", "density [kg/m^3]").set_default(1000.0f);
+  float& dt                   = kwarg("dt", "frame timestep [s]").set_default(1.0f / 60.0f);
+  int& substeps               = kwarg("substeps", "substeps per frame").set_default(20);
+  int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
-  float&       flip_ratio_arg = kwarg("flip-ratio",     "transfer mode: 0=PIC -1=APIC 0~1=FLIP").set_default(0.0f);
+  float& flip_ratio_arg       = kwarg("flip-ratio", "transfer mode: 0=PIC -1=APIC 0~1=FLIP").set_default(0.0f);
 };
 
 // ── App ───────────────────────────────────────────────────────────────────
@@ -35,7 +35,7 @@ struct MpmElasticArgs : public argparse::Args {
 class MpmElasticApp {
 public:
   void run(const MpmElasticArgs& args) {
-    dt_ = args.dt;
+    dt_                 = args.dt;
     base_.screenshotDir = args.screenshot_dir;
 
     MPMConfig cfg;
@@ -55,8 +55,8 @@ public:
   }
 
 private:
-  BaseApp          base_;
-  MPMEngine        engine_;
+  BaseApp base_;
+  MPMEngine engine_;
   GraphicsPipeline graphicsPipe_;
   float dt_      = 1.0f / 60.0f;
   float simTime_ = 0.0f;
@@ -65,17 +65,12 @@ private:
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
-    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool,
-                 base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue,
-                 SHADER_DIR_STR, cfg);
+    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
     engine_.numSubsteps = substeps;
     engine_.flip_ratio  = flipRatio;
 
     // 既存のパーティクルシェーダーを流用（posIdx/velIdx は同じ形式）
-    graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass,
-                       engine_.descriptorSetLayout,
-                       SHADER_DIR_STR + "/particle.vert.spv",
-                       SHADER_DIR_STR + "/particle.frag.spv");
+    graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/particle.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");
 
     base_.createFrameData();
     base_.initImGui();
@@ -98,10 +93,7 @@ private:
     barrier.buffer              = engine_.getPositionBuffer();
     barrier.offset              = 0;
     barrier.size                = VK_WHOLE_SIZE;
-    vkCmdPipelineBarrier(cmd,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
-        0, 0, nullptr, 1, &barrier, 0, nullptr);
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0, 0, nullptr, 1, &barrier, 0, nullptr);
 
     vkEndCommandBuffer(cmd);
   }
@@ -129,7 +121,8 @@ private:
     vp.height   = (float)base_.ctx.swapchainExtent.height;
     vp.maxDepth = 1.0f;
     vkCmdSetViewport(cmd, 0, 1, &vp);
-    VkRect2D sc{}; sc.extent = base_.ctx.swapchainExtent;
+    VkRect2D sc{};
+    sc.extent = base_.ctx.swapchainExtent;
     vkCmdSetScissor(cmd, 0, 1, &sc);
 
     // particle.vert は SimPC.posIdx/velIdx/particleCount/worldMin/worldMax を使う
@@ -142,8 +135,7 @@ private:
     renderPc.worldMin      = 0.0f;
     renderPc.worldMax      = engine_.config().world_size;
 
-    graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc,
-                       engine_.liveParticleCount());
+    graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.liveParticleCount());
 
     // ImGui
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
@@ -156,10 +148,11 @@ private:
     vkWaitForFences(base_.ctx.device, 1, &f.inFlightFence, VK_TRUE, UINT64_MAX);
 
     uint32_t imageIdx;
-    VkResult result = vkAcquireNextImageKHR(base_.ctx.device, base_.ctx.swapchain,
-                                             UINT64_MAX, f.imageAvailable,
-                                             VK_NULL_HANDLE, &imageIdx);
-    if (result == VK_ERROR_OUT_OF_DATE_KHR) { base_.ctx.recreateSwapchain(); return; }
+    VkResult result = vkAcquireNextImageKHR(base_.ctx.device, base_.ctx.swapchain, UINT64_MAX, f.imageAvailable, VK_NULL_HANDLE, &imageIdx);
+    if(result == VK_ERROR_OUT_OF_DATE_KHR) {
+      base_.ctx.recreateSwapchain();
+      return;
+    }
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
@@ -171,49 +164,45 @@ private:
     ImGui::SetNextWindowSize({300, 0}, ImGuiCond_Once);
     ImGui::Begin("MPM Elastic");
     const auto& cfg = engine_.config();
-    ImGui::Text("FPS: %.1f | N=%u | gridRes=%u",
-                ImGui::GetIO().Framerate,
-                engine_.liveParticleCount(), cfg.grid_res);
+    ImGui::Text("FPS: %.1f | N=%u | gridRes=%u", ImGui::GetIO().Framerate, engine_.liveParticleCount(), cfg.grid_res);
     ImGui::Text("E=%.0f Pa, nu=%.2f, rho0=%.0f", cfg.E, cfg.nu, cfg.rho0);
-    ImGui::Text("dt_sub=%.4f s | t=%.2f s",
-                dt_ / float(engine_.numSubsteps), simTime_);
+    ImGui::Text("dt_sub=%.4f s | t=%.2f s", dt_ / float(engine_.numSubsteps), simTime_);
     ImGui::Separator();
     ImGui::SliderFloat("重力", &engine_.gravity, -20.0f, 0.0f);
     ImGui::SliderInt("サブステップ", &engine_.numSubsteps, 1, 50);
     // 転写モード: PIC=散逸大, APIC=散逸小(角運動量保存), FLIP=散逸最小(0<r≤1)
-    int transferMode = (engine_.flip_ratio < -0.5f) ? 2
-                     : (engine_.flip_ratio > 0.01f) ? 1 : 0;
+    int transferMode            = (engine_.flip_ratio < -0.5f) ? 2 : (engine_.flip_ratio > 0.01f) ? 1 : 0;
     const char* transferModes[] = {"PIC (散逸大)", "FLIP (r=0.95)", "APIC (散逸小)"};
-    if (ImGui::Combo("転写モード", &transferMode, transferModes, 3)) {
-      if (transferMode == 0) engine_.flip_ratio = 0.0f;
-      else if (transferMode == 2) engine_.flip_ratio = -1.0f;
-      else if (engine_.flip_ratio <= 0.01f) engine_.flip_ratio = 0.95f;
+    if(ImGui::Combo("転写モード", &transferMode, transferModes, 3)) {
+      if(transferMode == 0)
+        engine_.flip_ratio = 0.0f;
+      else if(transferMode == 2)
+        engine_.flip_ratio = -1.0f;
+      else if(engine_.flip_ratio <= 0.01f)
+        engine_.flip_ratio = 0.95f;
     }
-    if (transferMode == 1)
-      ImGui::SliderFloat("FLIP 比率", &engine_.flip_ratio, 0.01f, 1.0f);
+    if(transferMode == 1) ImGui::SliderFloat("FLIP 比率", &engine_.flip_ratio, 0.01f, 1.0f);
     const char* models[] = {"弾性", "Von Mises", "Drucker-Prager"};
-    int pm = int(engine_.plasticModel);
-    if (ImGui::Combo("塑性モデル", &pm, models, 3))
-      engine_.plasticModel = uint32_t(pm);
-    if (engine_.plasticModel == 1)
-      ImGui::SliderFloat("降伏応力 q_max", &engine_.q_max, 1e2f, 1e6f);
-    if (engine_.plasticModel == 2) {
+    int pm               = int(engine_.plasticModel);
+    if(ImGui::Combo("塑性モデル", &pm, models, 3)) engine_.plasticModel = uint32_t(pm);
+    if(engine_.plasticModel == 1) ImGui::SliderFloat("降伏応力 q_max", &engine_.q_max, 1e2f, 1e6f);
+    if(engine_.plasticModel == 2) {
       ImGui::SliderFloat("摩擦 M", &engine_.M_friction, 0.0f, 1.5f);
       ImGui::SliderFloat("粘着力 q_c", &engine_.q_cohesion, 0.0f, 1e4f);
     }
     ImGui::Separator();
     static float col_r = 1.5f, col_x = 5.0f, col_y = 3.0f, col_z = 5.0f;
     ImGui::Text("NanoVDB 球コライダー");
-    ImGui::SliderFloat("半径",   &col_r, 0.5f, 4.0f);
-    ImGui::SliderFloat("X",      &col_x, 1.0f, cfg.world_size - 1.0f);
-    ImGui::SliderFloat("Y",      &col_y, 1.0f, cfg.world_size - 1.0f);
-    ImGui::SliderFloat("Z",      &col_z, 1.0f, cfg.world_size - 1.0f);
-    if (ImGui::Button("コライダー設定")) {
-        engine_.setColliderSphere(col_r, col_x, col_y, col_z);
+    ImGui::SliderFloat("半径", &col_r, 0.5f, 4.0f);
+    ImGui::SliderFloat("X", &col_x, 1.0f, cfg.world_size - 1.0f);
+    ImGui::SliderFloat("Y", &col_y, 1.0f, cfg.world_size - 1.0f);
+    ImGui::SliderFloat("Z", &col_z, 1.0f, cfg.world_size - 1.0f);
+    if(ImGui::Button("コライダー設定")) {
+      engine_.setColliderSphere(col_r, col_x, col_y, col_z);
     }
     ImGui::SameLine();
-    if (ImGui::Button("クリア")) {
-        engine_.clearCollider();
+    if(ImGui::Button("クリア")) {
+      engine_.clearCollider();
     }
     ImGui::End();
 
@@ -247,10 +236,8 @@ private:
     tsWait.waitSemaphoreValueCount = 2;
     tsWait.pWaitSemaphoreValues    = waitVals.data();
 
-    std::array<VkSemaphore, 2>          waitSems   = {f.imageAvailable, f.timelineSemaphore};
-    std::array<VkPipelineStageFlags, 2> waitStages = {
-        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        VK_PIPELINE_STAGE_VERTEX_SHADER_BIT};
+    std::array<VkSemaphore, 2> waitSems            = {f.imageAvailable, f.timelineSemaphore};
+    std::array<VkPipelineStageFlags, 2> waitStages = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT};
 
     VkSubmitInfo grSub{};
     grSub.sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -271,11 +258,10 @@ private:
     present.swapchainCount     = 1;
     present.pSwapchains        = &base_.ctx.swapchain;
     present.pImageIndices      = &imageIdx;
-    if (nShots > 0) base_.saveScreenshot(imageIdx, nShots);
+    if(nShots > 0) base_.saveScreenshot(imageIdx, nShots);
 
     result = vkQueuePresentKHR(base_.ctx.graphicsQueue, &present);
-    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR
-        || base_.framebufferResized) {
+    if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || base_.framebufferResized) {
       base_.framebufferResized = false;
       base_.ctx.recreateSwapchain();
     }
@@ -283,7 +269,7 @@ private:
   }
 
   void mainLoop(int nShots) {
-    while (!glfwWindowShouldClose(base_.window) && !base_.shouldExit) {
+    while(!glfwWindowShouldClose(base_.window) && !base_.shouldExit) {
       glfwPollEvents();
       drawFrame(nShots);
     }
@@ -304,7 +290,7 @@ int main(int argc, char* argv[]) {
   MpmElasticApp app;
   try {
     app.run(args);
-  } catch (const std::exception& e) {
+  } catch(const std::exception& e) {
     std::fprintf(stderr, "Fatal: %s\n", e.what());
     return 1;
   }

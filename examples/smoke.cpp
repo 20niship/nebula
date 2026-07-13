@@ -1,5 +1,5 @@
 #include "App.h"
-#include "core/source.h"
+#include "core/Emitter.h"
 #include "engine/FluidEngine.h"
 #include "graphics/GraphicsPipeline.h"
 #include "utils.hpp"
@@ -22,14 +22,14 @@ static const std::string SHADER_DIR_STR = SHADER_DIR;
 // ── CLI ───────────────────────────────────────────────────────────────────────
 
 struct SmokeArgs : public argparse::Args {
-  float& world_size        = kwarg("world-size", "simulation world size").set_default(20.0f);
-  int&   max_particles     = kwarg("max-particles", "max particle count").set_default(8192);
-  float& dt                = kwarg("dt", "timestep (sec)").set_default(1.0f / 60.0f);
-  float& rise_accel        = kwarg("rise-accel", "smoke buoyancy acceleration").set_default(8.0f);
-  float& smoke_damping     = kwarg("smoke-damping", "smoke velocity damping [1/s]").set_default(0.4f);
-  float& emit_radius       = kwarg("emit-radius", "emitter sphere radius").set_default(0.8f);
-  int&   particles_per_step = kwarg("pps", "particles emitted per step").set_default(96);
-  int&   n_shots           = kwarg("n-shots",       "screenshot count (0=disabled)").set_default(0);
+  float& world_size           = kwarg("world-size", "simulation world size").set_default(20.0f);
+  int& max_particles          = kwarg("max-particles", "max particle count").set_default(8192);
+  float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 60.0f);
+  float& rise_accel           = kwarg("rise-accel", "smoke buoyancy acceleration").set_default(8.0f);
+  float& smoke_damping        = kwarg("smoke-damping", "smoke velocity damping [1/s]").set_default(0.4f);
+  float& emit_radius          = kwarg("emit-radius", "emitter sphere radius").set_default(0.8f);
+  int& particles_per_step     = kwarg("pps", "particles emitted per step").set_default(96);
+  int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
 };
 
@@ -38,7 +38,7 @@ struct SmokeArgs : public argparse::Args {
 class SmokeApp {
 public:
   void run(const SmokeArgs& args) {
-    dt_ = args.dt;
+    dt_                 = args.dt;
     base_.screenshotDir = args.screenshot_dir;
 
     // FluidConfig: 煙専用の小さな設定。grid_res は cellSize >= 2*spacing を満たすよう調整。
@@ -58,60 +58,58 @@ public:
   }
 
 private:
-  BaseApp         base_;
-  FluidEngine     engine_;
+  BaseApp base_;
+  FluidEngine engine_;
   GraphicsPipeline graphicsPipe_;
 
   float dt_      = 1.0f / 60.0f;
   float simTime_ = 0.0f;
 
   static constexpr float DIAG_INTERVAL = 2.0f;
-  float nextDiagTime_ = DIAG_INTERVAL;
+  float nextDiagTime_                  = DIAG_INTERVAL;
 
   void setupSmoke(const FluidConfig& cfg, const SmokeArgs& args) {
-    const float w = cfg.world_size;
+    const float w  = cfg.world_size;
     const float cx = w * 0.5f, cy = w * 0.5f;
 
     // 底面中央から連続放出するソース（typeFlag=4 = 煙）
-    auto src = std::make_shared<SphereSource>();
+    auto src                = std::make_shared<SphereEmitter>();
     src->center             = glm::vec3(cx, cy, 1.0f);
     src->radius             = args.emit_radius;
     src->vel                = glm::vec3(0.0f, 0.0f, 3.0f); // 初期上向き速度
     src->particles_per_step = args.particles_per_step;
-    src->step_count         = 0;    // 無限放出
-    src->particleType       = 4u;   // 煙
-    engine_.addSource(src);
+    src->step_count         = 0;  // 無限放出
+    src->particleType       = 4u; // 煙
+    engine_.addEmitter(src);
   }
 
   void initVulkan(const FluidConfig& cfg, const SmokeArgs& args) {
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
-    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool,
-                 base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue,
-                 SHADER_DIR_STR, cfg);
+    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
 
     // 煙パラメータ
-    engine_.gravity         = -2.0f;   // 弱い重力（浮力が上回る）
-    engine_.smokeRiseAccel  = args.rise_accel;
-    engine_.smokeDamping    = args.smoke_damping;
-    engine_.linearDamping   = 0.02f;
-    engine_.pbfIterations   = 0;       // 密度拘束なし（煙は圧縮可能）
-    engine_.numSubsteps     = 2;
-    engine_.vorticityEnabled = true;   // 渦度閉じ込めで煙らしい揺らぎ
+    engine_.gravity          = -2.0f; // 弱い重力（浮力が上回る）
+    engine_.smokeRiseAccel   = args.rise_accel;
+    engine_.smokeDamping     = args.smoke_damping;
+    engine_.linearDamping    = 0.02f;
+    engine_.pbfIterations    = 0; // 密度拘束なし（煙は圧縮可能）
+    engine_.numSubsteps      = 2;
+    engine_.vorticityEnabled = true; // 渦度閉じ込めで煙らしい揺らぎ
     engine_.vorticityEpsilon = 0.5f;
-    engine_.rho0            = cfg.computeRestDensity();
+    engine_.rho0             = cfg.computeRestDensity();
 
-    graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass,
-                       engine_.descriptorSetLayout,
-                       SHADER_DIR_STR + "/fluid_particle.vert.spv",
-                       SHADER_DIR_STR + "/fluid.frag.spv");
+    graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/fluid_particle.vert.spv", SHADER_DIR_STR + "/fluid.frag.spv");
 
     base_.createFrameData();
     base_.initImGui();
   }
 
   void recordComputeCmd(VkCommandBuffer cmd) {
+    // 容量拡張によるバッファ再確保はコマンドバッファ記録前に解決しておく
+    engine_.emitFromEmitters(dt_);
+
     VkCommandBufferBeginInfo bi{};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
@@ -128,9 +126,7 @@ private:
     barrier.buffer              = engine_.getPositionBuffer();
     barrier.offset              = 0;
     barrier.size                = VK_WHOLE_SIZE;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-                         VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0,
-                         0, nullptr, 1, &barrier, 0, nullptr);
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0, 0, nullptr, 1, &barrier, 0, nullptr);
 
     vkEndCommandBuffer(cmd);
   }
@@ -168,6 +164,7 @@ private:
     pc.particleCount = engine_.nFluid();
     pc.worldMin      = 0.0f;
     pc.worldMax      = engine_.config().world_size;
+    pc.boundaryStart = engine_.config().max_boundary; // 流体パーティクル領域の開始オフセット
 
     graphicsPipe_.draw(cmd, engine_.descriptorSet, pc, engine_.nFluid());
 
@@ -181,9 +178,7 @@ private:
     vkWaitForFences(base_.ctx.device, 1, &f.inFlightFence, VK_TRUE, UINT64_MAX);
 
     uint32_t imageIdx;
-    VkResult result = vkAcquireNextImageKHR(base_.ctx.device, base_.ctx.swapchain,
-                                            UINT64_MAX, f.imageAvailable,
-                                            VK_NULL_HANDLE, &imageIdx);
+    VkResult result = vkAcquireNextImageKHR(base_.ctx.device, base_.ctx.swapchain, UINT64_MAX, f.imageAvailable, VK_NULL_HANDLE, &imageIdx);
     if(result == VK_ERROR_OUT_OF_DATE_KHR) {
       base_.ctx.recreateSwapchain();
       return;
@@ -196,22 +191,20 @@ private:
     ImGui::NewFrame();
 
     ImGui::Begin("Smoke Control");
-    ImGui::Text("FPS: %.1f  |  煙粒子: %u / %u  経過: %.2f s",
-                ImGui::GetIO().Framerate, engine_.nFluid(),
-                engine_.config().fluidCount(), simTime_);
+    ImGui::Text("FPS: %.1f  |  煙粒子: %u / %u  経過: %.2f s", ImGui::GetIO().Framerate, engine_.nFluid(), engine_.config().fluidCount(), simTime_);
     ImGui::Separator();
     sim_ui::fluid_reset_button(engine_, simTime_);
     ImGui::Separator();
     ImGui::Text("煙パラメータ");
-    ImGui::SliderFloat("浮力加速度",     &engine_.smokeRiseAccel,  0.0f, 20.0f);
-    ImGui::SliderFloat("煙の減衰",       &engine_.smokeDamping,    0.0f,  2.0f, "%.3f");
-    ImGui::SliderFloat("重力",           &engine_.gravity,        -10.0f, 0.0f);
+    ImGui::SliderFloat("浮力加速度", &engine_.smokeRiseAccel, 0.0f, 20.0f);
+    ImGui::SliderFloat("煙の減衰", &engine_.smokeDamping, 0.0f, 2.0f, "%.3f");
+    ImGui::SliderFloat("重力", &engine_.gravity, -10.0f, 0.0f);
     ImGui::Separator();
-    ImGui::Checkbox("渦度閉じ込め",      &engine_.vorticityEnabled);
+    ImGui::Checkbox("渦度閉じ込め", &engine_.vorticityEnabled);
     if(engine_.vorticityEnabled) {
       ImGui::SliderFloat("渦度 epsilon", &engine_.vorticityEpsilon, 0.0f, 5.0f, "%.3f");
     }
-    ImGui::SliderFloat("線形ダンピング", &engine_.linearDamping,   0.0f, 2.0f, "%.3f");
+    ImGui::SliderFloat("線形ダンピング", &engine_.linearDamping, 0.0f, 2.0f, "%.3f");
     ImGui::End();
 
     ImGui::Render();
@@ -244,11 +237,8 @@ private:
     tsWait.waitSemaphoreValueCount = 2;
     tsWait.pWaitSemaphoreValues    = waitVals.data();
 
-    std::array<VkSemaphore, 2>          waitSems   = {f.imageAvailable, f.timelineSemaphore};
-    std::array<VkPipelineStageFlags, 2> waitStages = {
-      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-      VK_PIPELINE_STAGE_VERTEX_SHADER_BIT
-    };
+    std::array<VkSemaphore, 2> waitSems            = {f.imageAvailable, f.timelineSemaphore};
+    std::array<VkPipelineStageFlags, 2> waitStages = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT};
 
     VkSubmitInfo grSub{};
     grSub.sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -273,8 +263,7 @@ private:
     if(nShots > 0) base_.saveScreenshot(imageIdx, nShots);
 
     result = vkQueuePresentKHR(base_.ctx.graphicsQueue, &present);
-    if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR ||
-       base_.framebufferResized) {
+    if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || base_.framebufferResized) {
       base_.framebufferResized = false;
       base_.ctx.recreateSwapchain();
     }

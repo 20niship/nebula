@@ -10,7 +10,7 @@ struct ClothConstraint {
     PinAnimated, // アニメーション固定 (invMass=0, 毎フレーム updateConstraint() で更新)
   };
 
-  Type      type;
-  uint32_t  particleIdx; // グローバル粒子インデックス (addCloth() 戻り値 + ローカル idx)
-  glm::vec3 targetPos;   // Pin: 固定位置 / PinAnimated: 現在の目標位置
+  Type type;
+  uint32_t particleIdx; // グローバル粒子インデックス (addCloth() 戻り値 + ローカル idx)
+  glm::vec3 targetPos;  // Pin: 固定位置 / PinAnimated: 現在の目標位置
 };

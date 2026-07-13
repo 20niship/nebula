@@ -37,6 +37,7 @@ uint32_t AttributeBuffer::addAttribute(const std::string& name, VkDeviceSize ele
   Attribute attr{};
   attr.count         = count;
   attr.bindlessIndex = nextIndex_++;
+  attr.elementSize   = elementSize;
 
   VkResult r = SAFE_VMA_CREATE_BUFFER(allocator_, &bufInfo, &allocInfo, &attr.buffer, &attr.allocation, nullptr);
   if(r != VK_SUCCESS || attr.buffer == VK_NULL_HANDLE) {
@@ -158,9 +159,73 @@ void AttributeBuffer::uploadAt(const std::string& name, const void* data, VkDevi
   vmaDestroyBuffer(allocator_, stageBuf, stageAlloc);
 }
 
+void AttributeBuffer::resizeAttribute(const std::string& name, uint32_t newCount, VkCommandPool cmdPool, VkQueue queue) {
+  auto it = attributes_.find(name);
+  if(it == attributes_.end()) throw std::runtime_error("Attribute not found: " + name);
+  Attribute& attr = it->second;
+  if(newCount == attr.count) return;
+
+  VkBufferCreateInfo bufInfo{};
+  bufInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  bufInfo.size  = attr.elementSize * newCount;
+  bufInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+
+  VmaAllocationCreateInfo allocInfo{};
+  allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+
+  VkBuffer newBuffer;
+  VmaAllocation newAlloc;
+  VkResult r = SAFE_VMA_CREATE_BUFFER(allocator_, &bufInfo, &allocInfo, &newBuffer, &newAlloc, nullptr);
+  if(r != VK_SUCCESS || newBuffer == VK_NULL_HANDLE) {
+    allocInfo.usage = VMA_MEMORY_USAGE_CPU_TO_GPU;
+    r               = SAFE_VMA_CREATE_BUFFER(allocator_, &bufInfo, &allocInfo, &newBuffer, &newAlloc, nullptr);
+    if(r != VK_SUCCESS) throw std::runtime_error("Failed to resize attribute buffer: " + name);
+  }
+
+  VkDeviceSize copyBytes = attr.elementSize * std::min(attr.count, newCount);
+  if(copyBytes > 0 && attr.buffer != VK_NULL_HANDLE) {
+    VkCommandBufferAllocateInfo ai{};
+    ai.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    ai.commandPool        = cmdPool;
+    ai.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ai.commandBufferCount = 1;
+    VkCommandBuffer cmd;
+    vkAllocateCommandBuffers(device_, &ai, &cmd);
+
+    VkCommandBufferBeginInfo bi{};
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &bi);
+
+    VkBufferCopy region{};
+    region.size = copyBytes;
+    vkCmdCopyBuffer(cmd, attr.buffer, newBuffer, 1, &region);
+
+    vkEndCommandBuffer(cmd);
+
+    VkSubmitInfo si{};
+    si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers    = &cmd;
+    vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE);
+    vkQueueWaitIdle(queue);
+    vkFreeCommandBuffers(device_, cmdPool, 1, &cmd);
+  }
+
+  if(attr.buffer != VK_NULL_HANDLE) vmaDestroyBuffer(allocator_, attr.buffer, attr.allocation);
+
+  attr.buffer     = newBuffer;
+  attr.allocation = newAlloc;
+  attr.count      = newCount;
+
+  registerBuffer(attr.bindlessIndex, attr.buffer);
+}
+
 VkBuffer AttributeBuffer::getBuffer(const std::string& name) const { return attributes_.at(name).buffer; }
 
 uint32_t AttributeBuffer::getIndex(const std::string& name) const { return attributes_.at(name).bindlessIndex; }
+
+uint32_t AttributeBuffer::getCount(const std::string& name) const { return attributes_.at(name).count; }
 
 // ── Bindless Descriptor ────────────────────────────────────────────────────
 void AttributeBuffer::createDescriptorSetLayout() {

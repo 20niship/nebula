@@ -1,28 +1,28 @@
 #pragma once
 
+#include <glm/glm.hpp>
 #include <string>
 #include <vector>
-#include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
-#include <glm/glm.hpp>
+#include <vulkan/vulkan.h>
 
+#include "../core/Emitter.h"
 #include "AttributeBuffer.h"
+#include "Collider.h"
 #include "ComputePipeline.h"
 #include "MPMSimPC.h"
 #include "MaterialParams.h"
-#include "Collider.h"
-#include "../core/Emitter.h"
 
 #include <memory>
 #include <random>
 
 struct MPMConfig {
   // パーティクル配置: nx × ny × nz の格子
-  uint32_t nx          = 32;
-  uint32_t ny          = 32;
-  uint32_t nz          = 32;
-  float    world_size  = 10.0f;
-  uint32_t grid_res    = 64;
+  uint32_t nx       = 32;
+  uint32_t ny       = 32;
+  uint32_t nz       = 32;
+  float world_size  = 10.0f;
+  uint32_t grid_res = 64;
 
   // バッファ上限（0 = nx*ny*nz と同じ）
   // Phase 4 のソースエミッタで動的追加する場合に設定
@@ -33,25 +33,24 @@ struct MPMConfig {
   float nu   = 0.3f;
   float rho0 = 1000.0f;
 
-  uint32_t particleCount()    const { return nx * ny * nz; }
+  uint32_t particleCount() const { return nx * ny * nz; }
   uint32_t maxParticleCount() const { return maxParticles > 0 ? maxParticles : particleCount(); }
-  uint32_t totalCells()       const { return grid_res * grid_res * grid_res; }
-  float    cellSize()         const { return world_size / float(grid_res); }
-  float    spacing()          const { return world_size / float(nx); }
-  float    particleVolume()   const { float s = spacing(); return s * s * s; }
-  float    mu()   const { return E / (2.0f * (1.0f + nu)); }
-  float    lame() const { return E * nu / ((1.0f + nu) * (1.0f - 2.0f * nu)); }
+  uint32_t totalCells() const { return grid_res * grid_res * grid_res; }
+  float cellSize() const { return world_size / float(grid_res); }
+  float spacing() const { return world_size / float(nx); }
+  float particleVolume() const {
+    float s = spacing();
+    return s * s * s;
+  }
+  float mu() const { return E / (2.0f * (1.0f + nu)); }
+  float lame() const { return E * nu / ((1.0f + nu) * (1.0f - 2.0f * nu)); }
 
   uint32_t nGroups() const { return (totalCells() + 255u) / 256u; }
 };
 
 class MPMEngine {
 public:
-  void init(VkDevice device, VmaAllocator allocator,
-            VkDescriptorPool descriptorPool,
-            VkCommandPool cmdPool, VkQueue queue,
-            const std::string& shaderDir,
-            const MPMConfig& cfg = {});
+  void init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const MPMConfig& cfg = {});
   void cleanup();
 
   void step(VkCommandBuffer cmd, float dt);
@@ -62,16 +61,16 @@ public:
   VkBuffer getVelocityBuffer() const;
 
   // ImGui から調整可能
-  float gravity        = -9.8f;
-  float restitution    = 0.3f;
-  float wall_friction  = 0.0f;
-  int   numSubsteps    = 20;
-  uint32_t plasticModel = 0;    // 0=弾性, 1=VM, 2=DP（Phase 1 まではグローバル）
-  float q_max          = 1e5f; // VM 降伏応力
-  float M_friction     = 0.577f; // DP: tan(30°)
-  float q_cohesion     = 0.0f;
+  float gravity         = -9.8f;
+  float restitution     = 0.3f;
+  float wall_friction   = 0.0f;
+  int numSubsteps       = 20;
+  uint32_t plasticModel = 0;      // 0=弾性, 1=VM, 2=DP（Phase 1 まではグローバル）
+  float q_max           = 1e5f;   // VM 降伏応力
+  float M_friction      = 0.577f; // DP: tan(30°)
+  float q_cohesion      = 0.0f;
   // 転写モード: 0=PIC (散逸大), -1=APIC (散逸小), 1=FLIP (将来実装)
-  float flip_ratio     = 0.0f;
+  float flip_ratio = 0.0f;
 
   // NanoVDB SDF コライダー設定
   // radius, cx, cy, cz は世界座標 (worldMin=0, worldMax=world_size)
@@ -101,8 +100,7 @@ public:
   // ── 粒子の直接追加 ────────────────────────────────────────────────────
   // pos.w = 粒子体積 Vp, vel.w = floatBitsToUint(material_id)
   // F=単位行列, B=0, stress=0 で初期化して maxParticleCount() まで追加
-  void appendParticles(const std::vector<glm::vec4>& pos,
-                        const std::vector<glm::vec4>& vel);
+  void appendParticles(const std::vector<glm::vec4>& pos, const std::vector<glm::vec4>& vel);
 
   // ── 任意形状 SDF コライダー ────────────────────────────────────────────
   // Morton 順に並んだ float SDF 配列 (totalCells() 要素) を地形コライダーとして設定
@@ -110,16 +108,16 @@ public:
   void setColliderSDF(const std::vector<float>& mortonSDF);
 
   VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
-  VkDescriptorSet       descriptorSet       = VK_NULL_HANDLE;
-  uint32_t              posIdx              = 0;
-  uint32_t              velIdx              = 0;
+  VkDescriptorSet descriptorSet             = VK_NULL_HANDLE;
+  uint32_t posIdx                           = 0;
+  uint32_t velIdx                           = 0;
 
 private:
-  MPMConfig    cfg_;
-  VkDevice     device_    = VK_NULL_HANDLE;
+  MPMConfig cfg_;
+  VkDevice device_        = VK_NULL_HANDLE;
   VmaAllocator allocator_ = VK_NULL_HANDLE;
   VkCommandPool cmdPool_  = VK_NULL_HANDLE;
-  VkQueue       queue_    = VK_NULL_HANDLE;
+  VkQueue queue_          = VK_NULL_HANDLE;
 
   // ライブパーティクル数（dispatch ルーピング用）
   uint32_t nParticles_ = 0;
@@ -146,20 +144,20 @@ private:
   uint32_t gridMassIdx_ = 0;
 
   // マテリアルテーブル SSBO
-  uint32_t materialsIdx_   = 0;
-  uint32_t materialCount_  = 1;   // 現在の有効エントリ数
+  uint32_t materialsIdx_  = 0;
+  uint32_t materialCount_ = 1; // 現在の有効エントリ数
 
   // 解析コライダー SSBO (Phase 3)
-  uint32_t collidersIdx_   = 0;
-  uint32_t colliderCount_  = 0;   // 0 = 無効
+  uint32_t collidersIdx_  = 0;
+  uint32_t colliderCount_ = 0; // 0 = 無効
 
   // NanoVDB SDF コライダー
-  uint32_t nanoVDBIdx_  = 0;  // 0 = 未設定 (シェーダー内でスキップ)
+  uint32_t nanoVDBIdx_ = 0; // 0 = 未設定 (シェーダー内でスキップ)
 
   // Emitter (Phase 4)
   std::vector<std::shared_ptr<Emitter>> emitters_;
-  std::vector<int>                      emitterStepsDone_;
-  std::mt19937                          emitterRng_{12345};
+  std::vector<int> emitterStepsDone_;
+  std::mt19937 emitterRng_{12345};
   void emitFromEmitters(float dt);
 
   // コンピュートパイプライン
@@ -174,7 +172,7 @@ private:
   ComputePipeline kZeroGrid_;
   ComputePipeline kP2G_;
   ComputePipeline kGridUpdate_;
-  ComputePipeline kNanoVDBBC_;  // NanoVDB SDF 境界条件 (kGridUpdate_ の後)
+  ComputePipeline kNanoVDBBC_; // NanoVDB SDF 境界条件 (kGridUpdate_ の後)
   ComputePipeline kG2P_;
 
   MPMSimPC buildPC(float subDt) const;

@@ -86,15 +86,15 @@ public:
   // ε=3000 / damping=0.6 は元のハードコード値。論文忠実化(ε↓・人工圧力有効化)は
   // 発散したため一旦この既定に戻している。チューニングは ImGui または CLI 引数で行う。
   float cfmEpsilon       = 3000.0f; // CFM 緩和 ε (式11)。元のハードコード値
-  float scorrK           = 0.001f;    // 人工圧力 k (式13; 0=無効)
+  float scorrK           = 0.001f;  // 人工圧力 k (式13; 0=無効)
   float vorticityEpsilon = 0.1f;    // 渦度閉じ込め ε (式16)
   float linearDamping    = 0.02f;   // 速度減衰 [1/s]。元のハードコード値
   bool vorticityEnabled  = false;   // 渦度閉じ込めの ON/OFF
 
   // ── 煙・粉体パラメータ ──────────────────────────────────────────────────────
-  float smokeRiseAccel = 8.0f;  // 煙の浮力加速度 [m/s²] (typeFlag==4)
-  float smokeDamping   = 0.5f;  // 煙の速度減衰係数 [1/s] (typeFlag==4)
-  float powderFriction = 0.0f;  // 粉体摩擦係数 [1/s] (typeFlag==5; 将来拡張用)
+  float smokeRiseAccel = 8.0f; // 煙の浮力加速度 [m/s²] (typeFlag==4)
+  float smokeDamping   = 0.5f; // 煙の速度減衰係数 [1/s] (typeFlag==4)
+  float powderFriction = 0.0f; // 粉体摩擦係数 [1/s] (typeFlag==5; 将来拡張用)
 
   uint32_t nBoundary = 0;
 
@@ -102,23 +102,15 @@ public:
   // type: 0=Sphere, 1=CylinderZ, 2=Box, 3=CapsuleZ
   // 各フィールドは float (type も float として格納; シェーダーで uint() キャスト)
   struct AbsorberDesc {
-    float type;        // 0=Sphere, 1=CylinderZ, 2=Box, 3=CapsuleZ
-    float cx, cy, cz;  // 中心座標 [m]
-    float p0, p1, p2;  // 形状パラメータ: Sphere→(r), CylZ→(r,halfH), Box→(hx,hy,hz), Capsule→(r,halfL)
-    float rate;        // 吸収確率 per substep [0.0, 1.0]
+    float type;       // 0=Sphere, 1=CylinderZ, 2=Box, 3=CapsuleZ
+    float cx, cy, cz; // 中心座標 [m]
+    float p0, p1, p2; // 形状パラメータ: Sphere→(r), CylZ→(r,halfH), Box→(hx,hy,hz), Capsule→(r,halfL)
+    float rate;       // 吸収確率 per substep [0.0, 1.0]
 
-    static AbsorberDesc Sphere(float cx_, float cy_, float cz_, float r, float rate_ = 1.0f) {
-      return {0.0f, cx_, cy_, cz_, r, 0.0f, 0.0f, rate_};
-    }
-    static AbsorberDesc CylinderZ(float cx_, float cy_, float cz_, float r, float halfH, float rate_ = 1.0f) {
-      return {1.0f, cx_, cy_, cz_, r, halfH, 0.0f, rate_};
-    }
-    static AbsorberDesc Box(float cx_, float cy_, float cz_, float hx, float hy, float hz, float rate_ = 1.0f) {
-      return {2.0f, cx_, cy_, cz_, hx, hy, hz, rate_};
-    }
-    static AbsorberDesc CapsuleZ(float cx_, float cy_, float cz_, float r, float halfL, float rate_ = 1.0f) {
-      return {3.0f, cx_, cy_, cz_, r, halfL, 0.0f, rate_};
-    }
+    static AbsorberDesc Sphere(float cx_, float cy_, float cz_, float r, float rate_ = 1.0f) { return {0.0f, cx_, cy_, cz_, r, 0.0f, 0.0f, rate_}; }
+    static AbsorberDesc CylinderZ(float cx_, float cy_, float cz_, float r, float halfH, float rate_ = 1.0f) { return {1.0f, cx_, cy_, cz_, r, halfH, 0.0f, rate_}; }
+    static AbsorberDesc Box(float cx_, float cy_, float cz_, float hx, float hy, float hz, float rate_ = 1.0f) { return {2.0f, cx_, cy_, cz_, hx, hy, hz, rate_}; }
+    static AbsorberDesc CapsuleZ(float cx_, float cy_, float cz_, float r, float halfL, float rate_ = 1.0f) { return {3.0f, cx_, cy_, cz_, r, halfL, 0.0f, rate_}; }
   };
   static constexpr uint32_t MAX_ABSORBERS = 32;
 
@@ -140,11 +132,9 @@ public:
   // maxBoundaryCount: 毎フレーム更新する境界粒子の最大数
   void initKinematicBoundaryStaging(uint32_t maxBoundaryCount);
   // cmd の中に vkCmdCopyBuffer × 3 + barrier を記録する。engine_.step() の前に呼ぶ。
-  void recordKinematicBoundaryUpdate(
-      VkCommandBuffer cmd, uint32_t frameIndex,
-      uint32_t boundaryOffset, uint32_t count,
-      const glm::vec4* positions,   // world-space 位置
-      const glm::vec4* velocities); // ω × (pos - pivot)
+  void recordKinematicBoundaryUpdate(VkCommandBuffer cmd, uint32_t frameIndex, uint32_t boundaryOffset, uint32_t count,
+                                     const glm::vec4* positions,   // world-space 位置
+                                     const glm::vec4* velocities); // ω × (pos - pivot)
   void cleanupKinematicBoundaryStaging();
 
 private:
@@ -184,11 +174,11 @@ private:
   ComputePipeline kAbsorb_; // 吸収パス（fluid_absorb.comp; absorberCount_>0 のときのみ使用）
 
   // ── kinematic staging (TC8) ──────────────────────────────────────────────
-  static constexpr uint32_t MAX_CONCURRENT_FRAMES = 2;
-  VkBuffer      kinStagingBuf_[MAX_CONCURRENT_FRAMES]    = {};
-  VmaAllocation kinStagingAlloc_[MAX_CONCURRENT_FRAMES]  = {};
-  void*         kinStagingMapped_[MAX_CONCURRENT_FRAMES] = {};
-  uint32_t      kinStagingMaxCount_                      = 0;
+  static constexpr uint32_t MAX_CONCURRENT_FRAMES       = 2;
+  VkBuffer kinStagingBuf_[MAX_CONCURRENT_FRAMES]        = {};
+  VmaAllocation kinStagingAlloc_[MAX_CONCURRENT_FRAMES] = {};
+  void* kinStagingMapped_[MAX_CONCURRENT_FRAMES]        = {};
+  uint32_t kinStagingMaxCount_                          = 0;
 
   std::vector<glm::vec3> boundaryTriVerts_;
 

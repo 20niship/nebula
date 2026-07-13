@@ -16,9 +16,7 @@ uint32_t ClothSceneEngine::addCloth(const ClothMesh& mesh) {
   return offset;
 }
 
-void ClothSceneEngine::addConstraint(const ClothConstraint& c) {
-  constraints_.push_back(c);
-}
+void ClothSceneEngine::addConstraint(const ClothConstraint& c) { constraints_.push_back(c); }
 
 // ─── 初期化 ────────────────────────────────────────────────────────────────
 
@@ -30,12 +28,12 @@ void ClothSceneEngine::buildCombinedEdges() {
   for(int c = 0; c < nColors_; ++c) {
     combinedColorBatch_[c] = edgeCursor;
     for(uint32_t mi = 0; mi < (uint32_t)meshes_.size(); ++mi) {
-      const ClothMesh& mesh   = meshes_[mi];
-      uint32_t         offset = meshOffsets_[mi];
-      uint32_t         start  = mesh.colorBatch[c]     * 3;
-      uint32_t         end    = mesh.colorBatch[c + 1] * 3;
+      const ClothMesh& mesh = meshes_[mi];
+      uint32_t offset       = meshOffsets_[mi];
+      uint32_t start        = mesh.colorBatch[c] * 3;
+      uint32_t end          = mesh.colorBatch[c + 1] * 3;
       for(uint32_t k = start; k < end; k += 3) {
-        combinedEdgeData_.push_back(mesh.edgeData[k]     + offset); // p
+        combinedEdgeData_.push_back(mesh.edgeData[k] + offset);     // p
         combinedEdgeData_.push_back(mesh.edgeData[k + 1] + offset); // q
         combinedEdgeData_.push_back(mesh.edgeData[k + 2]);          // restLen bits
         ++edgeCursor;
@@ -43,7 +41,7 @@ void ClothSceneEngine::buildCombinedEdges() {
     }
   }
   combinedColorBatch_[nColors_] = edgeCursor;
-  totalEdgeCount_ = edgeCursor;
+  totalEdgeCount_               = edgeCursor;
 }
 
 void ClothSceneEngine::createStagingBuffer() {
@@ -69,12 +67,12 @@ void ClothSceneEngine::initBuffers(VkCommandPool cmdPool, VkQueue queue) {
   // 統合パーティクルデータを構築
   std::vector<glm::vec4> positions(N);
   std::vector<glm::vec4> invMasses(N);
-  std::vector<uint32_t>  typeFlags(N);
+  std::vector<uint32_t> typeFlags(N);
 
   for(uint32_t mi = 0; mi < (uint32_t)meshes_.size(); ++mi) {
-    const ClothMesh& mesh   = meshes_[mi];
-    uint32_t         offset = meshOffsets_[mi];
-    uint32_t         cnt    = mesh.vertexCount();
+    const ClothMesh& mesh = meshes_[mi];
+    uint32_t offset       = meshOffsets_[mi];
+    uint32_t cnt          = mesh.vertexCount();
     for(uint32_t i = 0; i < cnt; ++i) {
       positions[offset + i] = mesh.positions[i];
       invMasses[offset + i] = mesh.invMasses[i];
@@ -87,7 +85,7 @@ void ClothSceneEngine::initBuffers(VkCommandPool cmdPool, VkQueue queue) {
   for(uint32_t i = 0; i < N; ++i) pinnedTargetCpu_[i] = positions[i];
 
   for(const auto& c : constraints_) {
-    invMasses[c.particleIdx].x = 0.0f;
+    invMasses[c.particleIdx].x      = 0.0f;
     pinnedTargetCpu_[c.particleIdx] = glm::vec4(c.targetPos, 1.0f);
     if(c.type == ClothConstraint::Type::PinAnimated) {
       hasPinAnimated_ = true;
@@ -97,26 +95,26 @@ void ClothSceneEngine::initBuffers(VkCommandPool cmdPool, VkQueue queue) {
 
   // バッファ登録
   const uint32_t N_GROUPS = (totalCells() + 255u) / 256u;
-  posIdx        = attrBuf_.addAttribute("P",          sizeof(glm::vec4), N);
-  velIdx        = attrBuf_.addAttribute("v",          sizeof(glm::vec4), N);
-  predPIdx_     = attrBuf_.addAttribute("predP",      sizeof(glm::vec4), N);
-  invMassIdx_   = attrBuf_.addAttribute("invMass",    sizeof(glm::vec4), N);
-  typeFlagIdx_  = attrBuf_.addAttribute("typeFlag",   sizeof(uint32_t),  N);
-  cellCountIdx_ = attrBuf_.addAttribute("cellCount",  sizeof(uint32_t),  totalCells());
-  cellOffsetIdx_= attrBuf_.addAttribute("cellOffset", sizeof(uint32_t),  totalCells() + N_GROUPS);
-  sortedIdxIdx_ = attrBuf_.addAttribute("sortedIdx",  sizeof(uint32_t),  N);
+  posIdx                  = attrBuf_.addAttribute("P", sizeof(glm::vec4), N);
+  velIdx                  = attrBuf_.addAttribute("v", sizeof(glm::vec4), N);
+  predPIdx_               = attrBuf_.addAttribute("predP", sizeof(glm::vec4), N);
+  invMassIdx_             = attrBuf_.addAttribute("invMass", sizeof(glm::vec4), N);
+  typeFlagIdx_            = attrBuf_.addAttribute("typeFlag", sizeof(uint32_t), N);
+  cellCountIdx_           = attrBuf_.addAttribute("cellCount", sizeof(uint32_t), totalCells());
+  cellOffsetIdx_          = attrBuf_.addAttribute("cellOffset", sizeof(uint32_t), totalCells() + N_GROUPS);
+  sortedIdxIdx_           = attrBuf_.addAttribute("sortedIdx", sizeof(uint32_t), N);
 
   std::vector<glm::vec4> zeros(N, glm::vec4(0.0f));
-  attrBuf_.upload("v",       zeros.data(),      sizeof(glm::vec4) * N, cmdPool, queue);
-  attrBuf_.upload("P",       positions.data(),  sizeof(glm::vec4) * N, cmdPool, queue);
-  attrBuf_.upload("invMass", invMasses.data(),  sizeof(glm::vec4) * N, cmdPool, queue);
-  attrBuf_.upload("typeFlag",typeFlags.data(),  sizeof(uint32_t)  * N, cmdPool, queue);
+  attrBuf_.upload("v", zeros.data(), sizeof(glm::vec4) * N, cmdPool, queue);
+  attrBuf_.upload("P", positions.data(), sizeof(glm::vec4) * N, cmdPool, queue);
+  attrBuf_.upload("invMass", invMasses.data(), sizeof(glm::vec4) * N, cmdPool, queue);
+  attrBuf_.upload("typeFlag", typeFlags.data(), sizeof(uint32_t) * N, cmdPool, queue);
 
   // エッジバッファ
   buildCombinedEdges();
-  uint32_t E    = totalEdgeCount_;
+  uint32_t E       = totalEdgeCount_;
   stretchEdgesIdx_ = attrBuf_.addAttribute("stretchEdges", sizeof(uint32_t), E * 3);
-  lambdasIdx_      = attrBuf_.addAttribute("lambdas",      sizeof(float),    E);
+  lambdasIdx_      = attrBuf_.addAttribute("lambdas", sizeof(float), E);
   attrBuf_.upload("stretchEdges", combinedEdgeData_.data(), sizeof(uint32_t) * combinedEdgeData_.size(), cmdPool, queue);
 
   // PinAnimated 用バッファ
@@ -129,9 +127,7 @@ void ClothSceneEngine::initBuffers(VkCommandPool cmdPool, VkQueue queue) {
   }
 }
 
-void ClothSceneEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool,
-                             VkCommandPool cmdPool, VkQueue queue,
-                             const std::string& shaderDir, float worldSize, uint32_t gridRes) {
+void ClothSceneEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, float worldSize, uint32_t gridRes) {
   device_    = device;
   allocator_ = allocator;
   cmdPool_   = cmdPool;
@@ -144,29 +140,25 @@ void ClothSceneEngine::init(VkDevice device, VmaAllocator allocator, VkDescripto
   attrBuf_.init(device, allocator, descriptorPool);
   initBuffers(cmdPool, queue);
 
-  auto load = [&](ComputePipeline& k, const std::string& name) {
-    k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv");
-  };
+  auto load = [&](ComputePipeline& k, const std::string& name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
 
-  load(kPredict_,       "predict.comp");
-  load(kSdfCollision_,  "sdf_collision.comp");
-  load(kHashCount_,     "hash_count.comp");
+  load(kPredict_, "predict.comp");
+  load(kSdfCollision_, "sdf_collision.comp");
+  load(kHashCount_, "hash_count.comp");
   load(kHashScanLocal_, "hash_scan_local.comp");
-  load(kHashScanGlobal_,"hash_scan_global.comp");
-  load(kHashSort_,      "hash_sort.comp");
-  load(kSolveDensity_,  "solve_density.comp");
-  load(kSolveStretch_,  "solve_stretch.comp");
-  load(kUpdateVelocity_,"update_velocity.comp");
-  load(kZeroLambdas_,   "zero_lambdas.comp");
-  load(kZeroCells_,     "zero_cells.comp");
-  if(hasPinAnimated_)
-    load(kMovePins_, "move_pins.comp");
+  load(kHashScanGlobal_, "hash_scan_global.comp");
+  load(kHashSort_, "hash_sort.comp");
+  load(kSolveDensity_, "solve_density.comp");
+  load(kSolveStretch_, "solve_stretch.comp");
+  load(kUpdateVelocity_, "update_velocity.comp");
+  load(kZeroLambdas_, "zero_lambdas.comp");
+  load(kZeroCells_, "zero_cells.comp");
+  if(hasPinAnimated_) load(kMovePins_, "move_pins.comp");
 
   descriptorSetLayout = attrBuf_.descriptorSetLayout;
   descriptorSet       = attrBuf_.descriptorSet;
 
-  std::cout << "[ClothScene] " << meshes_.size() << " meshes, "
-            << totalCount_ << " particles, " << totalEdgeCount_ << " edges\n";
+  std::cout << "[ClothScene] " << meshes_.size() << " meshes, " << totalCount_ << " particles, " << totalEdgeCount_ << " edges\n";
 }
 
 VkBuffer ClothSceneEngine::getPositionBuffer() const { return attrBuf_.getBuffer("P"); }
@@ -175,9 +167,9 @@ VkBuffer ClothSceneEngine::getPositionBuffer() const { return attrBuf_.getBuffer
 
 void ClothSceneEngine::updateConstraint(uint32_t idx, const glm::vec3& newTarget) {
   if(idx >= (uint32_t)animatedPinParticles_.size()) return;
-  uint32_t pi = animatedPinParticles_[idx];
+  uint32_t pi          = animatedPinParticles_[idx];
   pinnedTargetCpu_[pi] = glm::vec4(newTarget, 1.0f);
-  pinnedTargetDirty_ = true;
+  pinnedTargetDirty_   = true;
 }
 
 // ─── クリーンアップ ────────────────────────────────────────────────────────
@@ -206,9 +198,7 @@ void ClothSceneEngine::computeBarrier(VkCommandBuffer cmd) {
   b.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
   b.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
   b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-  vkCmdPipelineBarrier(cmd,
-    VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-    0, 1, &b, 0, nullptr, 0, nullptr);
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &b, 0, nullptr, 0, nullptr);
 }
 
 void ClothSceneEngine::transferBarrier(VkCommandBuffer cmd) {
@@ -216,9 +206,7 @@ void ClothSceneEngine::transferBarrier(VkCommandBuffer cmd) {
   b.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
   b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
   b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-  vkCmdPipelineBarrier(cmd,
-    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-    0, 1, &b, 0, nullptr, 0, nullptr);
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &b, 0, nullptr, 0, nullptr);
 }
 
 // ─── 1フレームのシミュレーション ──────────────────────────────────────────
@@ -241,35 +229,35 @@ void ClothSceneEngine::step(VkCommandBuffer cmd, float dt) {
 
   for(int sub = 0; sub < numSubsteps; ++sub) {
     SimPC pc{};
-    pc.posIdx           = posIdx;
-    pc.velIdx           = velIdx;
-    pc.predPIdx         = predPIdx_;
-    pc.invMassIdx       = invMassIdx_;
-    pc.typeFlagIdx      = typeFlagIdx_;
-    pc.cellCountIdx     = cellCountIdx_;
-    pc.cellOffsetIdx    = cellOffsetIdx_;
-    pc.sortedIdxIdx     = sortedIdxIdx_;
-    pc.particleCount    = totalCount_;
-    pc.gridRes          = gridRes_;
-    pc.stretchEdgesIdx  = stretchEdgesIdx_;
-    pc.lambdasIdx       = lambdasIdx_;
-    pc.dt               = subDt;
-    pc.cellSize         = cellSize();
-    pc.worldMin         = 0.0f;
-    pc.worldMax         = worldSize_;
-    pc.gravity          = gravity;
-    pc.restitution      = restitution;
-    pc.friction         = friction;
-    pc.particleRadius   = cellSize() * 0.5f;
-    pc.couplingForceIdx = 0;
-    pc.clothVertexCount = totalCount_;
-    pc.edgeCount        = totalEdgeCount_;
-    pc.stretchCompliance= stretchCompliance;
-    pc.bendCompliance   = bendCompliance;
-    pc.windX            = windX;
-    pc.windZ            = windZ;
-    pc.linearDamping    = 0.02f;
-    pc.pinnedTargetIdx  = pinnedTargetIdx_;
+    pc.posIdx            = posIdx;
+    pc.velIdx            = velIdx;
+    pc.predPIdx          = predPIdx_;
+    pc.invMassIdx        = invMassIdx_;
+    pc.typeFlagIdx       = typeFlagIdx_;
+    pc.cellCountIdx      = cellCountIdx_;
+    pc.cellOffsetIdx     = cellOffsetIdx_;
+    pc.sortedIdxIdx      = sortedIdxIdx_;
+    pc.particleCount     = totalCount_;
+    pc.gridRes           = gridRes_;
+    pc.stretchEdgesIdx   = stretchEdgesIdx_;
+    pc.lambdasIdx        = lambdasIdx_;
+    pc.dt                = subDt;
+    pc.cellSize          = cellSize();
+    pc.worldMin          = 0.0f;
+    pc.worldMax          = worldSize_;
+    pc.gravity           = gravity;
+    pc.restitution       = restitution;
+    pc.friction          = friction;
+    pc.particleRadius    = cellSize() * 0.5f;
+    pc.couplingForceIdx  = 0;
+    pc.clothVertexCount  = totalCount_;
+    pc.edgeCount         = totalEdgeCount_;
+    pc.stretchCompliance = stretchCompliance;
+    pc.bendCompliance    = bendCompliance;
+    pc.windX             = windX;
+    pc.windZ             = windZ;
+    pc.linearDamping     = 0.02f;
+    pc.pinnedTargetIdx   = pinnedTargetIdx_;
 
     // ① アニメーションピン位置を pos/predP に適用
     if(hasPinAnimated_) {
@@ -297,8 +285,8 @@ void ClothSceneEngine::step(VkCommandBuffer cmd, float dt) {
         uint32_t cnt   = end - start;
         if(cnt == 0) continue;
 
-        pc.batchEdgeStart = start;
-        pc.batchEdgeEnd   = end;
+        pc.batchEdgeStart    = start;
+        pc.batchEdgeEnd      = end;
         pc.stretchCompliance = (color >= 8) ? bendCompliance : stretchCompliance;
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kSolveStretch_.pipeline);

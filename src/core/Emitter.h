@@ -3,9 +3,9 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <glm/glm.hpp>
 #include <memory>
 #include <random>
-#include <glm/glm.hpp>
 
 // ── Emitter 形状種別 (EmitterGPU.shape / shaders/pyro_common.glsl の
 //    EMITTER_SHAPE_* 定数と対応) ──────────────────────────────────────────
@@ -22,13 +22,13 @@ enum class EmitterShape : uint32_t {
 // [8-10]=inflowVelocity [11]=temperatureRate [12]=fuelRate [13-15]=pad
 struct alignas(16) EmitterGPU {
   uint32_t shape;
-  float    cx, cy, cz;
-  float    sx, sy, sz;
-  float    densityRate;
-  float    ivx, ivy, ivz;
-  float    temperatureRate;
-  float    fuelRate;
-  float    pad0, pad1, pad2;
+  float cx, cy, cz;
+  float sx, sy, sz;
+  float densityRate;
+  float ivx, ivy, ivz;
+  float temperatureRate;
+  float fuelRate;
+  float pad0, pad1, pad2;
 };
 static_assert(sizeof(EmitterGPU) == 64, "EmitterGPU must be 64 bytes");
 
@@ -41,16 +41,16 @@ struct Emitter {
 
   // ── MPM / Fluid(PBF): 粒子を直接生成する際に使うフィールド ──────────
   glm::vec3 center{0.0f};
-  glm::vec3 vel{0.0f};                     // 放出粒子の初速
-  glm::vec3 center_vel{0.0f};              // エミッタ自体の移動速度 [m/s]
-  int       particles_per_step = 1024;
-  uint32_t  particleType       = 1u;       // MPM: material id / Fluid: 1=流体,4=煙,5=粉体
+  glm::vec3 vel{0.0f};        // 放出粒子の初速
+  glm::vec3 center_vel{0.0f}; // エミッタ自体の移動速度 [m/s]
+  int particles_per_step = 1024;
+  uint32_t particleType  = 1u; // MPM: material id / Fluid: 1=流体,4=煙,5=粉体
 
   // ── Pyro: グリッドセルへ連続注入する際に使うフィールド ──────────────
-  glm::vec3 inflowVelocity{0.0f};          // 放出時に加える初速 [m/s]
-  float     densityRate     = 0.0f;        // 密度注入速度 [1/s]
-  float     temperatureRate = 0.0f;        // 温度注入速度 [K/s]
-  float     fuelRate        = 0.0f;        // 燃料注入速度 [1/s]
+  glm::vec3 inflowVelocity{0.0f}; // 放出時に加える初速 [m/s]
+  float densityRate     = 0.0f;   // 密度注入速度 [1/s]
+  float temperatureRate = 0.0f;   // 温度注入速度 [K/s]
+  float fuelRate        = 0.0f;   // 燃料注入速度 [1/s]
 
   // ── 共通: 放出継続制御 ───────────────────────────────────────────────
   // 0=無限, -1=最初の1回(MPM/Fluid)/1フレーム(Pyro)のみ, >0=指定回数
@@ -66,7 +66,9 @@ protected:
   // サブクラスの pack() から呼ぶ。
   void packCommon(EmitterGPU& g) const {
     g.densityRate     = densityRate;
-    g.ivx = inflowVelocity.x; g.ivy = inflowVelocity.y; g.ivz = inflowVelocity.z;
+    g.ivx             = inflowVelocity.x;
+    g.ivy             = inflowVelocity.y;
+    g.ivz             = inflowVelocity.z;
     g.temperatureRate = temperatureRate;
     g.fuelRate        = fuelRate;
   }
@@ -90,15 +92,18 @@ struct AABBEmitter : public Emitter {
   EmitterGPU pack() const override {
     EmitterGPU g{};
     g.shape = static_cast<uint32_t>(EmitterShape::AABB);
-    g.cx = center.x; g.cy = center.y; g.cz = center.z;
-    g.sx = size.x * 0.5f; g.sy = size.y * 0.5f; g.sz = size.z * 0.5f;
+    g.cx    = center.x;
+    g.cy    = center.y;
+    g.cz    = center.z;
+    g.sx    = size.x * 0.5f;
+    g.sy    = size.y * 0.5f;
+    g.sz    = size.z * 0.5f;
     packCommon(g);
     return g;
   }
 
-  static std::shared_ptr<AABBEmitter> FromAABB(const glm::vec3& min, const glm::vec3& max,
-                                                const glm::vec3& vel, int particles_per_step) {
-    auto e = std::make_shared<AABBEmitter>();
+  static std::shared_ptr<AABBEmitter> FromAABB(const glm::vec3& min, const glm::vec3& max, const glm::vec3& vel, int particles_per_step) {
+    auto e                = std::make_shared<AABBEmitter>();
     e->center             = (min + max) * 0.5f;
     e->size               = max - min;
     e->vel                = vel;
@@ -118,27 +123,27 @@ struct SphereEmitter : public Emitter {
     float r     = radius * std::cbrt(dr(rng));
     float theta = dtheta(rng);
     float phi   = dphi(rng);
-    return center + glm::vec3(
-        r * std::sin(theta) * std::cos(phi),
-        r * std::sin(theta) * std::sin(phi),
-        r * std::cos(theta));
+    return center + glm::vec3(r * std::sin(theta) * std::cos(phi), r * std::sin(theta) * std::sin(phi), r * std::cos(theta));
   }
 
   EmitterGPU pack() const override {
     EmitterGPU g{};
     g.shape = static_cast<uint32_t>(EmitterShape::SPHERE);
-    g.cx = center.x; g.cy = center.y; g.cz = center.z;
-    g.sx = radius; g.sy = radius; g.sz = radius; // シェーダーは sz.x のみ参照 (球は対称)
+    g.cx    = center.x;
+    g.cy    = center.y;
+    g.cz    = center.z;
+    g.sx    = radius;
+    g.sy    = radius;
+    g.sz    = radius; // シェーダーは sz.x のみ参照 (球は対称)
     packCommon(g);
     return g;
   }
 
-  static std::shared_ptr<SphereEmitter> FromSphere(const glm::vec3& center, float radius,
-                                                     const glm::vec3& vel, int particles_per_step) {
-    auto e = std::make_shared<SphereEmitter>();
+  static std::shared_ptr<SphereEmitter> FromSphere(const glm::vec3& center, float radius, const glm::vec3& vel, int particles_per_step) {
+    auto e                = std::make_shared<SphereEmitter>();
     e->center             = center;
-    e->radius              = radius;
-    e->vel                 = vel;
+    e->radius             = radius;
+    e->vel                = vel;
     e->particles_per_step = particles_per_step;
     return e;
   }
@@ -169,16 +174,20 @@ struct EllipseEmitter : public Emitter {
     do {
       ex = dx(rng);
       ey = dy(rng);
-    } while ((ex * ex) / (semiA * semiA) + (ey * ey) / (semiB * semiB) > 1.0f);
+    } while((ex * ex) / (semiA * semiA) + (ey * ey) / (semiB * semiB) > 1.0f);
     return glm::vec3(center.x + ex, center.y + ey, center.z); // Z は center.z 固定
   }
 
   EmitterGPU pack() const override {
     EmitterGPU g{};
     g.shape = static_cast<uint32_t>(EmitterShape::ELLIPSE);
-    g.cx = center.x; g.cy = center.y; g.cz = center.z;
+    g.cx    = center.x;
+    g.cy    = center.y;
+    g.cz    = center.z;
     // 旧 PyroSourceShape::ELLIPSE 規約: x=半径a, y=半高さ, z=半径b
-    g.sx = semiA; g.sy = halfHeightY; g.sz = semiB;
+    g.sx = semiA;
+    g.sy = halfHeightY;
+    g.sz = semiB;
     packCommon(g);
     return g;
   }

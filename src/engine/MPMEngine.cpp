@@ -2,6 +2,8 @@
 
 #include <cmath>
 #include <cstring>
+#include <random>
+#include <algorithm>
 #include <glm/glm.hpp>
 #include <random>
 #include <vector>

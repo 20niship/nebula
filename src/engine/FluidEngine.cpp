@@ -2,6 +2,7 @@
 #include "BoundaryParticles.h"
 
 #include <cmath>
+#include <cstring>
 #include <cstdlib>
 #include <glm/glm.hpp>
 #include <random>

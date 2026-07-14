@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   bench:
@@ -50,7 +51,9 @@ jobs:
             --perf-json "$GITHUB_WORKSPACE/benchmarks/baseline.json" \
             --commit-sha "${{ github.sha }}"
 
-      - name: Commit & push updated baseline
+      - name: Commit & open PR with updated baseline
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -58,6 +61,13 @@ jobs:
           if git diff --cached --quiet; then
             echo "baseline unchanged, skipping commit"
           else
+            BRANCH="perf-baseline-update-${{ github.run_id }}"
+            git checkout -b "$BRANCH"
             git commit -m "chore(bench): update perf baseline for ${{ github.sha }}"
-            git push origin HEAD:main
+            git push origin "$BRANCH"
+            gh pr create \
+              --title "chore(bench): update perf baseline for ${{ github.sha }}" \
+              --body "Automated perf baseline update triggered by commit ${{ github.sha }}." \
+              --base main \
+              --head "$BRANCH"
           fi

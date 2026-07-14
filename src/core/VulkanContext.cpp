@@ -235,9 +235,13 @@ void VulkanContext::createLogicalDevice() {
 
   std::vector<const char*> deviceExts = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-    "VK_KHR_portability_subset",
     VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
   };
+#ifdef __APPLE__
+  // MoltenVK (macOS) はVulkanを部分実装のため必須。Linux/lavapipe等では
+  // 未サポートでvkCreateDeviceがVK_ERROR_EXTENSION_NOT_PRESENTになる。
+  deviceExts.push_back("VK_KHR_portability_subset");
+#endif
 
   VkDeviceCreateInfo info{};
   info.sType                   = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;

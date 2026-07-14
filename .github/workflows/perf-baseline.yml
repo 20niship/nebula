@@ -1,0 +1,63 @@
+name: Perf Baseline (main)
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "benchmarks/**"
+
+permissions:
+  contents: write
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Vulkan SDK + build deps
+        uses: ./.github/actions/setup-vulkan
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install ffmpeg + xvfb (video encode / headless GLFW window)
+        run: sudo apt-get install -y ffmpeg xvfb
+
+      - name: Install Python deps (pyro_raymarch / video encode)
+        run: pip install pillow numpy imageio
+
+      - name: Configure CMake
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DVULKAN_SDK=/usr
+
+      - name: Build capture targets
+        run: cmake --build build --target capture_all -j$(nproc)
+
+      - name: Run task capture (perf mode, 60 frames/sim)
+        run: |
+          ICD=$(find /usr/share/vulkan/icd.d/ -name "lvp_icd*.json" 2>/dev/null | head -1)
+          echo "Using ICD: ${ICD:-NOT FOUND}"
+          export VK_ICD_FILENAMES="$ICD"
+          # GLFW ウィンドウを開くサンプル用に仮想ディスプレイ (Xvfb) を用意する
+          xvfb-run -a python3 capture_sim.py --frames 60 \
+            --perf-json "$GITHUB_WORKSPACE/benchmarks/baseline.json" \
+            --commit-sha "${{ github.sha }}"
+
+      - name: Commit & push updated baseline
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add benchmarks/baseline.json
+          if git diff --cached --quiet; then
+            echo "baseline unchanged, skipping commit"
+          else
+            git commit -m "chore(bench): update perf baseline for ${{ github.sha }}"
+            git push origin HEAD:main
+          fi

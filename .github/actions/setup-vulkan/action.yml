@@ -1,0 +1,21 @@
+name: "Setup Vulkan SDK"
+description: "LunarG Vulkan SDK (glslc/headers/loader) と lavapipe 用ビルド依存パッケージをインストールする"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Vulkan SDK + build deps
+      shell: bash
+      run: |
+        # LunarG Vulkan SDK PPA — provides glslc (shaderc), headers, loader
+        wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | \
+          sudo tee /etc/apt/trusted.gpg.d/lunarg.asc
+        . /etc/os-release
+        sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan.list \
+          "https://packages.lunarg.com/vulkan/lunarg-vulkan-${VERSION_CODENAME}.list"
+        sudo apt-get update -qq
+        sudo apt-get install -y \
+          vulkan-sdk \
+          libglm-dev \
+          libglfw3-dev \
+          mesa-vulkan-drivers

@@ -269,3 +269,10 @@ endfunction()
 add_pyro_example(pyro_basic       examples/pyro_basic.cpp)
 add_pyro_example(pyro_cow_blast   examples/pyro_cow_blast.cpp)
 add_pyro_example(pyro_explosion   examples/pyro_explosion.cpp)
+
+# ── capture_all: capture_sim.py が使う実行ファイルを一括ビルドするための集約ターゲット ──
+add_custom_target(capture_all DEPENDS
+    fluid_pbf cloth_3d cloth_scene smoke fluid_absorb xpbd_softbody
+    screw_fluid mpm_elastic mpm_avalanche mpm_multimaterial
+    mpm_snow_impact mpm_geolayer pyro_cow_blast pyro_explosion
+)

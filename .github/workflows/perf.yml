@@ -25,8 +25,8 @@ jobs:
         with:
           python-version: "3.x"
 
-      - name: Install ffmpeg (video encode)
-        run: sudo apt-get install -y ffmpeg
+      - name: Install ffmpeg + xvfb (video encode / headless GLFW window)
+        run: sudo apt-get install -y ffmpeg xvfb
 
       - name: Install Python deps (pyro_raymarch / video encode)
         run: pip install pillow numpy imageio
@@ -45,7 +45,8 @@ jobs:
           ICD=$(find /usr/share/vulkan/icd.d/ -name "lvp_icd*.json" 2>/dev/null | head -1)
           echo "Using ICD: ${ICD:-NOT FOUND}"
           export VK_ICD_FILENAMES="$ICD"
-          python3 capture_sim.py --frames 60 \
+          # GLFW ウィンドウを開くサンプル用に仮想ディスプレイ (Xvfb) を用意する
+          xvfb-run -a python3 capture_sim.py --frames 60 \
             --perf-json "$GITHUB_WORKSPACE/bench_pr.json" \
             --commit-sha "${{ github.event.pull_request.head.sha }}"
 

@@ -31,8 +31,17 @@ def load_json(path: Path) -> dict:
         return {}
 
 
-def fmt_ms(ms) -> str:
-    return f"{ms:.1f}ms" if ms is not None else "N/A"
+def is_ok(entry) -> bool:
+    return bool(entry) and entry.get("status") == "ok" and entry.get("ms_per_frame") is not None
+
+
+def fmt_cell(entry) -> str:
+    if entry is None:
+        return "N/A"
+    if not is_ok(entry):
+        rc = entry.get("returncode")
+        return f"❌ FAILED (rc={rc})" if rc is not None else "❌ FAILED"
+    return f"{entry['ms_per_frame']:.1f}ms"
 
 
 def build_table(baseline: dict, current: dict) -> str:
@@ -48,39 +57,47 @@ def build_table(baseline: dict, current: dict) -> str:
     lines.append("| Test | Baseline (ms/frame) | Current (ms/frame) | Δ% |")
     lines.append("|------|---------------------|---------------------|----|")
 
-    n_slower = n_faster = n_same = n_na = 0
+    n_slower = n_faster = n_same = n_na = n_failed = 0
 
     for sid in ids:
         base = base_sims.get(sid)
         cur  = cur_sims.get(sid)
         title = (cur or base or {}).get("title", sid)
 
-        if base is None or cur is None:
-            lines.append(f"| {title} | {fmt_ms(base['ms_per_frame']) if base else 'N/A'} "
-                         f"| {fmt_ms(cur['ms_per_frame']) if cur else 'N/A'} | N/A (new/removed) |")
+        base_cell = fmt_cell(base)
+        cur_cell  = fmt_cell(cur)
+
+        if cur is None:
+            delta_cell = "N/A (removed)"
             n_na += 1
-            continue
-
-        base_ms = base["ms_per_frame"]
-        cur_ms  = cur["ms_per_frame"]
-        pct = (cur_ms - base_ms) / base_ms * 100.0 if base_ms else 0.0
-
-        if pct > THRESHOLD_PCT:
-            mark = "🔴"
-            delta_cell = f"**+{pct:.1f}% {mark}**"
-            n_slower += 1
-        elif pct < -THRESHOLD_PCT:
-            mark = "🟢"
-            delta_cell = f"**{pct:.1f}% {mark}**"
+        elif not is_ok(cur):
+            delta_cell = "**❌ FAILED**" if base is not None else "**❌ FAILED (new)**"
+            n_failed += 1
+        elif base is None:
+            delta_cell = "N/A (new)"
+            n_na += 1
+        elif not is_ok(base):
+            delta_cell = "🟢 recovered (baseline was FAILED)"
             n_faster += 1
         else:
-            mark = "⚪"
-            delta_cell = f"{pct:+.1f}% {mark}"
-            n_same += 1
+            base_ms = base["ms_per_frame"]
+            cur_ms  = cur["ms_per_frame"]
+            pct = (cur_ms - base_ms) / base_ms * 100.0 if base_ms else 0.0
 
-        lines.append(f"| {title} | {fmt_ms(base_ms)} | {fmt_ms(cur_ms)} | {delta_cell} |")
+            if pct > THRESHOLD_PCT:
+                delta_cell = f"**+{pct:.1f}% 🔴**"
+                n_slower += 1
+            elif pct < -THRESHOLD_PCT:
+                delta_cell = f"**{pct:.1f}% 🟢**"
+                n_faster += 1
+            else:
+                delta_cell = f"{pct:+.1f}% ⚪"
+                n_same += 1
 
-    summary = f"🔴 slower: {n_slower}  🟢 faster: {n_faster}  ⚪ unchanged: {n_same}"
+        lines.append(f"| {title} | {base_cell} | {cur_cell} | {delta_cell} |")
+
+    summary = (f"🔴 slower: {n_slower}  🟢 faster: {n_faster}  ⚪ unchanged: {n_same}  "
+               f"❌ failed: {n_failed}")
     if n_na:
         summary += f"  ⚠️ new/removed: {n_na}"
 
@@ -108,7 +125,7 @@ def main():
         print("| Test | Current (ms/frame) |")
         print("|------|---------------------|")
         for sid, entry in current.get("sims", {}).items():
-            print(f"| {entry.get('title', sid)} | {fmt_ms(entry['ms_per_frame'])} |")
+            print(f"| {entry.get('title', sid)} | {fmt_cell(entry)} |")
         sys.exit(0)
 
     print(build_table(baseline, current))

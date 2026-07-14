@@ -269,6 +269,7 @@ endfunction()
 add_pyro_example(pyro_basic       examples/pyro_basic.cpp)
 add_pyro_example(pyro_cow_blast   examples/pyro_cow_blast.cpp)
 add_pyro_example(pyro_explosion   examples/pyro_explosion.cpp)
+add_pyro_example(pyro_sweep_bench examples/pyro_sweep_bench.cpp)
 
 # ── capture_all: capture_sim.py が使う実行ファイルを一括ビルドするための集約ターゲット ──
 add_custom_target(capture_all DEPENDS

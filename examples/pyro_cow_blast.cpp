@@ -30,7 +30,7 @@ struct CowBlastArgs : public argparse::Args {
   int& n_frames        = kwarg("n-frames", "実行フレーム数").set_default(180);
   float& dt            = kwarg("dt", "フレームタイムステップ [s]").set_default(1.0f / 60.0f);
   int& substeps        = kwarg("substeps", "1フレームあたりのサブステップ数").set_default(1);
-  int& pressure_iters  = kwarg("pressure-iters", "圧力投影 Red-Black Gauss-Seidel sweep回数").set_default(20);
+  int& pressure_iters  = kwarg("pressure-iters", "圧力投影 Red-Black Gauss-Seidel sweep回数").set_default(10);
   float& vorticity_eps = kwarg("vorticity-eps", "渦度閉じ込め強度 (乱流構造を強調)").set_default(4.0f);
   std::string& out_dir = kwarg("out", "ボクセルダンプ出力先ディレクトリ").set_default(std::string("sim_captures/pyro_cow"));
   int& dump_every      = kwarg("dump-every", "何フレームごとに .pvox をダンプするか").set_default(1);

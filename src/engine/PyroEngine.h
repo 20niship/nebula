@@ -51,8 +51,11 @@ public:
   float flameBrightness    = 0.0f;  // 燃焼による発光量 (Phase3)
   // 圧力投影 Red-Black Gauss-Seidel sweep回数 (1 sweepにつきred/black 2ディスパッチ)。
   // GSは1 sweepあたりJacobi 1反復の約2倍の収束速度を持つため、同等以上の精度を
-  // 旧Jacobi実装 (40反復=40ディスパッチ) の約半分のディスパッチ数で達成できる。
-  int numPressureIters     = 20;
+  // 旧Jacobi実装 (40反復=40ディスパッチ) より少ないディスパッチ数で達成できる。
+  // pyro_sweep_bench による grid_res=128・強浮力/渦度/高速注入という発散しやすい条件での
+  // 検証で sweep=5 (10 dispatch) まで NaN/Inf 無しの安定動作を確認済み (2026-07時点)。
+  // デフォルトはそこから十分マージンを取った値。
+  int numPressureIters     = 10;
   int numSubsteps          = 1;
 
   // ── 障害物 SDF (任意形状、mpm_stl_drop.cpp 由来の MeshSDF.h で構築) ──────

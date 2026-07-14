@@ -151,4 +151,31 @@ ivec3 pyroMortonDecodeI(uint code) {
     vec3 _vy1  = mix(_vx01, _vx11, _vf.y); \
     outVar = mix(_vy0, _vy1, _vf.z); }
 
+// 三線形補間の8近傍サンプルの min/max (MacCormack移流のオーバーシュートクランプ用)
+#define TRILERP_MINMAX_FLOAT(bufIdx, gpos, outMin, outMax) { \
+    ivec3 _mi0 = ivec3(floor(gpos)); \
+    float _m000 = SAMPLE_FLOAT_CLAMPED(bufIdx, _mi0.x,   _mi0.y,   _mi0.z); \
+    float _m100 = SAMPLE_FLOAT_CLAMPED(bufIdx, _mi0.x+1, _mi0.y,   _mi0.z); \
+    float _m010 = SAMPLE_FLOAT_CLAMPED(bufIdx, _mi0.x,   _mi0.y+1, _mi0.z); \
+    float _m110 = SAMPLE_FLOAT_CLAMPED(bufIdx, _mi0.x+1, _mi0.y+1, _mi0.z); \
+    float _m001 = SAMPLE_FLOAT_CLAMPED(bufIdx, _mi0.x,   _mi0.y,   _mi0.z+1); \
+    float _m101 = SAMPLE_FLOAT_CLAMPED(bufIdx, _mi0.x+1, _mi0.y,   _mi0.z+1); \
+    float _m011 = SAMPLE_FLOAT_CLAMPED(bufIdx, _mi0.x,   _mi0.y+1, _mi0.z+1); \
+    float _m111 = SAMPLE_FLOAT_CLAMPED(bufIdx, _mi0.x+1, _mi0.y+1, _mi0.z+1); \
+    outMin = min(min(min(_m000, _m100), min(_m010, _m110)), min(min(_m001, _m101), min(_m011, _m111))); \
+    outMax = max(max(max(_m000, _m100), max(_m010, _m110)), max(max(_m001, _m101), max(_m011, _m111))); }
+
+#define TRILERP_MINMAX_VEC3(bufIdx, gpos, outMin, outMax) { \
+    ivec3 _mvi0 = ivec3(floor(gpos)); \
+    vec3 _mv000 = SAMPLE_VEC3_CLAMPED(bufIdx, _mvi0.x,   _mvi0.y,   _mvi0.z); \
+    vec3 _mv100 = SAMPLE_VEC3_CLAMPED(bufIdx, _mvi0.x+1, _mvi0.y,   _mvi0.z); \
+    vec3 _mv010 = SAMPLE_VEC3_CLAMPED(bufIdx, _mvi0.x,   _mvi0.y+1, _mvi0.z); \
+    vec3 _mv110 = SAMPLE_VEC3_CLAMPED(bufIdx, _mvi0.x+1, _mvi0.y+1, _mvi0.z); \
+    vec3 _mv001 = SAMPLE_VEC3_CLAMPED(bufIdx, _mvi0.x,   _mvi0.y,   _mvi0.z+1); \
+    vec3 _mv101 = SAMPLE_VEC3_CLAMPED(bufIdx, _mvi0.x+1, _mvi0.y,   _mvi0.z+1); \
+    vec3 _mv011 = SAMPLE_VEC3_CLAMPED(bufIdx, _mvi0.x,   _mvi0.y+1, _mvi0.z+1); \
+    vec3 _mv111 = SAMPLE_VEC3_CLAMPED(bufIdx, _mvi0.x+1, _mvi0.y+1, _mvi0.z+1); \
+    outMin = min(min(min(_mv000, _mv100), min(_mv010, _mv110)), min(min(_mv001, _mv101), min(_mv011, _mv111))); \
+    outMax = max(max(max(_mv000, _mv100), max(_mv010, _mv110)), max(max(_mv001, _mv101), max(_mv011, _mv111))); }
+
 #endif // PYRO_COMMON_GLSL

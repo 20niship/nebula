@@ -2,10 +2,13 @@
 #extension GL_EXT_nonuniform_qualifier : enable
 #include "pyro_common.glsl"
 
-// Semi-Lagrangian 移流 (RK2 中点法) + 三線形補間。
+// MacCormack 移流 pass-1 (predictor)。Semi-Lagrangian (RK2 中点法) + 三線形補間。
 // A バッファ (dt 前の場) を読み、逆追跡した位置からサンプルして B バッファへ書き込む。
 // velocity/density/temperature/fuel をまとめて1パスで処理する
 // (いずれも同じ backtrace 位置を使う標準的な semi-Lagrangian の仮定)。
+// velocity/density はこの後 pyro_advect_mc.comp (pass-2) で誤差補正・クランプされる。
+// temperature/fuel はこのpass-1の結果 (Bバッファ) がそのまま最終値になる
+// (視覚的な寄与が小さいためMacCormack補正の対象外とし、スクラッチバッファ不足も回避する)。
 // dispatch: (totalCells + 255) / 256
 
 layout(local_size_x = 256) in;

@@ -1,0 +1,62 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "pyro_common.glsl"
+
+// MacCormack 移流 pass-2 (corrector + クランプ)。velocity と density のみ対象
+// (temperature/fuel は pass-1 の一次精度 semi-Lagrangian 結果をそのまま最終値として使う)。
+//
+// pass-1 (pyro_advect.comp) が B バッファへ書いた予測値 φ̄ を、前方再追跡した誤差推定
+// φ̂ = φ̄(x + dt*u(x)) を使って φ^{n+1} = φ̄ + 0.5*(φ^n - φ̂) と補正した後、
+// A バッファの後方追跡点近傍8セルの min/max にクランプしてオーバーシュートを防ぐ
+// (Selle et al. 2007 の clamped MacCormack と同様)。
+//
+// B バッファ (velIdxB/densityIdxB) を読みながら同じ B バッファへ書くとスレッド間で
+// データ競合が起きるため、このパスの出力はこの時点でフレーム内での用途を終えて
+// 空いているスクラッチバッファ (curlIdx=vec4用, divergenceIdx=float用) へ書く。
+// PyroEngine::step() が本ディスパッチ直後にこれらのバッファ役割を入れ替える。
+// dispatch: (totalCells + 255) / 256
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    if (gid >= totalCells) return;
+
+    ivec3 ijk = pyroMortonDecodeI(gid);
+    vec3  xi  = (vec3(ijk) + 0.5) * pc.cellSize + pc.worldMin;
+
+    // pass-1 と同一の後方追跡 (RK2 中点法) — クランプ範囲の基準位置
+    vec3 v0   = readVec4(pc.velIdxA, gid).xyz;
+    vec3 pMid = xi - 0.5 * pc.dt * v0;
+    vec3 gMid = WORLD_TO_GRID(pMid);
+    vec3 vMid;
+    TRILERP_VEC3(pc.velIdxA, gMid, vMid);
+    vec3 pBack = xi - pc.dt * vMid;
+    vec3 gBack = WORLD_TO_GRID(pBack);
+
+    // 前方追跡 (誤差推定用)
+    vec3 pFwd = xi + pc.dt * v0;
+    vec3 gFwd = WORLD_TO_GRID(pFwd);
+
+    // ── velocity ──────────────────────────────────────────────────────────
+    vec3 velPred = readVec4(pc.velIdxB, gid).xyz;
+    vec3 velHat;
+    TRILERP_VEC3(pc.velIdxB, gFwd, velHat);
+    vec3 velCorr = velPred + 0.5 * (v0 - velHat);
+    vec3 velMin, velMax;
+    TRILERP_MINMAX_VEC3(pc.velIdxA, gBack, velMin, velMax);
+    velCorr = clamp(velCorr, velMin, velMax);
+    writeVec4(pc.curlIdx, gid, vec4(velCorr, 0.0));
+
+    // ── density ───────────────────────────────────────────────────────────
+    float densOrig = readFloat(pc.densityIdxA, gid);
+    float densPred = readFloat(pc.densityIdxB, gid);
+    float densHat;
+    TRILERP_FLOAT(pc.densityIdxB, gFwd, densHat);
+    float densCorr = densPred + 0.5 * (densOrig - densHat);
+    float densMin, densMax;
+    TRILERP_MINMAX_FLOAT(pc.densityIdxA, gBack, densMin, densMax);
+    densCorr = clamp(densCorr, densMin, densMax);
+    writeFloat(pc.divergenceIdx, gid, max(densCorr, 0.0));
+}

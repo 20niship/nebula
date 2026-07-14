@@ -30,6 +30,8 @@ public:
   void resizeAttribute(const std::string& name, uint32_t newCount, VkCommandPool cmdPool, VkQueue queue);
 
   VkBuffer getBuffer(const std::string& name) const;
+  // bindlessIndex から直接バッファを引く (name→index の対応がスワップ等で崩れる場合に使う)
+  VkBuffer getBufferByIndex(uint32_t bindlessIndex) const;
   uint32_t getIndex(const std::string& name) const;
   uint32_t getCount(const std::string& name) const;
 

@@ -124,6 +124,7 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/pyro_forces.comp
     ${SHADER_SRC_DIR}/pyro_obstacle_bc.comp
     ${SHADER_SRC_DIR}/pyro_advect.comp
+    ${SHADER_SRC_DIR}/pyro_advect_mc.comp
     ${SHADER_SRC_DIR}/pyro_curl.comp
     ${SHADER_SRC_DIR}/pyro_vorticity_force.comp
     ${SHADER_SRC_DIR}/pyro_divergence.comp

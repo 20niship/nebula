@@ -223,6 +223,13 @@ void AttributeBuffer::resizeAttribute(const std::string& name, uint32_t newCount
 
 VkBuffer AttributeBuffer::getBuffer(const std::string& name) const { return attributes_.at(name).buffer; }
 
+VkBuffer AttributeBuffer::getBufferByIndex(uint32_t bindlessIndex) const {
+  for(const auto& [name, attr] : attributes_) {
+    if(attr.bindlessIndex == bindlessIndex) return attr.buffer;
+  }
+  return VK_NULL_HANDLE;
+}
+
 uint32_t AttributeBuffer::getIndex(const std::string& name) const { return attributes_.at(name).bindlessIndex; }
 
 uint32_t AttributeBuffer::getCount(const std::string& name) const { return attributes_.at(name).count; }

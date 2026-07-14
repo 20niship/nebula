@@ -79,6 +79,7 @@ void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool 
   load(kForces_, "pyro_forces.comp");
   load(kObstacleBC_, "pyro_obstacle_bc.comp");
   load(kAdvect_, "pyro_advect.comp");
+  load(kAdvectMC_, "pyro_advect_mc.comp");
   load(kCurl_, "pyro_curl.comp");
   load(kVorticityForce_, "pyro_vorticity_force.comp");
   load(kDivergence_, "pyro_divergence.comp");
@@ -90,7 +91,7 @@ void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool 
 }
 
 void PyroEngine::cleanup() {
-  for(auto* k : {&kEmit_, &kCombustion_, &kForces_, &kObstacleBC_, &kAdvect_, &kCurl_, &kVorticityForce_, &kDivergence_, &kPressureGS_, &kProject_}) k->cleanup();
+  for(auto* k : {&kEmit_, &kCombustion_, &kForces_, &kObstacleBC_, &kAdvect_, &kAdvectMC_, &kCurl_, &kVorticityForce_, &kDivergence_, &kPressureGS_, &kProject_}) k->cleanup();
   attrBuf_.cleanup();
 }
 
@@ -248,13 +249,25 @@ void PyroEngine::step(VkCommandBuffer cmd, float dt) {
     dispatchPyro(cmd, kObstacleBC_, pc);
     computeBarrier(cmd);
 
-    // ④ 移流 (A→B)
+    // ④ 移流 pass-1 (predictor, A→B)
     dispatchPyro(cmd, kAdvect_, pc);
     computeBarrier(cmd);
 
+    // ④b 移流 pass-2 (MacCormack corrector, velocity/density のみ)。
+    // B (velIdxB/densityIdxB) を読みながら同じ B へは書けない (スレッド間データ競合) ため、
+    // この時点でフレーム内での用途を終えて空いている curlIdx (vec4スクラッチ) /
+    // divergenceIdx (floatスクラッチ) へ補正後の最終値を書く。
+    dispatchPyro(cmd, kAdvectMC_, pc);
+    computeBarrier(cmd);
+    // スクラッチに書いた補正後の値を正式な B バッファ役割にする (コピー不要、インデックス入れ替えのみ)。
+    // 入れ替え後、curlIdx_/divergenceIdx_ は次フレームの渦度/圧力投影で上書きされるため
+    // 古い (補正前) 値が残っていても問題ない。
+    std::swap(velIdx_[1 - cur_], curlIdx_);
+    std::swap(densityIdx_[1 - cur_], divergenceIdx_);
+
     // ⑤ 障害物 BC (移流後, B バッファへインプレース)
     PyroSimPC pcPost = pc;
-    pcPost.velIdxA   = pc.velIdxB;
+    pcPost.velIdxA   = velIdx_[1 - cur_]; // MacCormack補正後の最終速度バッファ (入れ替え済み)
     dispatchPyro(cmd, kObstacleBC_, pcPost);
     computeBarrier(cmd);
 
@@ -265,11 +278,15 @@ void PyroEngine::step(VkCommandBuffer cmd, float dt) {
 
 // ── バッファ取得 ──────────────────────────────────────────────────────────
 
-VkBuffer PyroEngine::getDensityBuffer() const { return attrBuf_.getBuffer(cur_ == 0 ? "densA" : "densB"); }
+// density/velocity は MacCormack pass-2 (kAdvectMC_) 後にバッファ役割を入れ替えるため
+// (density<->div, vel<->curl)、固定の名前 ("densA"/"densB" 等) ではなく現在の bindless
+// インデックス (densityIdx_[cur_]/velIdx_[cur_]) からバッファを引く。名前ベースのままだと
+// 入れ替え後は別の物理バッファ (古いdiv/curl) を指してしまい誤ったデータを返す。
+VkBuffer PyroEngine::getDensityBuffer() const { return attrBuf_.getBufferByIndex(densityIdx_[cur_]); }
 VkBuffer PyroEngine::getTemperatureBuffer() const { return attrBuf_.getBuffer(cur_ == 0 ? "tempA" : "tempB"); }
 VkBuffer PyroEngine::getFuelBuffer() const { return attrBuf_.getBuffer(cur_ == 0 ? "fuelA" : "fuelB"); }
 VkBuffer PyroEngine::getFlameBuffer() const { return attrBuf_.getBuffer("flame"); }
-VkBuffer PyroEngine::getVelocityBuffer() const { return attrBuf_.getBuffer(cur_ == 0 ? "velA" : "velB"); }
+VkBuffer PyroEngine::getVelocityBuffer() const { return attrBuf_.getBufferByIndex(velIdx_[cur_]); }
 
 // ── ボクセルダンプ ────────────────────────────────────────────────────────
 

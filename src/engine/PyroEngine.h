@@ -113,6 +113,7 @@ private:
   ComputePipeline kForces_;
   ComputePipeline kObstacleBC_;
   ComputePipeline kAdvect_;
+  ComputePipeline kAdvectMC_; // MacCormack 移流 pass-2 (velocity/density のみ)
   ComputePipeline kCurl_;
   ComputePipeline kVorticityForce_;
   ComputePipeline kDivergence_;

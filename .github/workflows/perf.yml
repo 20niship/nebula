@@ -1,0 +1,99 @@
+name: Perf (task capture)
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install Vulkan SDK + build deps
+        uses: ./.github/actions/setup-vulkan
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install ffmpeg + xvfb (video encode / headless GLFW window)
+        run: sudo apt-get install -y ffmpeg xvfb
+
+      - name: Install Python deps (pyro_raymarch / video encode)
+        run: pip install pillow numpy imageio
+
+      - name: Configure CMake
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DVULKAN_SDK=/usr
+
+      - name: Build capture targets
+        run: cmake --build build --target capture_all -j$(nproc)
+
+      - name: Run task capture (perf mode, 60 frames/sim)
+        run: |
+          ICD=$(find /usr/share/vulkan/icd.d/ -name "lvp_icd*.json" 2>/dev/null | head -1)
+          echo "Using ICD: ${ICD:-NOT FOUND}"
+          export VK_ICD_FILENAMES="$ICD"
+          # GLFW ウィンドウを開くサンプル用に仮想ディスプレイ (Xvfb) を用意する
+          xvfb-run -a python3 capture_sim.py --frames 60 \
+            --perf-json "$GITHUB_WORKSPACE/bench_pr.json" \
+            --commit-sha "${{ github.event.pull_request.head.sha }}"
+
+      - name: Upload capture video
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulation-capture
+          path: sim_captures/simulation_results.mp4
+          if-no-files-found: ignore
+
+      - name: Fetch baseline from main
+        run: |
+          git fetch origin main --depth=1
+          git show origin/main:benchmarks/baseline.json > baseline.json 2>/dev/null || echo '{}' > baseline.json
+
+      - name: Compare against baseline
+        run: python3 tools/compare_bench.py baseline.json bench_pr.json > comment.md
+
+      - name: Post/update PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('comment.md', 'utf8');
+            const marker = '<!-- nebula-perf-bench -->';
+            const content = `${marker}\n${body}`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: content,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: content,
+              });
+            }

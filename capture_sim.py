@@ -25,15 +25,17 @@
   TC-K: Pyro 牛への爆風 — 流速ヒートマップ表示                 pyro_cow_blast
   TC-L: Pyro 爆発 (キノコ雲) — smoke/fire ボリューム表示       pyro_explosion
 使い方:
-  python3 capture_sim.py [--frames N] [--fps F]
+  python3 capture_sim.py [--frames N] [--fps F] [--perf-json PATH] [--commit-sha SHA]
 """
 
 import argparse
+import json
 import subprocess
 import time
 import os
 import shutil
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageFile
 
@@ -274,14 +276,16 @@ def make_grid_frame(frame_idx: int, sim_frames: dict, fps_map: dict) -> Image.Im
     return canvas
 
 
-def run_sim(sim: dict, n_frames: int) -> list[str]:
+def run_sim(sim: dict, n_frames: int) -> tuple[list[str], int | None]:
+    """戻り値: (キャプチャできた PPM フレームパスのリスト, プロセスの returncode)。
+    exe が存在しない場合は returncode=None を返す。"""
     exe   = BUILD_DIR / sim["exe"]
     title = sim["title"]
 
     print(f"\n=== {title} (exe: {sim['exe']}) ===")
     if not exe.exists():
         print(f"  ERROR: {exe} not found, skipping.")
-        return []
+        return [], None
 
     ppm_dir = OUT_DIR / sim["id"]
     ppm_dir.mkdir(exist_ok=True)
@@ -314,20 +318,21 @@ def run_sim(sim: dict, n_frames: int) -> list[str]:
 
     frames = sorted(ppm_dir.glob("frame*.ppm"))
     print(f"  キャプチャ完了: {len(frames)} frames")
-    return [str(p) for p in frames]
+    return [str(p) for p in frames], proc.returncode
 
 
-def run_pyro_sim(sim: dict, n_frames: int) -> list[str]:
+def run_pyro_sim(sim: dict, n_frames: int) -> tuple[list[str], int | None]:
     """Pyro (ヘッドレス) サンプル用ランナー。--n-shots/--screenshot-dir ではなく
     --n-frames/--dump-every/--out で .pvox をダンプさせ、tools/pyro_raymarch.py の
-    関数を直接呼び出して PNG (frameNNNN.png) に変換する。"""
+    関数を直接呼び出して PNG (frameNNNN.png) に変換する。
+    戻り値: (レンダリングした PNG フレームパスのリスト, プロセスの returncode)。"""
     exe   = BUILD_DIR / sim["exe"]
     title = sim["title"]
 
     print(f"\n=== {title} (exe: {sim['exe']}) ===")
     if not exe.exists():
         print(f"  ERROR: {exe} not found, skipping.")
-        return []
+        return [], None
 
     sim_dir  = OUT_DIR / sim["id"]
     pvox_dir = sim_dir / "pvox"
@@ -379,7 +384,62 @@ def run_pyro_sim(sim: dict, n_frames: int) -> list[str]:
             print(f"    render {i + 1}/{len(pvox_files)}")
 
     print(f"  レンダリング完了: {len(frames)} frames")
-    return frames
+    return frames, proc.returncode
+
+
+def _resolve_commit_sha(cli_sha: str) -> str:
+    if cli_sha:
+        return cli_sha
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=str(Path(__file__).parent),
+            capture_output=True, text=True, check=True,
+        )
+        return out.stdout.strip()
+    except Exception:
+        return ""
+
+
+def write_perf_json(path: Path, n_frames: int, commit_sha: str, timing: dict):
+    """各シムの実行時間 (1フレームあたり ms) を JSON で書き出す。
+    FPS ではなく ms_per_frame を主指標とする (値が小さいほど速い)。
+    `SIMS` に定義された exe を持つ全シムを必ず1エントリとして出力し、
+    クラッシュ/0フレームの場合は status="failed" として記録する
+    (レポートから静かに欠落させない)。"""
+    sims = {}
+    for sim in SIMS:
+        if sim["exe"] is None:
+            continue
+        entry = timing.get(sim["id"])
+        if entry is None:
+            # run_sim/run_pyro_sim が一度も呼ばれなかった (想定外) ケース
+            sims[sim["id"]] = {
+                "title": sim["title"], "status": "failed",
+                "frames": 0, "elapsed_s": 0.0, "ms_per_frame": None, "returncode": None,
+            }
+            continue
+        frames, elapsed_s, returncode = entry
+        ok = frames > 0 and returncode == 0
+        sims[sim["id"]] = {
+            "title": sim["title"],
+            "status": "ok" if ok else "failed",
+            "frames": frames,
+            "elapsed_s": round(elapsed_s, 3),
+            "ms_per_frame": round(elapsed_s / frames * 1000.0, 3) if ok else None,
+            "returncode": returncode,
+        }
+
+    payload = {
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "commit": commit_sha,
+        "frames": n_frames,
+        "sims": sims,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    print(f"  perf JSON 出力: {path}")
 
 
 def encode_video(frame_dir: Path, out_path: Path, fps: int):
@@ -417,6 +477,10 @@ def main():
                         help=f"各シムのフレーム数 (default: {N_FRAMES})")
     parser.add_argument("--fps",    type=int, default=VIDEO_FPS,
                         help=f"出力動画 FPS (default: {VIDEO_FPS})")
+    parser.add_argument("--perf-json", type=str, default=None,
+                        help="各シムの実行時間 (ms/frame) を書き出す JSON ファイルパス")
+    parser.add_argument("--commit-sha", type=str, default="",
+                        help="perf-json に埋め込む commit sha (未指定なら git rev-parse HEAD)")
     cli = parser.parse_args()
 
     n_frames  = cli.frames
@@ -430,15 +494,24 @@ def main():
     # Step 1: 各シムを順次実行してフレームを収集
     sim_frames: dict = {}
     fps_map:    dict = {}
+    timing:     dict = {}  # id -> (n_frames_captured, elapsed_s, returncode)
     for sim in SIMS:
         if sim["exe"] is None:
             continue
-        t0      = time.time()
-        frames  = run_pyro_sim(sim, n_frames) if sim.get("kind") == "pyro" else run_sim(sim, n_frames)
+        t0 = time.time()
+        frames, returncode = (
+            run_pyro_sim(sim, n_frames) if sim.get("kind") == "pyro" else run_sim(sim, n_frames)
+        )
         elapsed = time.time() - t0
         sim_frames[sim["id"]] = frames
+        timing[sim["id"]]     = (len(frames), elapsed, returncode)
         if frames:
             fps_map[sim["id"]] = f"RealFPS: {len(frames) / elapsed:.1f}"
+        else:
+            fps_map[sim["id"]] = f"FAILED (rc={returncode})"
+
+    if cli.perf_json:
+        write_perf_json(Path(cli.perf_json), n_frames, _resolve_commit_sha(cli.commit_sha), timing)
 
     max_frames = max((len(f) for f in sim_frames.values()), default=0)
     if max_frames == 0:
@@ -460,9 +533,14 @@ def main():
             print(f"  {i + 1}/{max_frames}")
 
     # Step 3: 動画エンコード
+    # (ffmpeg/imageio が使えない環境でも、perf-json 出力や計測結果に影響しないよう
+    #  失敗しても処理を継続する)
     print("\n=== 動画エンコード ===")
     video_path = OUT_DIR / "simulation_results.mp4"
-    encode_video(grid_dir, video_path, video_fps)
+    try:
+        encode_video(grid_dir, video_path, video_fps)
+    except Exception as e:
+        print(f"  [warn] 動画エンコードに失敗しました (フレーム/perf-json は生成済み): {e}")
 
     print("\n=== 完了 ===")
     print(f"  出力: {video_path}")

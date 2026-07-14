@@ -25,6 +25,9 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Install ffmpeg (video encode)
+        run: sudo apt-get install -y ffmpeg
+
       - name: Install Python deps (pyro_raymarch / video encode)
         run: pip install pillow numpy imageio
 

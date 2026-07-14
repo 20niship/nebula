@@ -517,9 +517,14 @@ def main():
             print(f"  {i + 1}/{max_frames}")
 
     # Step 3: 動画エンコード
+    # (ffmpeg/imageio が使えない環境でも、perf-json 出力や計測結果に影響しないよう
+    #  失敗しても処理を継続する)
     print("\n=== 動画エンコード ===")
     video_path = OUT_DIR / "simulation_results.mp4"
-    encode_video(grid_dir, video_path, video_fps)
+    try:
+        encode_video(grid_dir, video_path, video_fps)
+    except Exception as e:
+        print(f"  [warn] 動画エンコードに失敗しました (フレーム/perf-json は生成済み): {e}")
 
     print("\n=== 完了 ===")
     print(f"  出力: {video_path}")

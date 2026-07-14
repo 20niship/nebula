@@ -49,6 +49,12 @@ public:
   float heatRelease        = 0.0f;  // 燃焼による温度上昇量 (Phase3)
   float smokeYieldPerFuel  = 0.0f;  // 燃焼による密度生成量 (Phase3)
   float flameBrightness    = 0.0f;  // 燃焼による発光量 (Phase3)
+  // 速度安定化 (高grid_res・強い浮力/渦度パラメータでの速度場発散対策の土台)。
+  // pyro_sweep_bench (grid_res=128, 強浮力/渦度/高速注入) では既定オフのままでも
+  // NaN/Inf無しの安定動作を確認済みのため、既定は無効 (0.0=無効) とし、
+  // より過酷な設定 (grid_res=256等) で必要になった際に明示的に有効化する形にする。
+  float velocityDissipation = 0.0f; // 速度減衰係数 [1/s] (0=無効)
+  float maxVelocity         = 0.0f; // 速度の大きさの上限 [m/s] (<=0=無効)
   // 圧力投影 Red-Black Gauss-Seidel sweep回数 (1 sweepにつきred/black 2ディスパッチ)。
   int numPressureIters     = 10;
   int numSubsteps          = 1;

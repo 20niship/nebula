@@ -189,6 +189,9 @@ PyroSimPC PyroEngine::buildPC(float dt) const {
   pc.heatRelease       = heatRelease;
   pc.smokeYieldPerFuel = smokeYieldPerFuel;
   pc.flameBrightness   = flameBrightness;
+
+  pc.velocityDissipation = velocityDissipation;
+  pc.maxVelocity         = maxVelocity;
   return pc;
 }
 

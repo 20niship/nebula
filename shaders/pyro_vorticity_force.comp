@@ -4,6 +4,9 @@
 
 // 渦度閉じ込め (2パス構成の2パス目)。pc.curlIdx (pyro_curl.comp で計算済み) の
 // 大きさの勾配方向 N を求め、f = vorticityEps * h * (N × curl) を velIdxA に適用する。
+//
+// 力適用後に上限クランプ (maxVelocity) のみ適用する (減衰は pyro_forces.comp が
+// 毎サブステップ必ず1回適用済みのため、ここで再度減衰すると二重適用になる)。
 // dispatch: (totalCells + 255) / 256
 
 layout(local_size_x = 256) in;
@@ -31,6 +34,12 @@ void main() {
     vec3 n = gradMag / gl;
     vec3 f = pc.vorticityEps * pc.cellSize * cross(n, curlSelf);
 
-    vec3 v = readVec4(pc.velIdxA, gid).xyz;
-    writeVec4(pc.velIdxA, gid, vec4(v + f * pc.dt, 0.0));
+    vec3 v = readVec4(pc.velIdxA, gid).xyz + f * pc.dt;
+
+    if (pc.maxVelocity > 0.0) {
+        float speed = length(v);
+        if (speed > pc.maxVelocity) v *= pc.maxVelocity / speed;
+    }
+
+    writeVec4(pc.velIdxA, gid, vec4(v, 0.0));
 }

@@ -6,6 +6,11 @@
 // v.y += dt * (buoyancyAlpha * (T - Tambient) - buoyancyBeta * density)
 // A バッファへインプレースで適用する。渦度閉じ込めは pyro_curl.comp /
 // pyro_vorticity_force.comp (2パス構成、隣接セル読み取りが必要なため) で別途行う。
+//
+// 浮力適用後に速度減衰 (velocityDissipation) と上限クランプ (maxVelocity) を適用する。
+// 高grid_res・強い浮力/渦度パラメータでの速度場発散対策 (毎サブステップ必ず1回実行される
+// このパスでのみ減衰を行う。渦度閉じ込め有効時に pyro_vorticity_force.comp でも
+// 減衰すると二重適用になるため、そちらはクランプのみ行う)。
 // dispatch: (totalCells + 255) / 256
 
 layout(local_size_x = 256) in;
@@ -20,5 +25,12 @@ void main() {
 
     vec3 v = readVec4(pc.velIdxA, gid).xyz;
     v.y += pc.dt * (pc.buoyancyAlpha * (T - pc.ambientTemp) - pc.buoyancyBeta * rho);
+
+    if (pc.velocityDissipation > 0.0) v *= exp(-pc.velocityDissipation * pc.dt);
+    if (pc.maxVelocity > 0.0) {
+        float speed = length(v);
+        if (speed > pc.maxVelocity) v *= pc.maxVelocity / speed;
+    }
+
     writeVec4(pc.velIdxA, gid, vec4(v, 0.0));
 }

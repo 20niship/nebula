@@ -4,7 +4,7 @@
 // ── Bindless バッファ配列 ──────────────────────────────────────────────────
 layout(set = 0, binding = 0) buffer StorageBuffers { uint data[]; } buffers[];
 
-// ── PyroSimPC Push Constants (128 bytes) ───────────────────────────────────
+// ── PyroSimPC Push Constants (136 bytes) ───────────────────────────────────
 layout(push_constant) uniform PC {
     uint  velIdxA;         // 0   vec4×CELLS (xyz=速度)
     uint  velIdxB;         // 4
@@ -38,6 +38,8 @@ layout(push_constant) uniform PC {
     float smokeYieldPerFuel;  // 116
     float flameBrightness;    // 120
     uint  curlIdx;            // 124 vec4×CELLS 渦度スクラッチ
+    float velocityDissipation; // 128 速度減衰係数 [1/s] (0=無効)
+    float maxVelocity;         // 132 速度の大きさの上限 [m/s] (<=0=無効)
 } pc;
 
 // ── Buffer read/write マクロ (MoltenVK: buffers[] は main() でのみ展開) ────

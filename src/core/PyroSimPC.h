@@ -1,7 +1,7 @@
 #pragma once
 #include <cstdint>
 
-// Pyro (グリッドベース煙・火炎) 専用 Push Constants — 128 bytes
+// Pyro (グリッドベース煙・火炎) 専用 Push Constants — 136 bytes
 // MPMSimPC と同様、Bindless バッファインデックス + グリッド定数 + 物理パラメータを
 // 固定サイズ構造体に詰める。velocity/density/temperature/fuel は front/back の
 // ダブルバッファ (A/B) を持ち、CPU側 (PyroEngine::step) が毎フレーム役割を入れ替える。
@@ -53,5 +53,9 @@ struct PyroSimPC {
   float smokeYieldPerFuel; // 116 燃焼による密度生成量 (burn量あたり)
   float flameBrightness;   // 120 燃焼による発光量 (burn量あたり)
   uint32_t curlIdx;        // 124 vec4×CELLS 渦度 (curl) スクラッチ (渦度閉じ込め用)
+
+  // ── 速度安定化 (8 bytes) ────────────────────────────────────────────────
+  float velocityDissipation; // 128 速度減衰係数 [1/s] (0=無効)。高grid_res/強パラメータでの発散対策
+  float maxVelocity;         // 132 速度の大きさの上限 [m/s] (<=0=無効)。上限を超えた分をクランプ
 };
-static_assert(sizeof(PyroSimPC) == 128, "PyroSimPC must be 128 bytes");
+static_assert(sizeof(PyroSimPC) == 136, "PyroSimPC must be 136 bytes");

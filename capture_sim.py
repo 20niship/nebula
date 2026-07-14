@@ -25,15 +25,17 @@
   TC-K: Pyro 牛への爆風 — 流速ヒートマップ表示                 pyro_cow_blast
   TC-L: Pyro 爆発 (キノコ雲) — smoke/fire ボリューム表示       pyro_explosion
 使い方:
-  python3 capture_sim.py [--frames N] [--fps F]
+  python3 capture_sim.py [--frames N] [--fps F] [--perf-json PATH] [--commit-sha SHA]
 """
 
 import argparse
+import json
 import subprocess
 import time
 import os
 import shutil
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageFile
 
@@ -382,6 +384,52 @@ def run_pyro_sim(sim: dict, n_frames: int) -> list[str]:
     return frames
 
 
+def _resolve_commit_sha(cli_sha: str) -> str:
+    if cli_sha:
+        return cli_sha
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=str(Path(__file__).parent),
+            capture_output=True, text=True, check=True,
+        )
+        return out.stdout.strip()
+    except Exception:
+        return ""
+
+
+def write_perf_json(path: Path, n_frames: int, commit_sha: str, timing: dict):
+    """各シムの実行時間 (1フレームあたり ms) を JSON で書き出す。
+    FPS ではなく ms_per_frame を主指標とする (値が小さいほど速い)。"""
+    sims = {}
+    for sim in SIMS:
+        if sim["exe"] is None:
+            continue
+        entry = timing.get(sim["id"])
+        if entry is None:
+            continue
+        frames, elapsed_s = entry
+        if frames == 0:
+            continue
+        sims[sim["id"]] = {
+            "title": sim["title"],
+            "frames": frames,
+            "elapsed_s": round(elapsed_s, 3),
+            "ms_per_frame": round(elapsed_s / frames * 1000.0, 3),
+        }
+
+    payload = {
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "commit": commit_sha,
+        "frames": n_frames,
+        "sims": sims,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    print(f"  perf JSON 出力: {path}")
+
+
 def encode_video(frame_dir: Path, out_path: Path, fps: int):
     if shutil.which("ffmpeg"):
         cmd = [
@@ -417,6 +465,10 @@ def main():
                         help=f"各シムのフレーム数 (default: {N_FRAMES})")
     parser.add_argument("--fps",    type=int, default=VIDEO_FPS,
                         help=f"出力動画 FPS (default: {VIDEO_FPS})")
+    parser.add_argument("--perf-json", type=str, default=None,
+                        help="各シムの実行時間 (ms/frame) を書き出す JSON ファイルパス")
+    parser.add_argument("--commit-sha", type=str, default="",
+                        help="perf-json に埋め込む commit sha (未指定なら git rev-parse HEAD)")
     cli = parser.parse_args()
 
     n_frames  = cli.frames
@@ -430,6 +482,7 @@ def main():
     # Step 1: 各シムを順次実行してフレームを収集
     sim_frames: dict = {}
     fps_map:    dict = {}
+    timing:     dict = {}  # id -> (n_frames_captured, elapsed_s)
     for sim in SIMS:
         if sim["exe"] is None:
             continue
@@ -439,6 +492,10 @@ def main():
         sim_frames[sim["id"]] = frames
         if frames:
             fps_map[sim["id"]] = f"RealFPS: {len(frames) / elapsed:.1f}"
+            timing[sim["id"]]  = (len(frames), elapsed)
+
+    if cli.perf_json:
+        write_perf_json(Path(cli.perf_json), n_frames, _resolve_commit_sha(cli.commit_sha), timing)
 
     max_frames = max((len(f) for f in sim_frames.values()), default=0)
     if max_frames == 0:

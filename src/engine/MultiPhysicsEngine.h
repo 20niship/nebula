@@ -105,6 +105,7 @@ private:
   ComputePipeline kHashCount_;
   ComputePipeline kHashScanLocal_;
   ComputePipeline kHashScanGlobal_;
+  ComputePipeline kHashAddBase_;
   ComputePipeline kHashSort_;
   ComputePipeline kPbfDensity_;
   ComputePipeline kPbfDeltaP_;

@@ -25,6 +25,7 @@ public:
     float restitution      = 0.1f;
     int pbfIterations      = 4;
     int numSubsteps        = 4;
+    float cfmEpsilon       = 2500.0f; // CFM 緩和 ε (pbf_density の 0 除算防止; MultiPhysicsEngine と同じ rho0^2 比)
   };
 
   // boundaryPos: typeFlag=3, invMass=0 boundary particles (optional)
@@ -64,6 +65,7 @@ private:
   ComputePipeline kHashCnt_;
   ComputePipeline kScanLoc_;
   ComputePipeline kScanGlob_;
+  ComputePipeline kAddBase_;
   ComputePipeline kSort_;
   ComputePipeline kPbfDensity_;
   ComputePipeline kPbfDeltaP_;

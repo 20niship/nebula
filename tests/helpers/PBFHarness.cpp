@@ -94,6 +94,7 @@ void PBFHarness::init(const HeadlessCtx& ctx, const Config& cfg, const std::stri
   load(kHashCnt_, "hash_count.comp.spv");
   load(kScanLoc_, "hash_scan_local.comp.spv");
   load(kScanGlob_, "hash_scan_global.comp.spv");
+  load(kAddBase_, "hash_add_base.comp.spv");
   load(kSort_, "hash_sort.comp.spv");
   load(kPbfDensity_, "pbf_density.comp.spv");
   load(kPbfDeltaP_, "pbf_delta_p.comp.spv");
@@ -138,6 +139,7 @@ void PBFHarness::recordSubstep(VkCommandBuffer cmd, float subDt) {
   pc.densityIdx        = densityIdx_;
   pc.lambdaPbfIdx      = lambdaIdx_;
   pc.boundaryStart     = cfg_.N;
+  pc.cfmEpsilon        = cfg_.cfmEpsilon;
 
   // 1. Predict (boundary particles with invMass=0 get pinned: predP = P)
   kPredict_.dispatch(cmd, ds, pc, totalN);
@@ -168,6 +170,9 @@ void PBFHarness::recordSubstep(VkCommandBuffer cmd, float subDt) {
     vkCmdPushConstants(cmd, kScanGlob_.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(SimPC), &pc);
     vkCmdDispatch(cmd, 1, 1, 1);
   }
+  computeBarrier(cmd); // exclusive prefix を書き戻してから kAddBase_ が読む
+
+  kAddBase_.dispatch(cmd, ds, pc, nCells_);
   computeBarrier(cmd);
 
   kSort_.dispatch(cmd, ds, pc, totalN);
@@ -225,6 +230,7 @@ void PBFHarness::cleanup() {
   kHashCnt_.cleanup();
   kScanLoc_.cleanup();
   kScanGlob_.cleanup();
+  kAddBase_.cleanup();
   kSort_.cleanup();
   kPbfDensity_.cleanup();
   kPbfDeltaP_.cleanup();

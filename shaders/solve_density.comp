@@ -34,8 +34,9 @@ void main() {
         if (any(lessThan(nc, ivec3(0))) ||
             any(greaterThanEqual(nc, ivec3(int(pc.gridRes))))) continue;
 
-        uint cid   = uint(nc.x) + uint(nc.y) * pc.gridRes
-                                 + uint(nc.z) * pc.gridRes * pc.gridRes;
+        // Morton符号で cid を計算（common.glsl の cellId / hash_count.comp と一致させる必要がある）
+        uint cid   = mortonExpand(uint(nc.x)) | (mortonExpand(uint(nc.y)) << 1u)
+                                              | (mortonExpand(uint(nc.z)) << 2u);
         uint cnt   = readUint(pc.cellCountIdx,  cid);
         uint start = readUint(pc.cellOffsetIdx, cid) - cnt;
 
@@ -58,13 +59,24 @@ void main() {
             vec3 d  = pi - pj;
             float d2 = dot(d, d);
 
-            if (d2 < colDiam2 && d2 > 1e-8) {
-                float dist = sqrt(d2);
-                float wj   = readVec4(pc.invMassIdx, j).x;
-                float wt   = wi + wj;
+            if (d2 < colDiam2) {
+                float wj = readVec4(pc.invMassIdx, j).x;
+                float wt = wi + wj;
                 if (wt < 1e-6) continue;
+
+                float dist;
+                vec3  dir;
+                if (d2 > 1e-8) {
+                    dist = sqrt(d2);
+                    dir  = d / dist;
+                } else {
+                    // 完全重複 (d2≈0) は方向が不定になるため決定的なフォールバック方向へ押し出す。
+                    // i<j の側は +X、j 側は -X を選ぶことで Jacobi 反復でもペアが分離する。
+                    dist = 0.0;
+                    dir  = (i < j) ? vec3(1.0, 0.0, 0.0) : vec3(-1.0, 0.0, 0.0);
+                }
                 // 質量比に応じた押し出し (ピン留め相手には全量移動)
-                correction += ((colDiam - dist) * (wi / wt) / dist) * d;
+                correction += (colDiam - dist) * (wi / wt) * dir;
             }
         }
     }

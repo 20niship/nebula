@@ -7,6 +7,7 @@
 #include <vulkan/vulkan.h>
 
 #include "../core/Emitter.h"
+#include "../core/Force.h"
 #include "AttributeBuffer.h"
 #include "Collider.h"
 #include "ComputePipeline.h"
@@ -107,6 +108,12 @@ public:
   // sdf[mortonEncode(ix,iy,iz)] = 符号付き距離 [m]  負値=障害物内部
   void setColliderSDF(const std::vector<float>& mortonSDF);
 
+  // Force (issue #30): gravity 以外の任意の力を追加する
+  void addForce(std::shared_ptr<Force> f);
+  void removeForce(const std::shared_ptr<Force>& f);
+  void setForces(std::vector<std::shared_ptr<Force>> forces);
+  void clearForces();
+
   VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
   VkDescriptorSet descriptorSet             = VK_NULL_HANDLE;
   uint32_t posIdx                           = 0;
@@ -153,6 +160,14 @@ private:
 
   // NanoVDB SDF コライダー
   uint32_t nanoVDBIdx_ = 0; // 0 = 未設定 (シェーダー内でスキップ)
+
+  // Force (issue #30): gravity互換の既定Forceを常時登録 (Y-up)
+  static constexpr uint32_t kMaxForces = 32;
+  std::vector<std::shared_ptr<Force>> forces_;
+  std::shared_ptr<GravityForce> legacyGravity_;
+  uint32_t forcesIdx_ = 0;
+  void rebuildForceShader();
+  void uploadForces();
 
   // Emitter (Phase 4)
   std::vector<std::shared_ptr<Emitter>> emitters_;

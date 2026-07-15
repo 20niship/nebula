@@ -87,8 +87,9 @@ set(SHADER_OUT_DIR ${CMAKE_BINARY_DIR}/shaders)
 file(MAKE_DIRECTORY ${SHADER_OUT_DIR})
 
 set(SHADER_SOURCES
-    ${SHADER_SRC_DIR}/predict.comp
-    ${SHADER_SRC_DIR}/predict_sdf.comp
+    # predict.comp / predict_sdf.comp / mpm_grid_update.comp は FORCE_AUTOGEN
+    # マーカーを含み、Engine 側で ForceShaderCompiler により実行時に shaderc で
+    # コンパイルされる (issue #30)。静的 glslc ビルド対象には含めない。
     ${SHADER_SRC_DIR}/sdf_collision.comp
     ${SHADER_SRC_DIR}/hash_count.comp
     ${SHADER_SRC_DIR}/hash_scan_local.comp

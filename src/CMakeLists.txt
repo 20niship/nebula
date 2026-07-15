@@ -34,6 +34,7 @@ target_include_directories(nebula PUBLIC
     ${CMAKE_SOURCE_DIR}/third_party/VulkanMemoryAllocator/include
     ${CMAKE_SOURCE_DIR}/third_party/argparse/include
     ${NANOVDB_INCLUDE_DIR}  # NanoVDB: #include <nanovdb/NanoVDB.h>
+    ${SHADERC_INCLUDE_DIR}  # shaderc: #include <shaderc/shaderc.hpp> (issue #30 Force動的コンパイル用)
 )
 
 target_link_libraries(nebula PUBLIC
@@ -43,11 +44,15 @@ target_link_libraries(nebula PUBLIC
     imgui
     GPUOpen::VulkanMemoryAllocator
     tinyobjloader
+    ${SHADERC_LIB}
 )
 
 # SHADER_DIR / ASSET_DIR は example・test からも参照されるため PUBLIC にして伝播させる
+# SHADER_SRC_DIR: Force動的シェーダー生成 (issue #30) が #include "common.glsl" 等を
+# 実行時に解決する際のソースディレクトリ (glslc向けの SHADER_DIR = コンパイル済み.spv出力先とは別)
 target_compile_definitions(nebula PUBLIC
     SHADER_DIR="${SHADER_OUT_DIR}"
+    SHADER_SRC_DIR="${SHADER_SRC_DIR}"
     ASSET_DIR="${CMAKE_SOURCE_DIR}/assets"
 )
 

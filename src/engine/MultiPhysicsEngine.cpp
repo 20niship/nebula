@@ -101,6 +101,7 @@ void MultiPhysicsEngine::init(VkDevice device, VmaAllocator allocator, VkDescrip
   load(kHashCount_, "hash_count.comp");
   load(kHashScanLocal_, "hash_scan_local.comp");
   load(kHashScanGlobal_, "hash_scan_global.comp");
+  load(kHashAddBase_, "hash_add_base.comp");
   load(kHashSort_, "hash_sort.comp");
   load(kPbfDensity_, "pbf_density.comp");
   load(kPbfDeltaP_, "pbf_delta_p.comp");
@@ -181,6 +182,7 @@ void MultiPhysicsEngine::cleanup() {
   kHashCount_.cleanup();
   kHashScanLocal_.cleanup();
   kHashScanGlobal_.cleanup();
+  kHashAddBase_.cleanup();
   kHashSort_.cleanup();
   kPbfDensity_.cleanup();
   kPbfDeltaP_.cleanup();
@@ -233,6 +235,9 @@ void MultiPhysicsEngine::step(VkCommandBuffer cmd, float dt) {
       vkCmdPushConstants(cmd, kHashScanGlobal_.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(SimPC), &pc);
       vkCmdDispatch(cmd, 1, 1, 1);
     }
+    computeBarrier(cmd); // exclusive prefix を書き戻してから kHashAddBase_ が読む
+
+    kHashAddBase_.dispatch(cmd, ds, pc, cfg_.totalCells());
     computeBarrier(cmd);
 
     kHashSort_.dispatch(cmd, ds, pc, cfg_.totalMax());

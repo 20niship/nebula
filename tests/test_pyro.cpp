@@ -29,7 +29,7 @@ TEST_CASE("Pyro GPU - 1-1: Buoyancy drives net upward velocity") {
   engine.buoyancyAlpha  = 2.0f;
   engine.buoyancyBeta   = 0.0f;
   engine.vorticityEps   = 0.0f;
-  engine.numJacobiIters = 20;
+  engine.numPressureIters = 20;
 
   auto heat             = std::make_shared<SphereEmitter>();
   heat->center          = {5.0f, 5.0f, 5.0f};
@@ -73,7 +73,7 @@ TEST_CASE("Pyro GPU - 2-1: Pressure projection keeps interior divergence small")
   PyroEngine engine;
   engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
   engine.buoyancyAlpha  = 3.0f;
-  engine.numJacobiIters = 60;
+  engine.numPressureIters = 30;
 
   auto src             = std::make_shared<SphereEmitter>();
   src->center          = {5.0f, 2.0f, 5.0f};
@@ -111,7 +111,7 @@ TEST_CASE("Pyro GPU - 2-1: Pressure projection keeps interior divergence small")
         maxDiv    = std::max(maxDiv, std::abs(div));
       }
   // 投影が機能していれば内部領域の発散はおおむね小さく収まる
-  // (Jacobi 反復の粗い近似解のため厳密な0ではなく、桁違いの破綻がないことを確認する)
+  // (Red-Black Gauss-Seidel の粗い近似解のため厳密な0ではなく、桁違いの破綻がないことを確認する)
   CHECK(maxDiv < 1.0f);
 
   engine.cleanup();

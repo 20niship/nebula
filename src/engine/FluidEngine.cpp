@@ -1,6 +1,8 @@
 #include "FluidEngine.h"
 #include "BoundaryParticles.h"
+#include "ForceShaderCompiler.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
@@ -70,8 +72,13 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   emitters_.clear();
   emitterStepsDone_.clear();
 
+  // Force (issue #30): gravity 互換の既定Forceを常時登録する
+  forcesIdx_     = attrBuf_.addAttribute("forces", sizeof(ForceGPU), kMaxForces);
+  legacyGravity_ = GravityForce::FromDirection({0.0f, 0.0f, 1.0f}, gravity); // Z-up; strengthに符号を持たせる
+  forces_        = {legacyGravity_};
+  rebuildForceShader();
+
   auto load = [&](ComputePipeline& k, const char* name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
-  load(kPredictSdf_, "predict_sdf.comp");
   load(kSdfCollision_, "sdf_collision.comp");
   load(kHashCount_, "hash_count.comp");
   load(kHashScanLocal_, "hash_scan_local.comp");
@@ -264,6 +271,41 @@ void FluidEngine::growFluidCapacity(uint32_t minRequired) {
   attrBuf_.resizeAttribute("omega", newTotal, cmdPool_, queue_);
 }
 
+// ── Force (issue #30) ────────────────────────────────────────────────────────
+
+void FluidEngine::addForce(std::shared_ptr<Force> f) {
+  forces_.push_back(std::move(f));
+  rebuildForceShader();
+}
+
+void FluidEngine::removeForce(const std::shared_ptr<Force>& f) {
+  forces_.erase(std::remove(forces_.begin(), forces_.end(), f), forces_.end());
+  rebuildForceShader();
+}
+
+void FluidEngine::setForces(std::vector<std::shared_ptr<Force>> forces) {
+  forces_ = std::move(forces);
+  rebuildForceShader();
+}
+
+void FluidEngine::clearForces() {
+  forces_.clear();
+  rebuildForceShader();
+}
+
+void FluidEngine::rebuildForceShader() {
+  std::vector<uint32_t> spirv = ForceShaderCompiler::compile(forces_, "predict_sdf.comp");
+  kPredictSdf_.cleanup();
+  kPredictSdf_.initFromSpirv(device_, attrBuf_.descriptorSetLayout, spirv);
+}
+
+void FluidEngine::uploadForces() {
+  std::vector<ForceGPU> packed;
+  packed.reserve(forces_.size());
+  for(const auto& f : forces_) packed.push_back(f->pack());
+  if(!packed.empty()) attrBuf_.upload("forces", packed.data(), sizeof(ForceGPU) * packed.size(), cmdPool_, queue_);
+}
+
 // ── 粒子リセット ─────────────────────────────────────────────────────────────
 
 void FluidEngine::resetParticles() {
@@ -377,7 +419,12 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
 
   if(nFluid_ == 0 && nBoundary == 0) return;
 
-  auto ds         = attrBuf_.descriptorSet;
+  auto ds = attrBuf_.descriptorSet;
+
+  // Force (issue #30): gravity 互換値を毎フレーム反映してアップロード
+  legacyGravity_->strength = gravity;
+  uploadForces();
+
   float subDt     = dt / float(std::max(1, numSubsteps));
   uint32_t totalN = cfg_.max_boundary + nFluid_;
 
@@ -399,10 +446,10 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     pc.cellSize          = cfg_.cellSize();
     pc.worldMin          = 0.0f;
     pc.worldMax          = cfg_.world_size;
-    pc.gravity           = gravity;
     pc.restitution       = restitution;
     pc.friction          = friction;
     pc.particleRadius    = cfg_.cellSize() * 0.5f;
+    pc.forceBufIdx       = forcesIdx_;
     pc.couplingForceIdx  = 0;
     pc.clothVertexCount  = 0; // 流体では未使用（布頂点数ではない）
     pc.edgeCount         = 0;
@@ -410,8 +457,7 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     pc.batchEdgeEnd      = 0;
     pc.stretchCompliance = rho0;
     pc.bendCompliance    = viscosityC;
-    pc.windX             = 0.0f;
-    pc.windZ             = 0.0f;
+    pc.forceCount        = (uint32_t)forces_.size();
     pc.densityIdx        = densityIdx_;
     pc.lambdaPbfIdx      = lambdaPbfIdx_;
     pc.fluidStart        = cfg_.max_boundary;

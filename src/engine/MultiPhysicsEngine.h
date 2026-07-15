@@ -8,6 +8,7 @@
 #include "AttributeBuffer.h"
 #include "ClothMesh.h"
 #include "ComputePipeline.h"
+#include "Force.h"
 #include "SimPC.h"
 
 // h = cellSize = world_size/grid_res, 流体粒子間隔 d = world_size/fluid_nx
@@ -59,6 +60,12 @@ public:
   VkBuffer getPositionBuffer() const;
   const ClothMesh& getClothMesh() const { return clothMesh_; }
 
+  // Force (issue #30): gravity/windX/windZ 以外の任意の力を追加する
+  void addForce(std::shared_ptr<Force> f);
+  void removeForce(const std::shared_ptr<Force>& f);
+  void setForces(std::vector<std::shared_ptr<Force>> forces);
+  void clearForces();
+
 private:
   MultiPhysicsConfig cfg_;
   VkDevice device_        = VK_NULL_HANDLE;
@@ -83,6 +90,15 @@ private:
 
   std::vector<uint32_t> colorBatch_cpu_;
   int nColors_ = 0;
+
+  // Force (issue #30): gravity/windX/windZ互換の既定Forceを常時登録
+  static constexpr uint32_t kMaxForces = 32;
+  std::vector<std::shared_ptr<Force>> forces_;
+  std::shared_ptr<GravityForce> legacyGravity_;
+  std::shared_ptr<ConstantWindForce> legacyWind_;
+  uint32_t forcesIdx_ = 0;
+  void rebuildForceShader();
+  void uploadForces();
 
   ComputePipeline kPredict_;
   ComputePipeline kSdfCollision_;

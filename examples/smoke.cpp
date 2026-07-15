@@ -74,8 +74,8 @@ private:
   // リアルタイム更新する。風向きは時間とともに水平面(XY)を回転する。
   std::shared_ptr<ConstantWindForce> wind_;
   bool windEnabled_        = true;
-  float windStrength_      = 6.0f;
-  float windRotationSpeed_ = 2.5f; // [rad/s] (元の0.5から5倍速に変更)
+  float windStrength_      = 12.0f; // 元の6.0から2倍に変更
+  float windRotationSpeed_ = 7.5f;  // [rad/s] 元の0.5から5倍速→さらに3倍(計15倍速)
 
   void updateWind() {
     float angle      = simTime_ * windRotationSpeed_;

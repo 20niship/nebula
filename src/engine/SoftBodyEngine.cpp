@@ -1,6 +1,5 @@
 #include "SoftBodyEngine.h"
 
-#include "ForceShaderCompiler.h"
 #include <algorithm>
 #include <cstring>
 #include <fstream>
@@ -31,23 +30,14 @@ uint32_t SoftBodyEngine::addInstance(const SoftBodyInstance& inst) {
 }
 
 void SoftBodyEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, float worldSize, uint32_t gridRes) {
-  device_    = device;
-  allocator_ = allocator;
-  cmdPool_   = cmdPool;
-  queue_     = queue;
   worldSize_ = worldSize;
   gridRes_   = gridRes;
 
   buildCombinedBuffers();
 
-  attrBuf_.init(device, allocator, descriptorPool);
+  initEngineBase(device, allocator, descriptorPool, cmdPool, queue);
   initGPUBuffers(cmdPool, queue);
-
-  // Force (issue #30): gravity 互換の既定Forceを常時登録する
-  forcesIdx_     = attrBuf_.addAttribute("forces", sizeof(ForceGPU), kMaxForces);
-  legacyGravity_ = GravityForce::FromDirection({0.0f, 0.0f, 1.0f}, gravity); // Z-up; strengthに符号を持たせる
-  forces_        = {legacyGravity_};
-  rebuildForceShader();
+  initForces();
 
   auto load = [&](ComputePipeline& k, const std::string& name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
   load(kSdfCollision_, "sdf_collision.comp");
@@ -73,50 +63,13 @@ void SoftBodyEngine::cleanup() {
   kZeroVolLambda_.cleanup();
   kParticleCollision_.cleanup();
   kUpdateVelocity_.cleanup();
-  attrBuf_.cleanup();
-}
-
-// ─── Force (issue #30) ──────────────────────────────────────────────────────
-
-void SoftBodyEngine::addForce(std::shared_ptr<Force> f) {
-  forces_.push_back(std::move(f));
-  rebuildForceShader();
-}
-
-void SoftBodyEngine::removeForce(const std::shared_ptr<Force>& f) {
-  forces_.erase(std::remove(forces_.begin(), forces_.end(), f), forces_.end());
-  rebuildForceShader();
-}
-
-void SoftBodyEngine::setForces(std::vector<std::shared_ptr<Force>> forces) {
-  forces_ = std::move(forces);
-  rebuildForceShader();
-}
-
-void SoftBodyEngine::clearForces() {
-  forces_.clear();
-  rebuildForceShader();
-}
-
-void SoftBodyEngine::rebuildForceShader() {
-  std::vector<uint32_t> spirv = ForceShaderCompiler::compile(forces_, "predict.comp");
-  kPredict_.cleanup();
-  kPredict_.initFromSpirv(device_, attrBuf_.descriptorSetLayout, spirv);
-}
-
-void SoftBodyEngine::uploadForces() {
-  std::vector<ForceGPU> packed;
-  packed.reserve(forces_.size());
-  for(const auto& f : forces_) packed.push_back(f->pack());
-  if(!packed.empty()) attrBuf_.upload("forces", packed.data(), sizeof(ForceGPU) * packed.size(), cmdPool_, queue_);
+  cleanupEngineBase();
 }
 
 void SoftBodyEngine::step(VkCommandBuffer cmd, float dt) {
   if(totalCount_ == 0) return;
 
-  // Force (issue #30): gravity 互換値を毎フレーム反映してアップロード
-  legacyGravity_->strength = gravity;
-  uploadForces();
+  uploadForces(dt);
 
   VkDescriptorSet ds = attrBuf_.descriptorSet;
   const float subDt  = dt / float(std::max(1, numSubsteps));

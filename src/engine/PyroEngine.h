@@ -7,10 +7,9 @@
 #include <vulkan/vulkan.h>
 
 #include "../core/Emitter.h"
-#include "../core/Force.h"
 #include "../core/PyroSimPC.h"
-#include "AttributeBuffer.h"
 #include "ComputePipeline.h"
+#include "EngineBase.h"
 
 struct PyroConfig {
   // Morton (Z-order) 符号化を使うため 2 のべき乗であること (例: 16, 32, 64)。
@@ -29,7 +28,7 @@ struct PyroConfig {
 // Houdini Pyro 的なグリッド(オイラー)ソルバー。MPMEngine と異なりパーティクルを
 // 持たず、Morton順の Dense セル中心グリッド上で density/temperature/fuel/velocity
 // を直接解く (semi-Lagrangian 移流 + 圧力投影 + 燃焼反応)。
-class PyroEngine {
+class PyroEngine : public EngineBase {
 public:
   void init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const PyroConfig& cfg = {});
   void cleanup();
@@ -62,12 +61,8 @@ public:
   void addEmitter(std::shared_ptr<Emitter> emitter);
   void clearEmitters();
 
-  // ── Force (issue #30): 任意方向の風・Turbulence・Noise を追加する ────────
+  // 任意方向の風・Turbulence・Noise は addForce() で登録する (issue #30)。
   // 浮力(buoyancyAlpha/Beta)はPyro固有の温度連成物理でありForce化しない。
-  void addForce(std::shared_ptr<Force> f);
-  void removeForce(const std::shared_ptr<Force>& f);
-  void setForces(std::vector<std::shared_ptr<Force>> forces);
-  void clearForces();
 
   // ── 読み取り (テスト/ダンプ用) ────────────────────────────────────────
   VkBuffer getDensityBuffer() const;
@@ -86,14 +81,12 @@ public:
   VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
   VkDescriptorSet descriptorSet             = VK_NULL_HANDLE;
 
+protected:
+  ComputePipeline& forceTargetPipeline() override { return kForces_; }
+  const char* forceShaderName() const override { return "pyro_forces.comp"; }
+
 private:
   PyroConfig cfg_;
-  VkDevice device_        = VK_NULL_HANDLE;
-  VmaAllocator allocator_ = VK_NULL_HANDLE;
-  VkCommandPool cmdPool_  = VK_NULL_HANDLE;
-  VkQueue queue_          = VK_NULL_HANDLE;
-
-  AttributeBuffer attrBuf_;
 
   // ダブルバッファ (A/B): cur_==0 なら [0]が現在値/[1]が次フレーム書き込み先
   uint32_t velIdx_[2]         = {0, 0};
@@ -114,13 +107,6 @@ private:
   uint32_t emittersActiveCount_ = 0; // 直近 updateEmitters() でアップロードした有効数
   std::vector<std::shared_ptr<Emitter>> emitters_;
   std::vector<int> emitterStepsDone_;
-
-  // Force (issue #30): Pyroにはgravity/wind互換の既定Forceがないため既定は空リスト
-  static constexpr uint32_t kMaxForces = 32;
-  std::vector<std::shared_ptr<Force>> forces_;
-  uint32_t forcesIdx_ = 0;
-  void rebuildForceShader();
-  void uploadForces();
 
   ComputePipeline kEmit_;
   ComputePipeline kCombustion_;

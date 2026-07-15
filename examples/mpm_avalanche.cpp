@@ -96,6 +96,7 @@ private:
   BaseApp base_;
   MPMEngine engine_;
   GraphicsPipeline graphicsPipe_;
+  std::shared_ptr<GravityForce> gravity_;
   float dt_        = 1.0f / 60.0f;
   float worldSize_ = 10.0f;
   float simTime_   = 0.0f;
@@ -233,7 +234,8 @@ private:
 
     engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
     engine_.numSubsteps = substeps;
-    engine_.gravity     = -9.8f;
+    gravity_ = GravityForce::FromDirection({0.0f, 1.0f, 0.0f}, 9.8f); // Y-up
+    engine_.addForce(gravity_);
     engine_.flip_ratio  = flipRatio;
 
     // ── Drucker-Prager 雪マテリアル ─────────────────────────────
@@ -372,7 +374,7 @@ private:
     const char* mode = (engine_.flip_ratio < -0.5f) ? "APIC" : (engine_.flip_ratio > 0.01f) ? "FLIP" : "PIC";
     ImGui::Text("FPS: %.1f | N=%u | t=%.2f s | %s", ImGui::GetIO().Framerate, engine_.liveParticleCount(), simTime_, mode);
     ImGui::Separator();
-    ImGui::SliderFloat("重力", &engine_.gravity, -20.0f, 0.0f);
+    ImGui::SliderFloat("重力", &gravity_->strength, 0.0f, 20.0f);
     ImGui::SliderInt("サブステップ", &engine_.numSubsteps, 1, 60);
     ImGui::Separator();
     // 速度モニタリング

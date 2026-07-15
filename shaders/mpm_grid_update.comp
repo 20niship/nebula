@@ -43,10 +43,11 @@ void main() {
 
     // FORCE_AUTOGEN_BEGIN
     // Engine::addForce/removeForce/setForces() 実行時に ForceShaderCompiler が
-    // このブロックを登録済み Force 群の適用コードで置換し、shaderc で全体を
-    // 再コンパイルする (issue #30)。このプレースホルダのままでも単体で valid な
-    // GLSL であること (旧来の重力の挙動を再現する既定値)。
-    v.y += -9.8 * pc.dt;
+    // このブロックを登録済み Force 群の速度適用コード(各ForceのglslApplyVelocity()
+    // から動的生成)で置換し、shaderc で全体を再コンパイルする (issue #30)。この
+    // プレースホルダのままでも単体で valid な GLSL であること (既定=何もしない)。
+    // 注意: mpm_grid_update.comp には predP/p の概念がないため、
+    // FORCE_AUTOGEN_POST マーカー(位置制約)はここには存在しない。
     // FORCE_AUTOGEN_END
 
     // ② 軸平行壁 BC (B-spline support = 1.5h → 境界 2 ノード以内を不透過)

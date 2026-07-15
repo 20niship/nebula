@@ -1,5 +1,6 @@
 #include "App.h"
 #include "core/Emitter.h"
+#include "core/Force.h"
 #include "engine/FluidEngine.h"
 #include "graphics/GraphicsPipeline.h"
 #include "utils.hpp"
@@ -147,6 +148,7 @@ private:
   BaseApp base_;
   FluidEngine engine_;
   GraphicsPipeline graphicsPipe_;
+  std::shared_ptr<GravityForce> gravity_;
 
   KinematicScrew screw_;
   std::vector<glm::vec4> screwNewPos_;
@@ -161,7 +163,8 @@ private:
 
     engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
 
-    engine_.gravity       = -9.8f;
+    gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f); // Z-up
+    engine_.addForce(gravity_);
     engine_.viscosityC    = args.viscosity;
     engine_.pbfIterations = 2;
     engine_.numSubsteps   = 2;
@@ -313,7 +316,7 @@ private:
     ImGui::Separator();
     sim_ui::fluid_reset_button(engine_, simTime_);
     ImGui::Separator();
-    ImGui::SliderFloat("重力", &engine_.gravity, -15.0f, 0.0f);
+    ImGui::SliderFloat("重力", &gravity_->strength, 0.0f, 15.0f);
     ImGui::SliderFloat("粘性係数", &engine_.viscosityC, 0.0f, 0.1f, "%.4f");
     ImGui::SliderFloat("角速度 [rad/s]", &screw_.angVelZ, -10.0f, 10.0f, "%.2f");
     ImGui::End();

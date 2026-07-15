@@ -1,6 +1,5 @@
 #include "MPMEngine.h"
 
-#include "ForceShaderCompiler.h"
 #include <cmath>
 #include <cstring>
 #include <random>
@@ -33,13 +32,8 @@ void MPMEngine::dispatchMPM(VkCommandBuffer cmd, ComputePipeline& k, const MPMSi
 // ── 初期化 ────────────────────────────────────────────────────────────────
 
 void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const MPMConfig& cfg) {
-  cfg_       = cfg;
-  device_    = device;
-  allocator_ = allocator;
-  cmdPool_   = cmdPool;
-  queue_     = queue;
-
-  attrBuf_.init(device, allocator, descriptorPool);
+  cfg_ = cfg;
+  initEngineBase(device, allocator, descriptorPool, cmdPool, queue);
 
   const uint32_t N  = cfg_.maxParticleCount(); // バッファ上限
   nParticles_       = cfg_.particleCount();    // ライブパーティクル数
@@ -140,11 +134,7 @@ void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool d
     up("B2", B2.data(), N * sizeof(glm::vec4));
   }
 
-  // Force (issue #30): gravity 互換の既定Forceを常時登録する
-  forcesIdx_     = attrBuf_.addAttribute("forces", sizeof(ForceGPU), kMaxForces);
-  legacyGravity_ = GravityForce::FromDirection({0.0f, 1.0f, 0.0f}, gravity); // Y-up; strengthに符号を持たせる
-  forces_        = {legacyGravity_};
-  rebuildForceShader();
+  initForces();
 
   // ── シェーダーパイプライン ─────────────────────────────────────────────
   auto load = [&](ComputePipeline& k, const char* name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
@@ -165,44 +155,9 @@ void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool d
 
 // ── クリーンアップ ────────────────────────────────────────────────────────
 
-// ─── Force (issue #30) ──────────────────────────────────────────────────────
-
-void MPMEngine::addForce(std::shared_ptr<Force> f) {
-  forces_.push_back(std::move(f));
-  rebuildForceShader();
-}
-
-void MPMEngine::removeForce(const std::shared_ptr<Force>& f) {
-  forces_.erase(std::remove(forces_.begin(), forces_.end(), f), forces_.end());
-  rebuildForceShader();
-}
-
-void MPMEngine::setForces(std::vector<std::shared_ptr<Force>> forces) {
-  forces_ = std::move(forces);
-  rebuildForceShader();
-}
-
-void MPMEngine::clearForces() {
-  forces_.clear();
-  rebuildForceShader();
-}
-
-void MPMEngine::rebuildForceShader() {
-  std::vector<uint32_t> spirv = ForceShaderCompiler::compile(forces_, "mpm_grid_update.comp");
-  kGridUpdate_.cleanup();
-  kGridUpdate_.initFromSpirv(device_, attrBuf_.descriptorSetLayout, spirv);
-}
-
-void MPMEngine::uploadForces() {
-  std::vector<ForceGPU> packed;
-  packed.reserve(forces_.size());
-  for(const auto& f : forces_) packed.push_back(f->pack());
-  if(!packed.empty()) attrBuf_.upload("forces", packed.data(), sizeof(ForceGPU) * packed.size(), cmdPool_, queue_);
-}
-
 void MPMEngine::cleanup() {
   for(auto* k : {&kMpmZeroCells_, &kMpmHashCount_, &kHashScanLocal_, &kHashScanGlobal_, &kHashAddBase_, &kMpmHashSort_, &kZeroGrid_, &kP2G_, &kGridUpdate_, &kNanoVDBBC_, &kG2P_}) k->cleanup();
-  attrBuf_.cleanup();
+  cleanupEngineBase();
 }
 
 VkBuffer MPMEngine::getPositionBuffer() const { return attrBuf_.getBuffer("P"); }
@@ -447,9 +402,7 @@ void MPMEngine::step(VkCommandBuffer cmd, float dt) {
   // Emitter (GPU upload は compute dispatch の前に完結)
   emitFromEmitters(dt);
 
-  // Force (issue #30): gravity 互換値を毎フレーム反映してアップロード
-  legacyGravity_->strength = gravity;
-  uploadForces();
+  uploadForces(dt);
 
   const uint32_t N  = nParticles_; // ライブパーティクル数
   const uint32_t NC = cfg_.totalCells();

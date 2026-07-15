@@ -1,6 +1,5 @@
 #include "FluidEngine.h"
 #include "BoundaryParticles.h"
-#include "ForceShaderCompiler.h"
 
 #include <algorithm>
 #include <cmath>
@@ -25,16 +24,12 @@ void FluidEngine::computeBarrier(VkCommandBuffer cmd) {
 // ── 初期化 ────────────────────────────────────────────────────────────────────
 
 void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const FluidConfig& cfg) {
-  cfg_       = cfg;
-  device_    = device;
-  allocator_ = allocator;
-  cmdPool_   = cmdPool;
-  queue_     = queue;
+  cfg_ = cfg;
 
   // h/d 比に対応した静止密度を自動設定（ImGui から上書き可能）
   // rho0 = cfg_.computeRestDensity();
 
-  attrBuf_.init(device, allocator, descriptorPool);
+  initEngineBase(device, allocator, descriptorPool, cmdPool, queue);
 
   const uint32_t N_GROUPS = (cfg_.totalCells() + 255u) / 256u;
 
@@ -73,11 +68,9 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   emitters_.clear();
   emitterStepsDone_.clear();
 
-  // Force (issue #30): gravity 互換の既定Forceを常時登録する
-  forcesIdx_     = attrBuf_.addAttribute("forces", sizeof(ForceGPU), kMaxForces);
-  legacyGravity_ = GravityForce::FromDirection({0.0f, 0.0f, 1.0f}, gravity); // Z-up; strengthに符号を持たせる
-  forces_        = {legacyGravity_};
-  rebuildForceShader();
+  // Force (issue #30): 既定では空リスト。重力が必要な場合は呼び出し側が
+  // addForce(GravityForce::FromDirection(...)) 等で登録する。
+  initForces();
 
   auto load = [&](ComputePipeline& k, const char* name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
   load(kSdfCollision_, "sdf_collision.comp");
@@ -272,41 +265,6 @@ void FluidEngine::growFluidCapacity(uint32_t minRequired) {
   attrBuf_.resizeAttribute("omega", newTotal, cmdPool_, queue_);
 }
 
-// ── Force (issue #30) ────────────────────────────────────────────────────────
-
-void FluidEngine::addForce(std::shared_ptr<Force> f) {
-  forces_.push_back(std::move(f));
-  rebuildForceShader();
-}
-
-void FluidEngine::removeForce(const std::shared_ptr<Force>& f) {
-  forces_.erase(std::remove(forces_.begin(), forces_.end(), f), forces_.end());
-  rebuildForceShader();
-}
-
-void FluidEngine::setForces(std::vector<std::shared_ptr<Force>> forces) {
-  forces_ = std::move(forces);
-  rebuildForceShader();
-}
-
-void FluidEngine::clearForces() {
-  forces_.clear();
-  rebuildForceShader();
-}
-
-void FluidEngine::rebuildForceShader() {
-  std::vector<uint32_t> spirv = ForceShaderCompiler::compile(forces_, "predict_sdf.comp");
-  kPredictSdf_.cleanup();
-  kPredictSdf_.initFromSpirv(device_, attrBuf_.descriptorSetLayout, spirv);
-}
-
-void FluidEngine::uploadForces() {
-  std::vector<ForceGPU> packed;
-  packed.reserve(forces_.size());
-  for(const auto& f : forces_) packed.push_back(f->pack());
-  if(!packed.empty()) attrBuf_.upload("forces", packed.data(), sizeof(ForceGPU) * packed.size(), cmdPool_, queue_);
-}
-
 // ── 粒子リセット ─────────────────────────────────────────────────────────────
 
 void FluidEngine::resetParticles() {
@@ -336,7 +294,7 @@ void FluidEngine::cleanup() {
   kVorticityOmega_.cleanup();
   kVorticityForce_.cleanup();
   kAbsorb_.cleanup();
-  attrBuf_.cleanup();
+  cleanupEngineBase();
 }
 
 // ── TC8: kinematic 境界粒子 staging ────────────────────────────────────────────
@@ -422,9 +380,7 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
 
   auto ds = attrBuf_.descriptorSet;
 
-  // Force (issue #30): gravity 互換値を毎フレーム反映してアップロード
-  legacyGravity_->strength = gravity;
-  uploadForces();
+  uploadForces(dt);
 
   float subDt     = dt / float(std::max(1, numSubsteps));
   uint32_t totalN = cfg_.max_boundary + nFluid_;

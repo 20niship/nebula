@@ -31,9 +31,11 @@ void main() {
 
     // FORCE_AUTOGEN_BEGIN
     // Engine::addForce/removeForce/setForces() 実行時に ForceShaderCompiler が
-    // このブロックを登録済み Force 群の適用コードで置換し、shaderc で全体を
-    // 再コンパイルする (issue #30)。既定ではForceを何も登録しないため、
-    // このプレースホルダのままでも単体で valid な GLSL であること (無効果)。
+    // このブロックを登録済み Force 群の速度適用コード(各ForceのglslApplyVelocity()
+    // から動的生成)で置換し、shaderc で全体を再コンパイルする (issue #30)。この
+    // プレースホルダのままでも単体で valid な GLSL であること (既定=何もしない)。
+    // 注意: pyro_forces.comp には predP/p の概念がないため、
+    // FORCE_AUTOGEN_POST マーカー(位置制約)はここには存在しない。
     // FORCE_AUTOGEN_END
 
     writeVec4(pc.velIdxA, gid, v);

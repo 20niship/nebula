@@ -1,6 +1,5 @@
 #include "MultiPhysicsEngine.h"
 
-#include "ForceShaderCompiler.h"
 #include <algorithm>
 #include <glm/glm.hpp>
 #include <stdexcept>
@@ -70,13 +69,8 @@ SimPC MultiPhysicsEngine::buildPC(float subDt) const {
 // ── 初期化 ───────────────────────────────────────────────────────────────────
 
 void MultiPhysicsEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const MultiPhysicsConfig& cfg) {
-  cfg_       = cfg;
-  device_    = device;
-  allocator_ = allocator;
-  cmdPool_   = cmdPool;
-  queue_     = queue;
-
-  attrBuf_.init(device, allocator, descriptorPool);
+  cfg_ = cfg;
+  initEngineBase(device, allocator, descriptorPool, cmdPool, queue);
 
   const uint32_t N_GROUPS = (cfg_.totalCells() + 255u) / 256u;
 
@@ -96,13 +90,9 @@ void MultiPhysicsEngine::init(VkDevice device, VmaAllocator allocator, VkDescrip
   initClothParticles(cmdPool, queue);
   initFluidParticles(cmdPool, queue);
 
-  // Force (issue #30): gravity/windX/windZ 互換の既定Forceを常時登録する
-  forcesIdx_     = attrBuf_.addAttribute("forces", sizeof(ForceGPU), kMaxForces);
-  legacyGravity_ = GravityForce::FromDirection({0.0f, 0.0f, 1.0f}, gravity); // Z-up; strengthに符号を持たせる
-  legacyWind_    = ConstantWindForce::FromDirection({windX, windZ, 0.0f}, 1.0f);
-  legacyWind_->affectMask = ForceAffectTypeFlag(2u); // 布頂点 (typeFlag==2) のみ
-  forces_                 = {legacyGravity_, legacyWind_};
-  rebuildForceShader();
+  // Force (issue #30): 既定では空リスト。重力・風が必要な場合は呼び出し側が
+  // addForce(GravityForce::FromDirection(...)) 等で登録する。
+  initForces();
 
   auto load = [&](ComputePipeline& k, const char* name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
   load(kSdfCollision_, "sdf_collision.comp");
@@ -120,41 +110,6 @@ void MultiPhysicsEngine::init(VkDevice device, VmaAllocator allocator, VkDescrip
 
   descriptorSetLayout = attrBuf_.descriptorSetLayout;
   descriptorSet       = attrBuf_.descriptorSet;
-}
-
-// ─── Force (issue #30) ──────────────────────────────────────────────────────
-
-void MultiPhysicsEngine::addForce(std::shared_ptr<Force> f) {
-  forces_.push_back(std::move(f));
-  rebuildForceShader();
-}
-
-void MultiPhysicsEngine::removeForce(const std::shared_ptr<Force>& f) {
-  forces_.erase(std::remove(forces_.begin(), forces_.end(), f), forces_.end());
-  rebuildForceShader();
-}
-
-void MultiPhysicsEngine::setForces(std::vector<std::shared_ptr<Force>> forces) {
-  forces_ = std::move(forces);
-  rebuildForceShader();
-}
-
-void MultiPhysicsEngine::clearForces() {
-  forces_.clear();
-  rebuildForceShader();
-}
-
-void MultiPhysicsEngine::rebuildForceShader() {
-  std::vector<uint32_t> spirv = ForceShaderCompiler::compile(forces_, "predict.comp");
-  kPredict_.cleanup();
-  kPredict_.initFromSpirv(device_, attrBuf_.descriptorSetLayout, spirv);
-}
-
-void MultiPhysicsEngine::uploadForces() {
-  std::vector<ForceGPU> packed;
-  packed.reserve(forces_.size());
-  for(const auto& f : forces_) packed.push_back(f->pack());
-  if(!packed.empty()) attrBuf_.upload("forces", packed.data(), sizeof(ForceGPU) * packed.size(), cmdPool_, queue_);
 }
 
 void MultiPhysicsEngine::initClothParticles(VkCommandPool cmdPool, VkQueue queue) {
@@ -233,7 +188,7 @@ void MultiPhysicsEngine::cleanup() {
   kSolveStretch_.cleanup();
   kPbfViscosity_.cleanup();
   kUpdateVelocity_.cleanup();
-  attrBuf_.cleanup();
+  cleanupEngineBase();
 }
 
 // ── 1フレームのシミュレーション ───────────────────────────────────────────────
@@ -241,10 +196,7 @@ void MultiPhysicsEngine::cleanup() {
 void MultiPhysicsEngine::step(VkCommandBuffer cmd, float dt) {
   auto ds = attrBuf_.descriptorSet;
 
-  // Force (issue #30): gravity/windX/windZ 互換値を毎フレーム反映してアップロード
-  legacyGravity_->strength = gravity;
-  legacyWind_->direction   = glm::vec3(windX, windZ, 0.0f);
-  uploadForces();
+  uploadForces(dt);
 
   float subDt = dt / float(std::max(1, numSubsteps));
 

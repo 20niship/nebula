@@ -10,9 +10,8 @@
 #include <vulkan/vulkan.h>
 
 #include "../core/Emitter.h"
-#include "../core/Force.h"
-#include "AttributeBuffer.h"
 #include "ComputePipeline.h"
+#include "EngineBase.h"
 #include "SimPC.h"
 
 // h = cellSize = world_size/grid_res, 粒子間隔 d = world_size/fluid_nx
@@ -53,7 +52,9 @@ struct FluidConfig {
   }
 };
 
-class FluidEngine {
+// 重力は addForce() で GravityForce を登録すること (issue #30 レビュー対応:
+// gravity の public メンバは廃止)。
+class FluidEngine : public EngineBase {
 public:
   void init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const FluidConfig& cfg = {});
   void cleanup();
@@ -82,8 +83,12 @@ public:
   const std::vector<glm::vec3>& getBoundaryTriVerts() const { return boundaryTriVerts_; }
   const FluidConfig& config() const { return cfg_; }
 
+protected:
+  ComputePipeline& forceTargetPipeline() override { return kPredictSdf_; }
+  const char* forceShaderName() const override { return "predict_sdf.comp"; }
+
+public:
   // ImGui から調整可能なパラメータ
-  float gravity     = -9.8f;
   float restitution = 0.1f;  // ※PBF流体では未使用（衝突は位置投影のみ）
   float friction    = 0.05f; // ※PBF流体では未使用
   float rho0        = 35.0f;
@@ -126,12 +131,6 @@ public:
   // 吸収形状を登録（毎フレーム step() の前に呼ぶ; absorbers が空なら吸収パスをスキップ）
   void setAbsorbers(const std::vector<AbsorberDesc>& absorbers);
 
-  // Force (issue #30): gravity 以外の任意の力を追加する
-  void addForce(std::shared_ptr<Force> f);
-  void removeForce(const std::shared_ptr<Force>& f);
-  void setForces(std::vector<std::shared_ptr<Force>> forces);
-  void clearForces();
-
   VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
   VkDescriptorSet descriptorSet             = VK_NULL_HANDLE;
   uint32_t posIdx                           = 0;
@@ -154,12 +153,6 @@ public:
 
 private:
   FluidConfig cfg_;
-  VkDevice device_        = VK_NULL_HANDLE;
-  VmaAllocator allocator_ = VK_NULL_HANDLE;
-  VkCommandPool cmdPool_  = VK_NULL_HANDLE;
-  VkQueue queue_          = VK_NULL_HANDLE;
-
-  AttributeBuffer attrBuf_;
 
   // ── 動的粒子数確保 (Issue #13) ──────────────────────────────────────────
   // バッファレイアウト: [0, max_boundary) 境界(固定) | [max_boundary, max_boundary+fluidCapacity_) 流体(可変長)
@@ -179,14 +172,6 @@ private:
   // 吸収パス用プライベートメンバー
   uint32_t absorberBufIdx_ = 0; // absorbers バッファの bindless index
   uint32_t absorberCount_  = 0; // 現フレームの有効吸収形状数
-
-  // Force (issue #30): gravity互換の既定Forceを常時登録 (windは元々常に0だったため追加しない)
-  static constexpr uint32_t kMaxForces = 32;
-  std::vector<std::shared_ptr<Force>> forces_;
-  std::shared_ptr<GravityForce> legacyGravity_;
-  uint32_t forcesIdx_ = 0;
-  void rebuildForceShader();
-  void uploadForces();
 
   ComputePipeline kPredictSdf_;
   ComputePipeline kSdfCollision_;

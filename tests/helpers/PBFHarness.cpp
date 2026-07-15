@@ -126,6 +126,7 @@ void PBFHarness::recordSubstep(VkCommandBuffer cmd, float subDt) {
   pc.densityIdx        = densityIdx_;
   pc.lambdaPbfIdx      = lambdaIdx_;
   pc.boundaryStart     = cfg_.N;
+  pc.cfmEpsilon        = cfg_.cfmEpsilon;
 
   // 1. Predict (boundary particles with invMass=0 get pinned: predP = P)
   kPredict_.dispatch(cmd, ds, pc, totalN);

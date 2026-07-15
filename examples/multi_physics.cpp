@@ -57,6 +57,11 @@ private:
   GraphicsPipeline fluidPipe_;
   ClothRenderer clothRenderer_;
 
+  // issue #30 デモ: addForce() で布・流体の混在バッファに Turbulence を追加できる
+  // ことを示す (affectMask 未設定=全typeFlag対象のため布・流体双方に作用する)
+  bool turbulenceEnabled_ = false;
+  std::shared_ptr<TurbulenceForce> turbulence_;
+
   float dt_      = 1.0f / 60.0f;
   float simTime_ = 0.0f;
 
@@ -173,6 +178,20 @@ private:
     ImGui::Text("FPS: %.1f  |  布: %u  流体: %u  経過: %.2f s", ImGui::GetIO().Framerate, engine_.config().clothCount(), engine_.config().fluidCount(), simTime_);
     ImGui::Separator();
     sim_ui::multi_physics_params(engine_);
+    ImGui::Separator();
+    ImGui::Text("issue #30: Force API デモ");
+    if(ImGui::Checkbox("Turbulence (布+流体双方に作用) を追加", &turbulenceEnabled_)) {
+      if(turbulenceEnabled_) {
+        turbulence_            = std::make_shared<TurbulenceForce>();
+        turbulence_->strength  = 3.0f;
+        turbulence_->frequency = 0.25f;
+        engine_.addForce(turbulence_);
+      } else {
+        engine_.removeForce(turbulence_);
+        turbulence_.reset();
+      }
+    }
+    if(turbulenceEnabled_) ImGui::SliderFloat("Turbulence 強さ", &turbulence_->strength, 0.0f, 15.0f);
     ImGui::End();
 
     ImGui::Render();

@@ -11,8 +11,9 @@ void main() {
     uint i = gl_GlobalInvocationID.x;
     if (i >= pc.particleCount) return;
 
-    // hash_count.comp と対称に未使用スロット（typeFlag=0）を除外する（cellCount と数を揃える必要がある）。
-    if (readUint(pc.typeFlagIdx, i) == 0u) return;
+    // hash_count.comp と対称に未使用スロット（typeFlag=6=TYPE_FLAG_UNUSED）を除外する
+    // （cellCount と数を揃える必要がある）。
+    if (readUint(pc.typeFlagIdx, i) == 6u) return;
 
     vec4 predP = readVec4(pc.predPIdx, i);
     uint cid   = cellId(predP.xyz);

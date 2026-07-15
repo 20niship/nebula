@@ -116,6 +116,7 @@ void PhysicsHarness::init(const HeadlessCtx& ctx, const Config& cfg, const std::
   load(kHashCnt_, "hash_count.comp.spv");
   load(kScanLoc_, "hash_scan_local.comp.spv");
   load(kScanGlob_, "hash_scan_global.comp.spv");
+  load(kAddBase_, "hash_add_base.comp.spv");
   load(kSort_, "hash_sort.comp.spv");
   load(kSolveDen_, "solve_density.comp.spv");
   load(kSolveSt_, "solve_stretch.comp.spv");
@@ -205,6 +206,8 @@ void PhysicsHarness::recordSubstep(VkCommandBuffer cmd, float subDt) {
     kScanLoc_.dispatch(cmd, ds, pc, nCells_); // dispatch one workgroup per 256 cells
     computeBarrier(cmd);
     kScanGlob_.dispatch(cmd, ds, pc, nGroups_); // one workgroup (1024 threads) for all groups
+    computeBarrier(cmd); // exclusive prefix を書き戻してから kAddBase_ が読む
+    kAddBase_.dispatch(cmd, ds, pc, nCells_);
     computeBarrier(cmd);
     kSort_.dispatch(cmd, ds, pc, N);
     computeBarrier(cmd);
@@ -253,6 +256,7 @@ void PhysicsHarness::cleanup() {
   kHashCnt_.cleanup();
   kScanLoc_.cleanup();
   kScanGlob_.cleanup();
+  kAddBase_.cleanup();
   kSort_.cleanup();
   kSolveDen_.cleanup();
   kSolveSt_.cleanup();

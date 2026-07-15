@@ -73,7 +73,7 @@ private:
   uint32_t forcesIdx_ = 0;
 
   ComputePipeline kPredict_, kSdf_;
-  ComputePipeline kHashCnt_, kScanLoc_, kScanGlob_, kSort_;
+  ComputePipeline kHashCnt_, kScanLoc_, kScanGlob_, kAddBase_, kSort_;
   ComputePipeline kSolveDen_, kSolveSt_, kUpdateVel_;
 
   void recordSubstep(VkCommandBuffer cmd, float subDt);

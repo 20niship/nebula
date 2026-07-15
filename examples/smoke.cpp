@@ -68,6 +68,21 @@ private:
   static constexpr float DIAG_INTERVAL = 2.0f;
   float nextDiagTime_                  = DIAG_INTERVAL;
 
+  // issue #30 デモ: addForce() で風を1回だけ登録し (forces_ の型・個数は以後
+  // 不変 = シェーダー再生成は起きない)、毎フレーム wind_->direction/strength
+  // だけを書き換えて FluidEngine::step() 内の uploadForces() で SSBO を
+  // リアルタイム更新する。風向きは時間とともに水平面(XY)を回転する。
+  std::shared_ptr<ConstantWindForce> wind_;
+  bool windEnabled_        = true;
+  float windStrength_      = 6.0f;
+  float windRotationSpeed_ = 0.5f; // [rad/s]
+
+  void updateWind() {
+    float angle      = simTime_ * windRotationSpeed_;
+    wind_->direction  = glm::vec3(std::cos(angle), std::sin(angle), 0.0f);
+    wind_->strength   = windEnabled_ ? windStrength_ : 0.0f;
+  }
+
   void setupSmoke(const FluidConfig& cfg, const SmokeArgs& args) {
     const float w  = cfg.world_size;
     const float cx = w * 0.5f, cy = w * 0.5f;
@@ -99,6 +114,12 @@ private:
     engine_.vorticityEnabled = true; // 渦度閉じ込めで煙らしい揺らぎ
     engine_.vorticityEpsilon = 0.5f;
     engine_.rho0             = cfg.computeRestDensity();
+
+    // issue #30 デモ: 風Forceをここで1回だけ登録する (以後 forces_ の型・個数は
+    // 不変なので addForce() によるシェーダー再生成はこの1回のみ発生する)
+    wind_             = ConstantWindForce::FromDirection({1.0f, 0.0f, 0.0f}, windStrength_);
+    wind_->affectMask = ForceAffectTypeFlag(4u); // 煙粒子 (typeFlag==4) のみ
+    engine_.addForce(wind_);
 
     graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/fluid_particle.vert.spv", SHADER_DIR_STR + "/fluid.frag.spv");
 
@@ -205,10 +226,20 @@ private:
       ImGui::SliderFloat("渦度 epsilon", &engine_.vorticityEpsilon, 0.0f, 5.0f, "%.3f");
     }
     ImGui::SliderFloat("線形ダンピング", &engine_.linearDamping, 0.0f, 2.0f, "%.3f");
+    ImGui::Separator();
+    ImGui::Text("issue #30: 動的な風デモ");
+    ImGui::TextWrapped("Force一覧(型・個数)は起動時に1回登録したまま不変。"
+                        "direction/strengthのみ毎フレームSSBOへ再アップロードされる"
+                        "(シェーダー再生成は発生しない)。");
+    ImGui::Checkbox("風を有効化", &windEnabled_);
+    ImGui::SliderFloat("風の強さ", &windStrength_, 0.0f, 20.0f);
+    ImGui::SliderFloat("風の回転速度 [rad/s]", &windRotationSpeed_, 0.0f, 3.0f, "%.2f");
+    ImGui::Text("現在の風向き: (%.2f, %.2f)", wind_->direction.x, wind_->direction.y);
     ImGui::End();
 
     ImGui::Render();
     simTime_ += dt_;
+    updateWind();
 
     f.timelineValue++;
     vkResetCommandBuffer(f.computeCmd, 0);

@@ -1,0 +1,151 @@
+{
+  "generated_at": "2026-07-15T11:13:39Z",
+  "commit": "b0d1600f7e0af27ad972e0b04c5bbeeb3c906fe5",
+  "frames": 60,
+  "sims": {
+    "tc1": {
+      "title": "TC1: Dam Break",
+      "status": "ok",
+      "frames": 60,
+      "elapsed_s": 30.012,
+      "ms_per_frame": 500.207,
+      "returncode": 0
+    },
+    "tc2": {
+      "title": "TC2: Moving Source Flow",
+      "status": "ok",
+      "frames": 60,
+      "elapsed_s": 12.005,
+      "ms_per_frame": 200.086,
+      "returncode": 0
+    },
+    "tc3": {
+      "title": "TC3: Jelly (High Viscosity)",
+      "status": "ok",
+      "frames": 60,
+      "elapsed_s": 28.01,
+      "ms_per_frame": 466.839,
+      "returncode": 0
+    },
+    "tc4": {
+      "title": "TC4: Cloth Drape",
+      "status": "ok",
+      "frames": 60,
+      "elapsed_s": 18.006,
+      "ms_per_frame": 300.101,
+      "returncode": 0
+    },
+    "tc5": {
+      "title": "TC5: Two-Cloth Collision",
+      "status": "ok",
+      "frames": 60,
+      "elapsed_s": 6.003,
+      "ms_per_frame": 100.052,
+      "returncode": 0
+    },
+    "tc6": {
+      "title": "TC6: Smoke",
+      "status": "ok",
+      "frames": 60,
+      "elapsed_s": 2.002,
+      "ms_per_frame": 33.362,
+      "returncode": 0
+    },
+    "tc7": {
+      "title": "TC7: Cloth Twist",
+      "status": "ok",
+      "frames": 60,
+      "elapsed_s": 14.005,
+      "ms_per_frame": 233.422,
+      "returncode": 0
+    },
+    "tc8": {
+      "title": "TC8: Rotating Screw",
+      "status": "ok",
+      "frames": 60,
+      "elapsed_s": 12.006,
+      "ms_per_frame": 200.099,
+      "returncode": 0
+    },
+    "tc9": {
+      "title": "TC9: Fluid Absorb",
+      "status": "ok",
+      "frames": 60,
+      "elapsed_s": 4.002,
+      "ms_per_frame": 66.7,
+      "returncode": 0
+    },
+    "tc10": {
+      "title": "TC10: XPBD Softbody",
+      "status": "ok",
+      "frames": 60,
+      "elapsed_s": 62.017,
+      "ms_per_frame": 1033.612,
+      "returncode": 0
+    },
+    "tc_pic": {
+      "title": "TC-A: MPM Elastic — PIC",
+      "status": "ok",
+      "frames": 60,
+      "elapsed_s": 74.021,
+      "ms_per_frame": 1233.688,
+      "returncode": 0
+    },
+    "tc_apic": {
+      "title": "TC-B: MPM Elastic — APIC",
+      "status": "ok",
+      "frames": 60,
+      "elapsed_s": 76.032,
+      "ms_per_frame": 1267.202,
+      "returncode": 0
+    },
+    "tc_avalanche": {
+      "title": "TC-E: MPM Avalanche — Snow",
+      "status": "ok",
+      "frames": 60,
+      "elapsed_s": 784.275,
+      "ms_per_frame": 13071.249,
+      "returncode": 0
+    },
+    "tc_multi": {
+      "title": "TC-F: MPM Multi-Material",
+      "status": "ok",
+      "frames": 60,
+      "elapsed_s": 72.024,
+      "ms_per_frame": 1200.395,
+      "returncode": 0
+    },
+    "tc_snow": {
+      "title": "TC-G: MPM Snow Impact",
+      "status": "ok",
+      "frames": 60,
+      "elapsed_s": 162.052,
+      "ms_per_frame": 2700.872,
+      "returncode": 0
+    },
+    "tc_geolayer": {
+      "title": "TC-H: MPM Geo-Layer Collapse",
+      "status": "ok",
+      "frames": 60,
+      "elapsed_s": 66.022,
+      "ms_per_frame": 1100.363,
+      "returncode": 0
+    },
+    "tc_cow": {
+      "title": "TC-K: Pyro Cow Blast",
+      "status": "ok",
+      "frames": 60,
+      "elapsed_s": 86.041,
+      "ms_per_frame": 1434.015,
+      "returncode": 0
+    },
+    "tc_explosion": {
+      "title": "TC-L: Pyro Explosion (Mushroom Cloud)",
+      "status": "ok",
+      "frames": 60,
+      "elapsed_s": 55.647,
+      "ms_per_frame": 927.455,
+      "returncode": 0
+    }
+  }
+}

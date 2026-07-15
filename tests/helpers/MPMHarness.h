@@ -1,11 +1,13 @@
 #pragma once
 #include "AttributeBuffer.h"
 #include "ComputePipeline.h"
+#include "Force.h"
 #include "HeadlessCtx.h"
 #include "MPMSimPC.h"
 #include "MaterialParams.h"
 #include <cstdint>
 #include <glm/glm.hpp>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -105,6 +107,10 @@ private:
   uint32_t gridMomIdx_   = 0;
   uint32_t gridMassIdx_  = 0;
   uint32_t materialsIdx_ = 0;
+
+  // Force (issue #30): makePC() の gravity 引数を GravityForce 1個として都度アップロード
+  std::shared_ptr<GravityForce> legacyGravity_;
+  uint32_t forcesIdx_ = 0;
 
   // コンピュートパイプライン
   ComputePipeline kZeroGrid_;    // mpm_zero_grid.comp

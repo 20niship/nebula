@@ -1,4 +1,5 @@
 #include "MPMHarness.h"
+#include "ForceShaderCompiler.h"
 #include "MaterialParams.h"
 #include <cstring>
 #include <glm/glm.hpp>
@@ -68,6 +69,10 @@ void MPMHarness::init(const HeadlessCtx& ctx, uint32_t gridRes, float worldSize,
   // マテリアルテーブル: 最大 16 エントリ (Phase 1 以降)
   materialsIdx_ = attrBuf_.addAttribute("materials", sizeof(MaterialParams), 16);
 
+  // Force (issue #30): makePC() の gravity 引数互換の GravityForce を1個登録する
+  forcesIdx_     = attrBuf_.addAttribute("forces", sizeof(ForceGPU), 1);
+  legacyGravity_ = GravityForce::FromDirection({0.0f, 1.0f, 0.0f}, 0.0f); // Y-up; strengthはmakePC()で都度更新
+
   auto load = [&](ComputePipeline& k, const std::string& name) { k.init(ctx.device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
   load(kZeroGrid_, "mpm_zero_grid.comp");
   load(kZeroCells_, "zero_cells.comp");
@@ -77,8 +82,11 @@ void MPMHarness::init(const HeadlessCtx& ctx, uint32_t gridRes, float worldSize,
   load(kHashAddBase_, "hash_add_base.comp");
   load(kHashSort_, "mpm_hash_sort.comp");
   load(kP2G_, "mpm_p2g.comp");
-  load(kGridUpdate_, "mpm_grid_update.comp");
   load(kG2P_, "mpm_g2p.comp");
+  {
+    std::vector<uint32_t> spirv = ForceShaderCompiler::compile({legacyGravity_}, "mpm_grid_update.comp");
+    kGridUpdate_.initFromSpirv(ctx.device, attrBuf_.descriptorSetLayout, spirv);
+  }
 }
 
 // ── 粒子データアップロード ─────────────────────────────────────────────────────
@@ -192,6 +200,11 @@ MPMSimPC MPMHarness::makePC(float dt, float rho0, float mu, float lam, float gra
   defMat.q_max  = 1e5f;
   attrBuf_.upload("materials", &defMat, sizeof(MaterialParams), ctx_->commandPool, ctx_->computeQueue);
 
+  // Force (issue #30): gravity 引数を GravityForce として都度アップロード
+  legacyGravity_->strength = gravity;
+  ForceGPU forceGpu        = legacyGravity_->pack();
+  attrBuf_.upload("forces", &forceGpu, sizeof(ForceGPU), ctx_->commandPool, ctx_->computeQueue);
+
   MPMSimPC pc{};
   pc.posIdx           = posIdx_;
   pc.velIdx           = velIdx_;
@@ -209,7 +222,7 @@ MPMSimPC MPMHarness::makePC(float dt, float rho0, float mu, float lam, float gra
   pc.cellSize         = cellSize();
   pc.worldMin         = 0.0f;
   pc.worldMax         = worldSize_;
-  pc.gravity          = gravity;
+  pc.forceBufIdx      = forcesIdx_;
   pc.mu_lame          = mu;
   pc.lambda_lame      = lam;
   pc.particleVolume   = cellSize() * cellSize() * cellSize();
@@ -232,7 +245,7 @@ MPMSimPC MPMHarness::makePC(float dt, float rho0, float mu, float lam, float gra
   pc.rho0             = rho0;
   pc.p0_mcc           = 0.0f;
   pc.xi_hard          = 0.0f;
-  pc.maxParticlesFrac = 0.0f;
+  pc.forceCount       = 1;
   return pc;
 }
 

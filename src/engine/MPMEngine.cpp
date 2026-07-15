@@ -1,5 +1,6 @@
 #include "MPMEngine.h"
 
+#include "ForceShaderCompiler.h"
 #include <cmath>
 #include <cstring>
 #include <random>
@@ -139,6 +140,12 @@ void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool d
     up("B2", B2.data(), N * sizeof(glm::vec4));
   }
 
+  // Force (issue #30): gravity 互換の既定Forceを常時登録する
+  forcesIdx_     = attrBuf_.addAttribute("forces", sizeof(ForceGPU), kMaxForces);
+  legacyGravity_ = GravityForce::FromDirection({0.0f, 1.0f, 0.0f}, gravity); // Y-up; strengthに符号を持たせる
+  forces_        = {legacyGravity_};
+  rebuildForceShader();
+
   // ── シェーダーパイプライン ─────────────────────────────────────────────
   auto load = [&](ComputePipeline& k, const char* name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
   load(kMpmZeroCells_, "zero_cells.comp");
@@ -149,7 +156,6 @@ void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool d
   load(kMpmHashSort_, "mpm_hash_sort.comp");
   load(kZeroGrid_, "mpm_zero_grid.comp");
   load(kP2G_, "mpm_p2g.comp");
-  load(kGridUpdate_, "mpm_grid_update.comp");
   load(kNanoVDBBC_, "mpm_nanovdb_bc.comp");
   load(kG2P_, "mpm_g2p.comp");
 
@@ -158,6 +164,41 @@ void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool d
 }
 
 // ── クリーンアップ ────────────────────────────────────────────────────────
+
+// ─── Force (issue #30) ──────────────────────────────────────────────────────
+
+void MPMEngine::addForce(std::shared_ptr<Force> f) {
+  forces_.push_back(std::move(f));
+  rebuildForceShader();
+}
+
+void MPMEngine::removeForce(const std::shared_ptr<Force>& f) {
+  forces_.erase(std::remove(forces_.begin(), forces_.end(), f), forces_.end());
+  rebuildForceShader();
+}
+
+void MPMEngine::setForces(std::vector<std::shared_ptr<Force>> forces) {
+  forces_ = std::move(forces);
+  rebuildForceShader();
+}
+
+void MPMEngine::clearForces() {
+  forces_.clear();
+  rebuildForceShader();
+}
+
+void MPMEngine::rebuildForceShader() {
+  std::vector<uint32_t> spirv = ForceShaderCompiler::compile(forces_, "mpm_grid_update.comp");
+  kGridUpdate_.cleanup();
+  kGridUpdate_.initFromSpirv(device_, attrBuf_.descriptorSetLayout, spirv);
+}
+
+void MPMEngine::uploadForces() {
+  std::vector<ForceGPU> packed;
+  packed.reserve(forces_.size());
+  for(const auto& f : forces_) packed.push_back(f->pack());
+  if(!packed.empty()) attrBuf_.upload("forces", packed.data(), sizeof(ForceGPU) * packed.size(), cmdPool_, queue_);
+}
 
 void MPMEngine::cleanup() {
   for(auto* k : {&kMpmZeroCells_, &kMpmHashCount_, &kHashScanLocal_, &kHashScanGlobal_, &kHashAddBase_, &kMpmHashSort_, &kZeroGrid_, &kP2G_, &kGridUpdate_, &kNanoVDBBC_, &kG2P_}) k->cleanup();
@@ -373,7 +414,7 @@ MPMSimPC MPMEngine::buildPC(float subDt) const {
   pc.cellSize         = cfg_.cellSize();
   pc.worldMin         = 0.0f;
   pc.worldMax         = cfg_.world_size;
-  pc.gravity          = gravity;
+  pc.forceBufIdx      = forcesIdx_;
   pc.mu_lame          = cfg_.mu();
   pc.lambda_lame      = cfg_.lame();
   pc.particleVolume   = cfg_.particleVolume();
@@ -396,7 +437,7 @@ MPMSimPC MPMEngine::buildPC(float subDt) const {
   pc.rho0             = cfg_.rho0;
   pc.p0_mcc           = 0.0f;
   pc.xi_hard          = 0.0f;
-  pc.maxParticlesFrac = 0.0f;
+  pc.forceCount       = (uint32_t)forces_.size();
   return pc;
 }
 
@@ -405,6 +446,10 @@ MPMSimPC MPMEngine::buildPC(float subDt) const {
 void MPMEngine::step(VkCommandBuffer cmd, float dt) {
   // Emitter (GPU upload は compute dispatch の前に完結)
   emitFromEmitters(dt);
+
+  // Force (issue #30): gravity 互換値を毎フレーム反映してアップロード
+  legacyGravity_->strength = gravity;
+  uploadForces();
 
   const uint32_t N  = nParticles_; // ライブパーティクル数
   const uint32_t NC = cfg_.totalCells();

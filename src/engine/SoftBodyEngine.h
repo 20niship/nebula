@@ -8,6 +8,7 @@
 
 #include "AttributeBuffer.h"
 #include "ComputePipeline.h"
+#include "Force.h"
 #include "SimPC.h"
 
 struct SoftBodyInstance {
@@ -47,6 +48,12 @@ public:
   float particleCollisionRadius = 0.25f; // ボディ間衝突半径 [m]
   int solverIterations          = 5;
   int numSubsteps               = 15;
+
+  // Force (issue #30): gravity 以外の任意の力を追加する
+  void addForce(std::shared_ptr<Force> f);
+  void removeForce(const std::shared_ptr<Force>& f);
+  void setForces(std::vector<std::shared_ptr<Force>> forces);
+  void clearForces();
 
 private:
   struct InstanceData {
@@ -104,6 +111,14 @@ private:
 
   float worldSize_  = 10.0f;
   uint32_t gridRes_ = 64;
+
+  // Force (issue #30): gravity互換の既定Forceを常時登録 (soft bodyにwindはない)
+  static constexpr uint32_t kMaxForces = 32;
+  std::vector<std::shared_ptr<Force>> forces_;
+  std::shared_ptr<GravityForce> legacyGravity_;
+  uint32_t forcesIdx_ = 0;
+  void rebuildForceShader();
+  void uploadForces();
 
   AttributeBuffer attrBuf_;
   VkDevice device_        = VK_NULL_HANDLE;

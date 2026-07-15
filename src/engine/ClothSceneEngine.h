@@ -10,6 +10,7 @@
 #include "ClothConstraint.h"
 #include "ClothMesh.h"
 #include "ComputePipeline.h"
+#include "Force.h"
 #include "SimPC.h"
 
 // 複数布メッシュを1統合バッファで解くVellumスタイルエンジン。
@@ -48,6 +49,12 @@ public:
   VkDescriptorSet descriptorSet             = VK_NULL_HANDLE;
   uint32_t posIdx                           = 0;
   uint32_t velIdx                           = 0;
+
+  // Force (issue #30): gravity/windX/windZ 以外の任意の力を追加する
+  void addForce(std::shared_ptr<Force> f);
+  void removeForce(const std::shared_ptr<Force>& f);
+  void setForces(std::vector<std::shared_ptr<Force>> forces);
+  void clearForces();
 
   uint32_t totalParticleCount() const { return totalCount_; }
   uint32_t clothCount() const { return (uint32_t)meshes_.size(); }
@@ -102,6 +109,15 @@ private:
   std::vector<uint32_t> combinedColorBatch_; // size = nColors+1
   int nColors_             = 12;
   uint32_t totalEdgeCount_ = 0;
+
+  // Force (issue #30): gravity/windX/windZ互換の既定Forceを常時登録
+  static constexpr uint32_t kMaxForces = 32;
+  std::vector<std::shared_ptr<Force>> forces_;
+  std::shared_ptr<GravityForce> legacyGravity_;
+  std::shared_ptr<ConstantWindForce> legacyWind_;
+  uint32_t forcesIdx_ = 0;
+  void rebuildForceShader();
+  void uploadForces();
 
   // ── コンピュートパイプライン ─────────────────────────────────────────────
   ComputePipeline kPredict_;

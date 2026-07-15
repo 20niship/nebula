@@ -1,7 +1,8 @@
 #pragma once
 #include <cstdint>
 
-// 全フェーズ共用 Push Constants — Vulkan 保証の 128 bytes ちょうど
+// 全フェーズ共用 Push Constants。gravity/windX/windZ は issue #30 で Force システム
+// (forceBufIdx/forceCount 経由の bindless SSBO) へ移行済み。
 struct SimPC {
   // ── Bindless バッファインデックス (32 bytes) ──────────────────────
   uint32_t posIdx;     // P         (vec4 × N)
@@ -26,11 +27,12 @@ struct SimPC {
   float worldMin;
   float worldMax;
 
-  // ── 環境衝突 (16 bytes) ──────────────────────────────────────────
-  float gravity;
+  // ── 環境衝突 (16 bytes; gravity は issue #30 で Force システムへ移行し削除、
+  //    空いた1枠は forceBufIdx に充当) ────────────────────────────────
   float restitution;
   float friction;
   float particleRadius;
+  uint32_t forceBufIdx; // Force配列 (ForceGPU×forceCount) の bindless index (0=無効)
 
   // ── Phase 3: 布拘束 (32 bytes) ──────────────────────────────────
   uint32_t couplingForceIdx; // vec4×N 流体→布 連成力バッファ (Phase 5; Phase3/4は0)
@@ -43,10 +45,10 @@ struct SimPC {
   uint32_t lambdaPbfIdx;  // float × N  PBF λ_i         (PBF 流体用)
   uint32_t boundaryStart; // 境界粒子の開始インデックス  (PBF 流体用)
 
-  float stretchCompliance; // α_stretch (0=剛体)
-  float bendCompliance;    // α_bend
-  float windX;             // X方向風力
-  float windZ;             // Z方向風力
+  float stretchCompliance;        // α_stretch (0=剛体)
+  float bendCompliance;           // α_bend
+  float particleCollisionRadius;  // 旧windX。SoftBodyEngine専用の粒子間衝突半径 (sb_particle_collision.comp)
+  uint32_t forceCount;            // 有効な Force 数 (issue #30; 旧windZ の枠を充当)
 
   // ── PBF 流体専用 追加パラメータ (32 bytes) ─────────────────────────
   // 布/連成シェーダーは参照しない。SimPC pc{} のゼロ初期化で安全に無視される。

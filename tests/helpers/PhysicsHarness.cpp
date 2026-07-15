@@ -1,4 +1,5 @@
 #include "PhysicsHarness.h"
+#include "ForceShaderCompiler.h"
 #include <algorithm>
 #include <cstring>
 #include <stdexcept>
@@ -93,9 +94,24 @@ void PhysicsHarness::init(const HeadlessCtx& ctx, const Config& cfg, const std::
   std::vector<float> zeros(std::max(nEdges_, 1u), 0.0f);
   attrBuf_.upload("lambdas", zeros.data(), sizeof(float) * zeros.size(), pool, queue);
 
+  // Force (issue #30): cfg.gravity/windX/windZ 互換の既定Forceを一度だけ登録する
+  forcesIdx_ = attrBuf_.addAttribute("forces", sizeof(ForceGPU), 2);
+  {
+    auto legacyGravity      = GravityForce::FromDirection({0.0f, 0.0f, 1.0f}, cfg.gravity); // Z-up
+    auto legacyWind         = ConstantWindForce::FromDirection({cfg.windX, cfg.windZ, 0.0f}, 1.0f);
+    legacyWind->affectMask  = ForceAffectTypeFlag(2u); // 布/文字列 (typeFlag==2) のみ
+    forces_                 = {legacyGravity, legacyWind};
+    std::vector<ForceGPU> packed;
+    for(const auto& f : forces_) packed.push_back(f->pack());
+    attrBuf_.upload("forces", packed.data(), sizeof(ForceGPU) * packed.size(), pool, queue);
+  }
+
   // Load shaders
   auto load = [&](ComputePipeline& k, const char* name) { k.init(ctx.device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name); };
-  load(kPredict_, "predict.comp.spv");
+  {
+    std::vector<uint32_t> spirv = ForceShaderCompiler::compile(forces_, "predict.comp");
+    kPredict_.initFromSpirv(ctx.device, attrBuf_.descriptorSetLayout, spirv);
+  }
   load(kSdf_, "sdf_collision.comp.spv");
   load(kHashCnt_, "hash_count.comp.spv");
   load(kScanLoc_, "hash_scan_local.comp.spv");
@@ -129,16 +145,15 @@ void PhysicsHarness::recordSubstep(VkCommandBuffer cmd, float subDt) {
   pc.cellSize          = (cfg_.worldMax - cfg_.worldMin) / float(cfg_.gridRes);
   pc.worldMin          = cfg_.worldMin;
   pc.worldMax          = cfg_.worldMax;
-  pc.gravity           = cfg_.gravity;
   pc.restitution       = cfg_.restitution;
   pc.friction          = cfg_.friction;
   pc.particleRadius    = cfg_.radius;
+  pc.forceBufIdx       = forcesIdx_;
   pc.couplingForceIdx  = 0;
   pc.clothVertexCount  = N;
   pc.edgeCount         = nEdges_;
   pc.stretchCompliance = cfg_.stretchCompliance;
-  pc.windX             = cfg_.windX;
-  pc.windZ             = cfg_.windZ;
+  pc.forceCount        = (uint32_t)forces_.size();
   pc.bendCompliance    = 0.0f;
   pc.densityIdx = pc.lambdaPbfIdx = pc.boundaryStart = 0;
   pc.batchEdgeStart                                  = 0;

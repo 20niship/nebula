@@ -10,6 +10,7 @@
 #include <vulkan/vulkan.h>
 
 #include "../core/Emitter.h"
+#include "../core/Force.h"
 #include "AttributeBuffer.h"
 #include "ComputePipeline.h"
 #include "SimPC.h"
@@ -125,6 +126,12 @@ public:
   // 吸収形状を登録（毎フレーム step() の前に呼ぶ; absorbers が空なら吸収パスをスキップ）
   void setAbsorbers(const std::vector<AbsorberDesc>& absorbers);
 
+  // Force (issue #30): gravity 以外の任意の力を追加する
+  void addForce(std::shared_ptr<Force> f);
+  void removeForce(const std::shared_ptr<Force>& f);
+  void setForces(std::vector<std::shared_ptr<Force>> forces);
+  void clearForces();
+
   VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
   VkDescriptorSet descriptorSet             = VK_NULL_HANDLE;
   uint32_t posIdx                           = 0;
@@ -172,6 +179,14 @@ private:
   // 吸収パス用プライベートメンバー
   uint32_t absorberBufIdx_ = 0; // absorbers バッファの bindless index
   uint32_t absorberCount_  = 0; // 現フレームの有効吸収形状数
+
+  // Force (issue #30): gravity互換の既定Forceを常時登録 (windは元々常に0だったため追加しない)
+  static constexpr uint32_t kMaxForces = 32;
+  std::vector<std::shared_ptr<Force>> forces_;
+  std::shared_ptr<GravityForce> legacyGravity_;
+  uint32_t forcesIdx_ = 0;
+  void rebuildForceShader();
+  void uploadForces();
 
   ComputePipeline kPredictSdf_;
   ComputePipeline kSdfCollision_;

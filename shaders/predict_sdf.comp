@@ -26,10 +26,9 @@ void main() {
 
     // FORCE_AUTOGEN_BEGIN
     // Engine::addForce/removeForce/setForces() 実行時に ForceShaderCompiler が
-    // このブロックを登録済み Force 群の適用コードで置換し、shaderc で全体を
-    // 再コンパイルする (issue #30)。このプレースホルダのままでも単体で valid な
-    // GLSL であること (旧来の重力・風の挙動を再現する既定値)。
-    v.z += -9.8 * pc.dt;
+    // このブロックを登録済み Force 群の速度適用コード(各ForceのglslApplyVelocity()
+    // から動的生成)で置換し、shaderc で全体を再コンパイルする (issue #30)。この
+    // プレースホルダのままでも単体で valid な GLSL であること (既定=何もしない)。
     // FORCE_AUTOGEN_END
 
     // 煙粒子 (typeFlag == 4): Z-up 座標系で浮力を付加 (FluidEngine固有機構、Force化しない)
@@ -38,6 +37,11 @@ void main() {
     }
 
     vec4 predP = p + vec4(v.xyz * pc.dt, 0.0);
+
+    // FORCE_AUTOGEN_POST_BEGIN
+    // 積分後の predP に対する位置制約 (各ForceのglslApplyConstraint()から動的生成)。
+    // 既定は空 (何もしない)。SDF壁衝突より前に適用し、壁クランプを安全網として残す。
+    // FORCE_AUTOGEN_POST_END
 
     // PBF(PBD)では衝突は「位置の投影」のみ行い、速度は update_velocity が
     // v=(predP-p)/dt で導出する。反発(restitution)/摩擦は論文PBFでは使わない。
@@ -48,6 +52,6 @@ void main() {
     float hi = pc.worldMax - r;
     predP.xyz = clamp(predP.xyz, vec3(lo), vec3(hi));
 
-    writeVec4(pc.velIdx,   idx, v);       // 重力・風を積分した速度（衝突応答はしない）
+    writeVec4(pc.velIdx,   idx, v);       // 力を積分した速度（衝突応答はしない）
     writeVec4(pc.predPIdx, idx, predP);
 }

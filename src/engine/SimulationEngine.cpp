@@ -1,6 +1,5 @@
 #include "SimulationEngine.h"
 
-#include "ForceShaderCompiler.h"
 #include <algorithm>
 #include <cstring>
 #include <glm/glm.hpp>
@@ -14,22 +13,14 @@
 void SimulationEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const ClothConfig& cfg) {
   cfg_           = cfg;
   particleRadius = cfg_.cellSize() * 0.5f;
-  device_        = device;
-  allocator_     = allocator;
-  cmdPool_       = cmdPool;
-  queue_         = queue;
+  initEngineBase(device, allocator, descriptorPool, cmdPool, queue);
 
-  attrBuf_.init(device, allocator, descriptorPool);
   initParticleBuffers(cmdPool, queue);
   initClothBuffers(cmdPool, queue);
 
-  // Force (issue #30): gravity/windX/windZ 互換の既定Forceを常時登録する
-  forcesIdx_     = attrBuf_.addAttribute("forces", sizeof(ForceGPU), kMaxForces);
-  legacyGravity_ = GravityForce::FromDirection({0.0f, 0.0f, 1.0f}, gravity); // Z-up; strengthに符号を持たせる
-  legacyWind_    = ConstantWindForce::FromDirection({windX, windZ, 0.0f}, 1.0f);
-  legacyWind_->affectMask = ForceAffectTypeFlag(2u); // 布頂点 (typeFlag==2) のみ
-  forces_                 = {legacyGravity_, legacyWind_};
-  rebuildForceShader();
+  // Force (issue #30): 既定では空リスト。重力・風が必要な場合は呼び出し側が
+  // addForce(GravityForce::FromDirection(...)) 等で登録する。
+  initForces();
 
   auto load = [&](ComputePipeline& k, const std::string& name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
 
@@ -98,44 +89,6 @@ void SimulationEngine::initClothBuffers(VkCommandPool cmdPool, VkQueue queue) {
 
   attrBuf_.upload("stretchEdges", clothMesh_.edgeData.data(), sizeof(uint32_t) * clothMesh_.edgeData.size(), cmdPool, queue);
   // lambdas はゼロ初期化 (毎フレーム FillBuffer でリセット)
-}
-
-// ─── Force (issue #30) ──────────────────────────────────────────────────────
-
-void SimulationEngine::addForce(std::shared_ptr<Force> f) {
-  forces_.push_back(std::move(f));
-  rebuildForceShader();
-}
-
-void SimulationEngine::removeForce(const std::shared_ptr<Force>& f) {
-  forces_.erase(std::remove(forces_.begin(), forces_.end(), f), forces_.end());
-  rebuildForceShader();
-}
-
-void SimulationEngine::setForces(std::vector<std::shared_ptr<Force>> forces) {
-  forces_ = std::move(forces);
-  rebuildForceShader();
-}
-
-void SimulationEngine::clearForces() {
-  forces_.clear();
-  rebuildForceShader();
-}
-
-// 登録済みForce群の型集合に応じて predict.comp を実行時に再生成・再コンパイルする。
-// キャッシュはせず、呼び出しのたびに無条件で行う。
-void SimulationEngine::rebuildForceShader() {
-  std::vector<uint32_t> spirv = ForceShaderCompiler::compile(forces_, "predict.comp");
-  kPredict_.cleanup();
-  kPredict_.initFromSpirv(device_, attrBuf_.descriptorSetLayout, spirv);
-}
-
-// forces_ の現在値を pack() して bindless SSBO へアップロードする (毎フレーム)。
-void SimulationEngine::uploadForces() {
-  std::vector<ForceGPU> packed;
-  packed.reserve(forces_.size());
-  for(const auto& f : forces_) packed.push_back(f->pack());
-  if(!packed.empty()) attrBuf_.upload("forces", packed.data(), sizeof(ForceGPU) * packed.size(), cmdPool_, queue_);
 }
 
 VkBuffer SimulationEngine::getPositionBuffer() const { return attrBuf_.getBuffer("P"); }
@@ -245,7 +198,7 @@ void SimulationEngine::cleanup() {
   kUpdateVelocity_.cleanup();
   kZeroLambdas_.cleanup();
   kZeroCells_.cleanup();
-  attrBuf_.cleanup();
+  cleanupEngineBase();
 }
 
 // ─── バリア ────────────────────────────────────────────────────────────────
@@ -263,10 +216,7 @@ void SimulationEngine::computeBarrier(VkCommandBuffer cmd) {
 void SimulationEngine::step(VkCommandBuffer cmd, float dt) {
   auto ds = attrBuf_.descriptorSet;
 
-  // Force (issue #30): gravity/windX/windZ 互換値を毎フレーム反映してアップロード
-  legacyGravity_->strength  = gravity;
-  legacyWind_->direction    = glm::vec3(windX, windZ, 0.0f);
-  uploadForces();
+  uploadForces(dt);
 
   float subDt = dt / std::max(1, numSubsteps);
 

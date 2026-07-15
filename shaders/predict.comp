@@ -25,10 +25,9 @@ void main() {
 
     // FORCE_AUTOGEN_BEGIN
     // Engine::addForce/removeForce/setForces() 実行時に ForceShaderCompiler が
-    // このブロックを登録済み Force 群の適用コードで置換し、shaderc で全体を
-    // 再コンパイルする (issue #30)。このプレースホルダのままでも単体で valid な
-    // GLSL であること (旧来の重力・風の挙動を再現する既定値)。
-    v.z += -9.8 * pc.dt;
+    // このブロックを登録済み Force 群の速度適用コード(各ForceのglslApplyVelocity()
+    // から動的生成)で置換し、shaderc で全体を再コンパイルする (issue #30)。この
+    // プレースホルダのままでも単体で valid な GLSL であること (既定=何もしない)。
     // FORCE_AUTOGEN_END
 
     // CFL クランプ: 布スペーシングの 0.5 倍/substep に制限 (cellSize > spacing なので補正)
@@ -38,6 +37,11 @@ void main() {
     if (speed > maxSpeed) v.xyz *= (maxSpeed / speed);
 
     vec4 predP = p + vec4(v.xyz * pc.dt, 0.0);
+
+    // FORCE_AUTOGEN_POST_BEGIN
+    // 積分後の predP に対する位置制約 (各ForceのglslApplyConstraint()から動的生成)。
+    // 既定は空 (何もしない)。例: 粒子のz座標を固定するZClampForce。
+    // FORCE_AUTOGEN_POST_END
 
     writeVec4(pc.velIdx,   i, v);
     writeVec4(pc.predPIdx, i, predP);

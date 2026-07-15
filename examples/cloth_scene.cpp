@@ -1,4 +1,5 @@
 #include "App.h"
+#include "core/Force.h"
 #include "engine/ClothConstraint.h"
 #include "engine/ClothMesh.h"
 #include "engine/ClothSceneEngine.h"
@@ -74,6 +75,11 @@ private:
   float worldSize_  = 10.0f;
   uint32_t gridRes_ = 64;
 
+  // issue #30: gravity/windX/windZ は Engine の public メンバとしては廃止された
+  // ため、addForce() で登録した Force への参照を自前で保持する。
+  std::shared_ptr<GravityForce> gravity_;
+  std::shared_ptr<ConstantWindForce> wind_;
+
   // TC7 用: 4隅の初期位置
   glm::vec3 corners_[4]{};
 
@@ -140,6 +146,11 @@ private:
 
     // ② エンジン初期化 → descriptorSetLayout が確定する
     engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, worldSize_, gridRes_);
+
+    gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f); // Z-up
+    wind_    = ConstantWindForce::FromDirection({0.0f, 0.0f, 0.0f}, 1.0f);
+    engine_.addForce(gravity_);
+    engine_.addForce(wind_);
 
     // TC7 は高速回転 (7回転/5秒) のため substep を増やして安定化
     if(scene_ == 7) {
@@ -262,13 +273,13 @@ private:
     ImGui::Begin("Cloth Scene Control");
     ImGui::Text("Scene %d | FPS: %.1f | 頂点: %u | t=%.2fs", scene_, ImGui::GetIO().Framerate, engine_.totalParticleCount(), simTime_);
     ImGui::Separator();
-    ImGui::SliderFloat("重力", &engine_.gravity, -20.0f, 0.0f);
+    ImGui::SliderFloat("重力", &gravity_->strength, 0.0f, 20.0f);
     ImGui::SliderFloat("反発係数", &engine_.restitution, 0.0f, 1.0f);
     ImGui::SliderFloat("摩擦係数", &engine_.friction, 0.0f, 1.0f);
     ImGui::SliderFloat("伸び剛性", &engine_.stretchCompliance, 0.0f, 1e-2f, "%.6f");
     ImGui::SliderFloat("曲げ剛性", &engine_.bendCompliance, 0.0f, 1e-1f, "%.6f");
-    ImGui::SliderFloat("風 X", &engine_.windX, -10.0f, 10.0f);
-    ImGui::SliderFloat("風 Z", &engine_.windZ, -10.0f, 10.0f);
+    ImGui::SliderFloat("風 X", &wind_->direction.x, -10.0f, 10.0f);
+    ImGui::SliderFloat("風 Z", &wind_->direction.y, -10.0f, 10.0f);
     ImGui::SliderInt("反復", &engine_.solverIterations, 1, 10);
     ImGui::SliderInt("サブステップ", &engine_.numSubsteps, 1, 20);
     ImGui::Checkbox("自己衝突", &engine_.enableSelfCollision);

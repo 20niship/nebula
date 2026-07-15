@@ -7,10 +7,9 @@
 #include <vulkan/vulkan.h>
 
 #include "../core/Emitter.h"
-#include "../core/Force.h"
-#include "AttributeBuffer.h"
 #include "Collider.h"
 #include "ComputePipeline.h"
+#include "EngineBase.h"
 #include "MPMSimPC.h"
 #include "MaterialParams.h"
 
@@ -49,7 +48,9 @@ struct MPMConfig {
   uint32_t nGroups() const { return (totalCells() + 255u) / 256u; }
 };
 
-class MPMEngine {
+// 重力は addForce() で GravityForce を登録すること (issue #30 レビュー対応:
+// gravity の public メンバは廃止)。
+class MPMEngine : public EngineBase {
 public:
   void init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const MPMConfig& cfg = {});
   void cleanup();
@@ -62,7 +63,6 @@ public:
   VkBuffer getVelocityBuffer() const;
 
   // ImGui から調整可能
-  float gravity         = -9.8f;
   float restitution     = 0.3f;
   float wall_friction   = 0.0f;
   int numSubsteps       = 20;
@@ -108,28 +108,20 @@ public:
   // sdf[mortonEncode(ix,iy,iz)] = 符号付き距離 [m]  負値=障害物内部
   void setColliderSDF(const std::vector<float>& mortonSDF);
 
-  // Force (issue #30): gravity 以外の任意の力を追加する
-  void addForce(std::shared_ptr<Force> f);
-  void removeForce(const std::shared_ptr<Force>& f);
-  void setForces(std::vector<std::shared_ptr<Force>> forces);
-  void clearForces();
-
   VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
   VkDescriptorSet descriptorSet             = VK_NULL_HANDLE;
   uint32_t posIdx                           = 0;
   uint32_t velIdx                           = 0;
 
+protected:
+  ComputePipeline& forceTargetPipeline() override { return kGridUpdate_; }
+  const char* forceShaderName() const override { return "mpm_grid_update.comp"; }
+
 private:
   MPMConfig cfg_;
-  VkDevice device_        = VK_NULL_HANDLE;
-  VmaAllocator allocator_ = VK_NULL_HANDLE;
-  VkCommandPool cmdPool_  = VK_NULL_HANDLE;
-  VkQueue queue_          = VK_NULL_HANDLE;
 
   // ライブパーティクル数（dispatch ルーピング用）
   uint32_t nParticles_ = 0;
-
-  AttributeBuffer attrBuf_;
 
   // パーティクルバッファ
   // F0-2: xyz = F列, w = 対角応力 (σ_xx, σ_yy, σ_zz)
@@ -160,14 +152,6 @@ private:
 
   // NanoVDB SDF コライダー
   uint32_t nanoVDBIdx_ = 0; // 0 = 未設定 (シェーダー内でスキップ)
-
-  // Force (issue #30): gravity互換の既定Forceを常時登録 (Y-up)
-  static constexpr uint32_t kMaxForces = 32;
-  std::vector<std::shared_ptr<Force>> forces_;
-  std::shared_ptr<GravityForce> legacyGravity_;
-  uint32_t forcesIdx_ = 0;
-  void rebuildForceShader();
-  void uploadForces();
 
   // Emitter (Phase 4)
   std::vector<std::shared_ptr<Emitter>> emitters_;

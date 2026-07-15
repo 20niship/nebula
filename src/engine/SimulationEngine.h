@@ -5,10 +5,9 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
-#include "AttributeBuffer.h"
 #include "ClothMesh.h"
 #include "ComputePipeline.h"
-#include "Force.h"
+#include "EngineBase.h"
 #include "SimPC.h"
 
 struct ClothConfig {
@@ -21,7 +20,9 @@ struct ClothConfig {
   float cellSize() const { return world_size / float(grid_res); }
 };
 
-class SimulationEngine {
+// 重力・風は addForce() で GravityForce/ConstantWindForce を登録すること
+// (issue #30 レビュー対応: gravity/windX/windZ の public メンバは廃止)。
+class SimulationEngine : public EngineBase {
 public:
   void init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const ClothConfig& cfg = {});
   void cleanup();
@@ -31,14 +32,11 @@ public:
   const ClothConfig& config() const { return cfg_; }
 
   // ImGui から書き換え可能
-  float gravity            = -9.8f;
   float restitution        = 0.3f;
   float friction           = 0.1f;
   float particleRadius     = 0.0f; // init() で cfg_.cellSize()*0.5 に設定
   float stretchCompliance  = 1e-4f;
   float bendCompliance     = 1e-2f;
-  float windX              = 0.0f;
-  float windZ              = 0.0f;
   int solverIterations     = 3;
   int numSubsteps          = 15;
   bool enableSelfCollision = true;
@@ -52,21 +50,12 @@ public:
   const ClothMesh& getClothMesh() const { return clothMesh_; }
   void debugPrintVertices(VkCommandPool cmdPool, VkQueue queue) const;
 
-  // ── Force (issue #30): 重力(gravity)・風(windX/windZ)以外の任意の力を追加する ──
-  // 追加/削除のたびに predict.comp を無条件で再生成・再コンパイルする。
-  void addForce(std::shared_ptr<Force> f);
-  void removeForce(const std::shared_ptr<Force>& f);
-  void setForces(std::vector<std::shared_ptr<Force>> forces);
-  void clearForces();
+protected:
+  ComputePipeline& forceTargetPipeline() override { return kPredict_; }
+  const char* forceShaderName() const override { return "predict.comp"; }
 
 private:
   ClothConfig cfg_;
-  VkDevice device_        = VK_NULL_HANDLE;
-  VmaAllocator allocator_ = VK_NULL_HANDLE;
-  VkCommandPool cmdPool_  = VK_NULL_HANDLE;
-  VkQueue queue_          = VK_NULL_HANDLE;
-
-  AttributeBuffer attrBuf_;
   ClothMesh clothMesh_;
 
   uint32_t predPIdx_        = 0;
@@ -80,17 +69,6 @@ private:
 
   std::vector<uint32_t> colorBatch_cpu_;
   int nColors_ = 0;
-
-  // Force (issue #30): gravity/windX/windZ は互換のため既定Forceとして常時登録し、
-  // 値は毎フレーム forces_ 経由でバッファへ反映する (シェーダー再生成は不要)。
-  // 追加の Force (斜め重力・複数風・Turbulence・Noise 等) は addForce() で積む。
-  static constexpr uint32_t kMaxForces = 32;
-  std::vector<std::shared_ptr<Force>> forces_;
-  std::shared_ptr<GravityForce> legacyGravity_;
-  std::shared_ptr<ConstantWindForce> legacyWind_;
-  uint32_t forcesIdx_ = 0;
-  void rebuildForceShader();
-  void uploadForces();
 
   ComputePipeline kPredict_;
   ComputePipeline kSdfCollision_;

@@ -1,6 +1,5 @@
 #include "PyroEngine.h"
 
-#include "ForceShaderCompiler.h"
 #include <algorithm>
 #include <cstring>
 #include <fstream>
@@ -30,13 +29,8 @@ void PyroEngine::dispatchPyro(VkCommandBuffer cmd, ComputePipeline& k, const Pyr
 void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const PyroConfig& cfg) {
   if(cfg.grid_res == 0 || (cfg.grid_res & (cfg.grid_res - 1)) != 0) throw std::runtime_error("PyroConfig.grid_res must be a power of two (Morton encoding requirement): " + std::to_string(cfg.grid_res));
 
-  cfg_       = cfg;
-  device_    = device;
-  allocator_ = allocator;
-  cmdPool_   = cmdPool;
-  queue_     = queue;
-
-  attrBuf_.init(device, allocator, descriptorPool);
+  cfg_ = cfg;
+  initEngineBase(device, allocator, descriptorPool, cmdPool, queue);
 
   const uint32_t NC = cfg_.totalCells();
 
@@ -76,9 +70,7 @@ void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool 
     up("curl", zeroVec4.data(), NC * sizeof(glm::vec4));
   }
 
-  // Force (issue #30): Pyroにはgravity/wind互換の既定値がないため空リストで初期化
-  forcesIdx_ = attrBuf_.addAttribute("forces", sizeof(ForceGPU), kMaxForces);
-  rebuildForceShader();
+  initForces();
 
   auto load = [&](ComputePipeline& k, const char* name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
   load(kEmit_, "pyro_emit.comp");
@@ -97,42 +89,7 @@ void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool 
 
 void PyroEngine::cleanup() {
   for(auto* k : {&kEmit_, &kCombustion_, &kForces_, &kObstacleBC_, &kAdvect_, &kCurl_, &kVorticityForce_, &kDivergence_, &kPressureJacobi_, &kProject_}) k->cleanup();
-  attrBuf_.cleanup();
-}
-
-// ── Force (issue #30) ────────────────────────────────────────────────────
-
-void PyroEngine::addForce(std::shared_ptr<Force> f) {
-  forces_.push_back(std::move(f));
-  rebuildForceShader();
-}
-
-void PyroEngine::removeForce(const std::shared_ptr<Force>& f) {
-  forces_.erase(std::remove(forces_.begin(), forces_.end(), f), forces_.end());
-  rebuildForceShader();
-}
-
-void PyroEngine::setForces(std::vector<std::shared_ptr<Force>> forces) {
-  forces_ = std::move(forces);
-  rebuildForceShader();
-}
-
-void PyroEngine::clearForces() {
-  forces_.clear();
-  rebuildForceShader();
-}
-
-void PyroEngine::rebuildForceShader() {
-  std::vector<uint32_t> spirv = ForceShaderCompiler::compile(forces_, "pyro_forces.comp");
-  kForces_.cleanup();
-  kForces_.initFromSpirv(device_, attrBuf_.descriptorSetLayout, spirv);
-}
-
-void PyroEngine::uploadForces() {
-  std::vector<ForceGPU> packed;
-  packed.reserve(forces_.size());
-  for(const auto& f : forces_) packed.push_back(f->pack());
-  if(!packed.empty()) attrBuf_.upload("forces", packed.data(), sizeof(ForceGPU) * packed.size(), cmdPool_, queue_);
+  cleanupEngineBase();
 }
 
 // ── 障害物 SDF ────────────────────────────────────────────────────────────
@@ -238,8 +195,7 @@ PyroSimPC PyroEngine::buildPC(float dt) const {
 // ── ステップ ──────────────────────────────────────────────────────────────
 
 void PyroEngine::step(VkCommandBuffer cmd, float dt) {
-  // Force (issue #30): 登録済みForce群を毎フレームアップロード
-  uploadForces();
+  uploadForces(dt);
 
   const float subDt = dt / float(std::max(1, numSubsteps));
 

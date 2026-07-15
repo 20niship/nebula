@@ -9,6 +9,7 @@ add_library(nebula STATIC
     core/ForceShaderCompiler.cpp
     graphics/GraphicsPipeline.cpp
     graphics/ClothRenderer.cpp
+    engine/EngineBase.cpp
     engine/ClothMesh.cpp
     engine/SimulationEngine.cpp
     engine/ClothSceneEngine.cpp

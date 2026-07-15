@@ -1,4 +1,5 @@
 #include "App.h"
+#include "core/Force.h"
 #include "engine/FluidEngine.h"
 #include "graphics/GraphicsPipeline.h"
 #include "utils.hpp"
@@ -60,6 +61,7 @@ private:
   BaseApp base_;
   FluidEngine engine_;
   GraphicsPipeline graphicsPipe_;
+  std::shared_ptr<GravityForce> gravity_;
 
   float dt_      = 1.0f / 60.0f;
   float simTime_ = 0.0f;
@@ -69,6 +71,9 @@ private:
     base_.createDescriptorPool();
 
     engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
+
+    gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f); // Z-up
+    engine_.addForce(gravity_);
 
     engine_.loadBoundary(spherePath, spacing);
 
@@ -175,7 +180,7 @@ private:
     ImGui::Separator();
     sim_ui::fluid_reset_button(engine_, simTime_);
     ImGui::Separator();
-    sim_ui::fluid_params(engine_);
+    sim_ui::fluid_params(engine_, *gravity_);
     ImGui::End();
 
     ImGui::Render();

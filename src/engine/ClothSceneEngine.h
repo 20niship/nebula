@@ -6,16 +6,17 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
-#include "AttributeBuffer.h"
 #include "ClothConstraint.h"
 #include "ClothMesh.h"
 #include "ComputePipeline.h"
-#include "Force.h"
+#include "EngineBase.h"
 #include "SimPC.h"
 
 // 複数布メッシュを1統合バッファで解くVellumスタイルエンジン。
 // addCloth() → addConstraint() → init() の順に呼ぶ。
-class ClothSceneEngine {
+// 重力・風は addForce() で GravityForce/ConstantWindForce を登録すること
+// (issue #30 レビュー対応: gravity/windX/windZ の public メンバは廃止)。
+class ClothSceneEngine : public EngineBase {
 public:
   // ── シーン構築 (init() 前) ───────────────────────────────────────────────
   // 戻り値: このメッシュのグローバル頂点開始インデックス
@@ -33,13 +34,10 @@ public:
   void updateConstraint(uint32_t idx, const glm::vec3& newTarget);
 
   // ── ImGui パラメータ ─────────────────────────────────────────────────────
-  float gravity            = -9.8f;
   float restitution        = 0.3f;
   float friction           = 0.1f;
   float stretchCompliance  = 1e-4f;
   float bendCompliance     = 1e-2f;
-  float windX              = 0.0f;
-  float windZ              = 0.0f;
   int solverIterations     = 3;
   int numSubsteps          = 6;
   bool enableSelfCollision = true;
@@ -50,12 +48,6 @@ public:
   uint32_t posIdx                           = 0;
   uint32_t velIdx                           = 0;
 
-  // Force (issue #30): gravity/windX/windZ 以外の任意の力を追加する
-  void addForce(std::shared_ptr<Force> f);
-  void removeForce(const std::shared_ptr<Force>& f);
-  void setForces(std::vector<std::shared_ptr<Force>> forces);
-  void clearForces();
-
   uint32_t totalParticleCount() const { return totalCount_; }
   uint32_t clothCount() const { return (uint32_t)meshes_.size(); }
   uint32_t meshOffset(uint32_t i) const { return meshOffsets_[i]; }
@@ -63,19 +55,15 @@ public:
 
   VkBuffer getPositionBuffer() const;
 
+protected:
+  ComputePipeline& forceTargetPipeline() override { return kPredict_; }
+  const char* forceShaderName() const override { return "predict.comp"; }
+
 private:
   // ── シーン入力 ───────────────────────────────────────────────────────────
   std::vector<ClothMesh> meshes_;
   std::vector<uint32_t> meshOffsets_;
   std::vector<ClothConstraint> constraints_;
-
-  // ── GPU リソース ─────────────────────────────────────────────────────────
-  VkDevice device_        = VK_NULL_HANDLE;
-  VmaAllocator allocator_ = VK_NULL_HANDLE;
-  VkCommandPool cmdPool_  = VK_NULL_HANDLE;
-  VkQueue queue_          = VK_NULL_HANDLE;
-
-  AttributeBuffer attrBuf_;
 
   uint32_t totalCount_ = 0;
   float worldSize_     = 10.0f;
@@ -109,15 +97,6 @@ private:
   std::vector<uint32_t> combinedColorBatch_; // size = nColors+1
   int nColors_             = 12;
   uint32_t totalEdgeCount_ = 0;
-
-  // Force (issue #30): gravity/windX/windZ互換の既定Forceを常時登録
-  static constexpr uint32_t kMaxForces = 32;
-  std::vector<std::shared_ptr<Force>> forces_;
-  std::shared_ptr<GravityForce> legacyGravity_;
-  std::shared_ptr<ConstantWindForce> legacyWind_;
-  uint32_t forcesIdx_ = 0;
-  void rebuildForceShader();
-  void uploadForces();
 
   // ── コンピュートパイプライン ─────────────────────────────────────────────
   ComputePipeline kPredict_;

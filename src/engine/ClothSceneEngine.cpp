@@ -1,6 +1,5 @@
 #include "ClothSceneEngine.h"
 
-#include "ForceShaderCompiler.h"
 #include <algorithm>
 #include <cstring>
 #include <glm/glm.hpp>
@@ -130,25 +129,17 @@ void ClothSceneEngine::initBuffers(VkCommandPool cmdPool, VkQueue queue) {
 }
 
 void ClothSceneEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, float worldSize, uint32_t gridRes) {
-  device_    = device;
-  allocator_ = allocator;
-  cmdPool_   = cmdPool;
-  queue_     = queue;
   worldSize_ = worldSize;
   gridRes_   = gridRes;
 
   if(meshes_.empty()) throw std::runtime_error("ClothSceneEngine: addCloth() before init()");
 
-  attrBuf_.init(device, allocator, descriptorPool);
+  initEngineBase(device, allocator, descriptorPool, cmdPool, queue);
   initBuffers(cmdPool, queue);
 
-  // Force (issue #30): gravity/windX/windZ 互換の既定Forceを常時登録する
-  forcesIdx_     = attrBuf_.addAttribute("forces", sizeof(ForceGPU), kMaxForces);
-  legacyGravity_ = GravityForce::FromDirection({0.0f, 0.0f, 1.0f}, gravity); // Z-up; strengthに符号を持たせる
-  legacyWind_    = ConstantWindForce::FromDirection({windX, windZ, 0.0f}, 1.0f);
-  legacyWind_->affectMask = ForceAffectTypeFlag(2u); // 布頂点 (typeFlag==2) のみ
-  forces_                 = {legacyGravity_, legacyWind_};
-  rebuildForceShader();
+  // Force (issue #30): 既定では空リスト。重力・風が必要な場合は呼び出し側が
+  // addForce(GravityForce::FromDirection(...)) 等で登録する。
+  initForces();
 
   auto load = [&](ComputePipeline& k, const std::string& name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
 
@@ -172,41 +163,6 @@ void ClothSceneEngine::init(VkDevice device, VmaAllocator allocator, VkDescripto
 }
 
 VkBuffer ClothSceneEngine::getPositionBuffer() const { return attrBuf_.getBuffer("P"); }
-
-// ─── Force (issue #30) ──────────────────────────────────────────────────────
-
-void ClothSceneEngine::addForce(std::shared_ptr<Force> f) {
-  forces_.push_back(std::move(f));
-  rebuildForceShader();
-}
-
-void ClothSceneEngine::removeForce(const std::shared_ptr<Force>& f) {
-  forces_.erase(std::remove(forces_.begin(), forces_.end(), f), forces_.end());
-  rebuildForceShader();
-}
-
-void ClothSceneEngine::setForces(std::vector<std::shared_ptr<Force>> forces) {
-  forces_ = std::move(forces);
-  rebuildForceShader();
-}
-
-void ClothSceneEngine::clearForces() {
-  forces_.clear();
-  rebuildForceShader();
-}
-
-void ClothSceneEngine::rebuildForceShader() {
-  std::vector<uint32_t> spirv = ForceShaderCompiler::compile(forces_, "predict.comp");
-  kPredict_.cleanup();
-  kPredict_.initFromSpirv(device_, attrBuf_.descriptorSetLayout, spirv);
-}
-
-void ClothSceneEngine::uploadForces() {
-  std::vector<ForceGPU> packed;
-  packed.reserve(forces_.size());
-  for(const auto& f : forces_) packed.push_back(f->pack());
-  if(!packed.empty()) attrBuf_.upload("forces", packed.data(), sizeof(ForceGPU) * packed.size(), cmdPool_, queue_);
-}
 
 // ─── 制約更新 ──────────────────────────────────────────────────────────────
 
@@ -234,7 +190,7 @@ void ClothSceneEngine::cleanup() {
   kZeroCells_.cleanup();
   if(hasPinAnimated_) kMovePins_.cleanup();
   if(stagingBuf_) vmaDestroyBuffer(allocator_, stagingBuf_, stagingAlloc_);
-  attrBuf_.cleanup();
+  cleanupEngineBase();
 }
 
 // ─── バリア ────────────────────────────────────────────────────────────────
@@ -271,10 +227,7 @@ void ClothSceneEngine::step(VkCommandBuffer cmd, float dt) {
     pinnedTargetDirty_ = false;
   }
 
-  // Force (issue #30): gravity/windX/windZ 互換値を毎フレーム反映してアップロード
-  legacyGravity_->strength = gravity;
-  legacyWind_->direction   = glm::vec3(windX, windZ, 0.0f);
-  uploadForces();
+  uploadForces(dt);
 
   const float subDt = dt / std::max(1, numSubsteps);
 

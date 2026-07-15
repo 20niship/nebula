@@ -65,12 +65,15 @@ private:
   // addForce() で任意方向の重力を追加できることを示す
   bool diagonalGravityEnabled_ = false;
   std::shared_ptr<GravityForce> diagonalGravity_;
+  std::shared_ptr<GravityForce> gravity_;
 
   void initVulkan(const MPMConfig& cfg, int substeps, float flipRatio) {
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
     engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
+    gravity_ = GravityForce::FromDirection({0.0f, 1.0f, 0.0f}, 9.8f); // Y-up
+    engine_.addForce(gravity_);
     engine_.numSubsteps = substeps;
     engine_.flip_ratio  = flipRatio;
 
@@ -173,7 +176,7 @@ private:
     ImGui::Text("E=%.0f Pa, nu=%.2f, rho0=%.0f", cfg.E, cfg.nu, cfg.rho0);
     ImGui::Text("dt_sub=%.4f s | t=%.2f s", dt_ / float(engine_.numSubsteps), simTime_);
     ImGui::Separator();
-    ImGui::SliderFloat("重力", &engine_.gravity, -20.0f, 0.0f);
+    ImGui::SliderFloat("重力", &gravity_->strength, 0.0f, 20.0f);
     ImGui::SliderInt("サブステップ", &engine_.numSubsteps, 1, 50);
     ImGui::Separator();
     ImGui::Text("issue #30: Force API デモ");

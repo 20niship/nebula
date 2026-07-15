@@ -73,6 +73,9 @@ private:
   // だけを書き換えて FluidEngine::step() 内の uploadForces() で SSBO を
   // リアルタイム更新する。風向きは時間とともに水平面(XY)を回転する。
   std::shared_ptr<ConstantWindForce> wind_;
+  // issue #30 レビュー対応: gravity は FluidEngine の public メンバとしては廃止
+  // されたため、addForce() で登録した GravityForce への参照を自前で保持する。
+  std::shared_ptr<GravityForce> gravity_;
   bool windEnabled_        = true;
   float windStrength_      = 12.0f; // 元の6.0から2倍に変更
   float windRotationSpeed_ = 7.5f;  // [rad/s] 元の0.5から5倍速→さらに3倍(計15倍速)
@@ -105,7 +108,8 @@ private:
     engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
 
     // 煙パラメータ
-    engine_.gravity          = -2.0f; // 弱い重力（浮力が上回る）
+    gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 2.0f); // 弱い重力（浮力が上回る）; Z-up
+    engine_.addForce(gravity_);
     engine_.smokeRiseAccel   = args.rise_accel;
     engine_.smokeDamping     = args.smoke_damping;
     engine_.linearDamping    = 0.02f;
@@ -219,7 +223,7 @@ private:
     ImGui::Text("煙パラメータ");
     ImGui::SliderFloat("浮力加速度", &engine_.smokeRiseAccel, 0.0f, 20.0f);
     ImGui::SliderFloat("煙の減衰", &engine_.smokeDamping, 0.0f, 2.0f, "%.3f");
-    ImGui::SliderFloat("重力", &engine_.gravity, -10.0f, 0.0f);
+    ImGui::SliderFloat("重力", &gravity_->strength, 0.0f, 10.0f);
     ImGui::Separator();
     ImGui::Checkbox("渦度閉じ込め", &engine_.vorticityEnabled);
     if(engine_.vorticityEnabled) {

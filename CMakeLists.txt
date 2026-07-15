@@ -132,9 +132,10 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/mpm_g2p.comp
     ${SHADER_SRC_DIR}/mpm_nanovdb_bc.comp
     # ── Pyro (グリッドベース煙・火炎) シェーダー ─────────────────────────────
+    # pyro_forces.comp は FORCE_AUTOGEN マーカーを含み、PyroEngine 側で
+    # ForceShaderCompiler により実行時に shaderc でコンパイルされる (issue #30)
     ${SHADER_SRC_DIR}/pyro_emit.comp
     ${SHADER_SRC_DIR}/pyro_combustion.comp
-    ${SHADER_SRC_DIR}/pyro_forces.comp
     ${SHADER_SRC_DIR}/pyro_obstacle_bc.comp
     ${SHADER_SRC_DIR}/pyro_advect.comp
     ${SHADER_SRC_DIR}/pyro_curl.comp

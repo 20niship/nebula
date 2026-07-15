@@ -1,7 +1,10 @@
 #pragma once
 #include <cstdint>
 
-// Pyro (グリッドベース煙・火炎) 専用 Push Constants — 128 bytes
+// Pyro (グリッドベース煙・火炎) 専用 Push Constants
+// (issue #30: 末尾に forceBufIdx/forceCount を追加し 128→136 bytes に拡張。
+//  ComputePipeline の push constant range は sizeof(SimPC)=172 bytes で
+//  全エンジン共通のため、128超でも既存レイアウトの範囲内で安全)
 // MPMSimPC と同様、Bindless バッファインデックス + グリッド定数 + 物理パラメータを
 // 固定サイズ構造体に詰める。velocity/density/temperature/fuel は front/back の
 // ダブルバッファ (A/B) を持ち、CPU側 (PyroEngine::step) が毎フレーム役割を入れ替える。
@@ -53,5 +56,9 @@ struct PyroSimPC {
   float smokeYieldPerFuel; // 116 燃焼による密度生成量 (burn量あたり)
   float flameBrightness;   // 120 燃焼による発光量 (burn量あたり)
   uint32_t curlIdx;        // 124 vec4×CELLS 渦度 (curl) スクラッチ (渦度閉じ込め用)
+
+  // ── Force (issue #30; 8 bytes) ─────────────────────────────────────────
+  uint32_t forceBufIdx; // 128 Force配列(ForceGPU×forceCount)のbindless index (0=無効)
+  uint32_t forceCount;  // 132 有効なForce数
 };
-static_assert(sizeof(PyroSimPC) == 128, "PyroSimPC must be 128 bytes");
+static_assert(sizeof(PyroSimPC) == 136, "PyroSimPC must be 136 bytes");

@@ -7,6 +7,7 @@
 #include <vulkan/vulkan.h>
 
 #include "../core/Emitter.h"
+#include "../core/Force.h"
 #include "../core/PyroSimPC.h"
 #include "AttributeBuffer.h"
 #include "ComputePipeline.h"
@@ -61,6 +62,13 @@ public:
   void addEmitter(std::shared_ptr<Emitter> emitter);
   void clearEmitters();
 
+  // ── Force (issue #30): 任意方向の風・Turbulence・Noise を追加する ────────
+  // 浮力(buoyancyAlpha/Beta)はPyro固有の温度連成物理でありForce化しない。
+  void addForce(std::shared_ptr<Force> f);
+  void removeForce(const std::shared_ptr<Force>& f);
+  void setForces(std::vector<std::shared_ptr<Force>> forces);
+  void clearForces();
+
   // ── 読み取り (テスト/ダンプ用) ────────────────────────────────────────
   VkBuffer getDensityBuffer() const;
   VkBuffer getTemperatureBuffer() const;
@@ -106,6 +114,13 @@ private:
   uint32_t emittersActiveCount_ = 0; // 直近 updateEmitters() でアップロードした有効数
   std::vector<std::shared_ptr<Emitter>> emitters_;
   std::vector<int> emitterStepsDone_;
+
+  // Force (issue #30): Pyroにはgravity/wind互換の既定Forceがないため既定は空リスト
+  static constexpr uint32_t kMaxForces = 32;
+  std::vector<std::shared_ptr<Force>> forces_;
+  uint32_t forcesIdx_ = 0;
+  void rebuildForceShader();
+  void uploadForces();
 
   ComputePipeline kEmit_;
   ComputePipeline kCombustion_;

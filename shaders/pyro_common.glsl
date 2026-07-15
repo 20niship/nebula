@@ -38,6 +38,8 @@ layout(push_constant) uniform PC {
     float smokeYieldPerFuel;  // 116
     float flameBrightness;    // 120
     uint  curlIdx;            // 124 vec4×CELLS 渦度スクラッチ
+    uint  forceBufIdx;        // 128 Force配列(ForceGPU×forceCount)のbindless index (issue #30)
+    uint  forceCount;         // 132 有効なForce数
 } pc;
 
 // ── Buffer read/write マクロ (MoltenVK: buffers[] は main() でのみ展開) ────

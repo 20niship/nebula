@@ -69,8 +69,12 @@ void ComputePipeline::initFromSpirv(VkDevice device, VkDescriptorSetLayout bindl
 }
 
 void ComputePipeline::cleanup() {
-  vkDestroyPipeline(device_, pipeline, nullptr);
-  vkDestroyPipelineLayout(device_, pipelineLayout, nullptr);
+  // rebuildForceShader() 系 (issue #30) は init/initFromSpirv 未実行の状態でも
+  // 無条件で cleanup() を呼ぶため、未初期化時 (device_ == VK_NULL_HANDLE) は
+  // 何もせず安全に抜ける。
+  if(device_ == VK_NULL_HANDLE) return;
+  if(pipeline != VK_NULL_HANDLE) vkDestroyPipeline(device_, pipeline, nullptr);
+  if(pipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device_, pipelineLayout, nullptr);
   pipeline       = VK_NULL_HANDLE;
   pipelineLayout = VK_NULL_HANDLE;
 }

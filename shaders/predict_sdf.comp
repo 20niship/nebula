@@ -1,6 +1,8 @@
 #version 450
 #extension GL_EXT_nonuniform_qualifier : enable
 #include "common.glsl"
+#include "force_common.glsl"
+#include "force_noise.glsl"
 
 layout(local_size_x = 256) in;
 
@@ -19,18 +21,19 @@ void main() {
 
     vec4 p = readVec4(pc.posIdx, idx);
     vec4 v = readVec4(pc.velIdx, idx);
+    uint forceTypeFlag = readUint(pc.typeFlagIdx, idx);
+    vec3 forcePos = p.xyz;
 
-    // 重力 (Z-up)
-    v.z += pc.gravity * pc.dt;
+    // FORCE_AUTOGEN_BEGIN
+    // Engine::addForce/removeForce/setForces() 実行時に ForceShaderCompiler が
+    // このブロックを登録済み Force 群の適用コードで置換し、shaderc で全体を
+    // 再コンパイルする (issue #30)。このプレースホルダのままでも単体で valid な
+    // GLSL であること (旧来の重力・風の挙動を再現する既定値)。
+    v.z += -9.8 * pc.dt;
+    // FORCE_AUTOGEN_END
 
-    // 布頂点 (typeFlag == 2) には風力を追加
-    uint flag = readUint(pc.typeFlagIdx, idx);
-    if (flag == 2u) {
-        v.x += pc.windX * pc.dt;
-        v.y += pc.windZ * pc.dt;
-    }
-    // 煙粒子 (typeFlag == 4): Z-up 座標系で浮力を付加
-    if (flag == 4u) {
+    // 煙粒子 (typeFlag == 4): Z-up 座標系で浮力を付加 (FluidEngine固有機構、Force化しない)
+    if (forceTypeFlag == 4u) {
         v.z += pc.smokeRiseAccel * pc.dt;
     }
 

@@ -1,9 +1,11 @@
 #pragma once
 #include "AttributeBuffer.h"
 #include "ComputePipeline.h"
+#include "Force.h"
 #include "HeadlessCtx.h"
 #include "SimPC.h"
 #include <glm/glm.hpp>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -52,6 +54,10 @@ private:
   uint32_t sortedIdx_  = 0;
   uint32_t densityIdx_ = 0;
   uint32_t lambdaIdx_  = 0;
+
+  // Force (issue #30): cfg.gravity 互換の既定Forceを一度だけ登録する
+  std::vector<std::shared_ptr<Force>> forces_;
+  uint32_t forcesIdx_ = 0;
 
   ComputePipeline kPredict_;
   ComputePipeline kSdf_;

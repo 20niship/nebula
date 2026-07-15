@@ -6,6 +6,7 @@ add_library(nebula STATIC
     core/VulkanContext.cpp
     core/AttributeBuffer.cpp
     core/ComputePipeline.cpp
+    core/ForceShaderCompiler.cpp
     graphics/GraphicsPipeline.cpp
     graphics/ClothRenderer.cpp
     engine/ClothMesh.cpp

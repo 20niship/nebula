@@ -1,4 +1,5 @@
 #include "PBFHarness.h"
+#include "ForceShaderCompiler.h"
 #include <algorithm>
 #include <cstring>
 #include <stdexcept>
@@ -74,8 +75,21 @@ void PBFHarness::init(const HeadlessCtx& ctx, const Config& cfg, const std::stri
     attrBuf_.uploadAt("predP", boundaryPos.data(), sizeof(glm::vec4) * nb, cfg_.N * sizeof(glm::vec4), pool, queue);
   }
 
+  // Force (issue #30): cfg.gravity 互換の既定Forceを一度だけ登録する
+  forcesIdx_ = attrBuf_.addAttribute("forces", sizeof(ForceGPU), 1);
+  {
+    auto legacyGravity = GravityForce::FromDirection({0.0f, 0.0f, 1.0f}, cfg.gravity); // Z-up
+    forces_             = {legacyGravity};
+    std::vector<ForceGPU> packed;
+    for(const auto& f : forces_) packed.push_back(f->pack());
+    attrBuf_.upload("forces", packed.data(), sizeof(ForceGPU) * packed.size(), pool, queue);
+  }
+
   auto load = [&](ComputePipeline& k, const char* name) { k.init(ctx.device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name); };
-  load(kPredict_, "predict.comp.spv");
+  {
+    std::vector<uint32_t> spirv = ForceShaderCompiler::compile(forces_, "predict.comp");
+    kPredict_.initFromSpirv(ctx.device, attrBuf_.descriptorSetLayout, spirv);
+  }
   load(kSdf_, "sdf_collision.comp.spv");
   load(kHashCnt_, "hash_count.comp.spv");
   load(kScanLoc_, "hash_scan_local.comp.spv");
@@ -109,10 +123,10 @@ void PBFHarness::recordSubstep(VkCommandBuffer cmd, float subDt) {
   pc.cellSize          = h;
   pc.worldMin          = cfg_.worldMin;
   pc.worldMax          = cfg_.worldMax;
-  pc.gravity           = cfg_.gravity;
   pc.restitution       = cfg_.restitution;
   pc.friction          = 0.05f;
   pc.particleRadius    = h * 0.5f;
+  pc.forceBufIdx       = forcesIdx_;
   pc.couplingForceIdx  = 0;
   pc.clothVertexCount  = totalN;
   pc.edgeCount         = 0;
@@ -120,8 +134,7 @@ void PBFHarness::recordSubstep(VkCommandBuffer cmd, float subDt) {
   pc.batchEdgeEnd      = 0;
   pc.stretchCompliance = cfg_.rho0;
   pc.bendCompliance    = cfg_.viscosityC;
-  pc.windX             = 0.0f;
-  pc.windZ             = 0.0f;
+  pc.forceCount        = (uint32_t)forces_.size();
   pc.densityIdx        = densityIdx_;
   pc.lambdaPbfIdx      = lambdaIdx_;
   pc.boundaryStart     = cfg_.N;

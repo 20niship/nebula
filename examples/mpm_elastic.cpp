@@ -61,6 +61,11 @@ private:
   float dt_      = 1.0f / 60.0f;
   float simTime_ = 0.0f;
 
+  // issue #30 デモ: 従来は下方向(-Y)のスカラー重力しか指定できなかったが、
+  // addForce() で任意方向の重力を追加できることを示す
+  bool diagonalGravityEnabled_ = false;
+  std::shared_ptr<GravityForce> diagonalGravity_;
+
   void initVulkan(const MPMConfig& cfg, int substeps, float flipRatio) {
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
@@ -170,6 +175,18 @@ private:
     ImGui::Separator();
     ImGui::SliderFloat("重力", &engine_.gravity, -20.0f, 0.0f);
     ImGui::SliderInt("サブステップ", &engine_.numSubsteps, 1, 50);
+    ImGui::Separator();
+    ImGui::Text("issue #30: Force API デモ");
+    if(ImGui::Checkbox("斜め重力を追加 (X方向に傾ける)", &diagonalGravityEnabled_)) {
+      if(diagonalGravityEnabled_) {
+        diagonalGravity_ = GravityForce::FromDirection(glm::normalize(glm::vec3(0.5f, -1.0f, 0.0f)), 6.0f);
+        engine_.addForce(diagonalGravity_);
+      } else {
+        engine_.removeForce(diagonalGravity_);
+        diagonalGravity_.reset();
+      }
+    }
+    if(diagonalGravityEnabled_) ImGui::SliderFloat("斜め重力の強さ", &diagonalGravity_->strength, 0.0f, 20.0f);
     // 転写モード: PIC=散逸大, APIC=散逸小(角運動量保存), FLIP=散逸最小(0<r≤1)
     int transferMode            = (engine_.flip_ratio < -0.5f) ? 2 : (engine_.flip_ratio > 0.01f) ? 1 : 0;
     const char* transferModes[] = {"PIC (散逸大)", "FLIP (r=0.95)", "APIC (散逸小)"};

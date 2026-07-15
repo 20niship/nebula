@@ -35,6 +35,9 @@ struct PyroBasicArgs : public argparse::Args {
   int& dump_every                = kwarg("dump-every", "何フレームごとに .pvox をダンプするか (0=無効)").set_default(10);
   std::string& stl_path          = kwarg("obstacle-stl", "移動障害物 STL パス").set_default(ASSET_DIR_STR + "/sphere_obstacle.stl");
   int& obstacle_rebuild_interval = kwarg("obstacle-rebuild-interval", "障害物 SDF 再構築間隔 (フレーム)").set_default(4);
+  // issue #30 デモ: Pyroは従来wind非対応だったが、addForce()で任意方向の風を追加できる
+  float& wind_x = kwarg("wind-x", "X方向の風の強さ [m/s^2] (issue #30 Forceデモ)").set_default(0.0f);
+  float& wind_z = kwarg("wind-z", "Z方向の風の強さ [m/s^2] (issue #30 Forceデモ)").set_default(0.0f);
 };
 
 int main(int argc, char* argv[]) {
@@ -65,6 +68,13 @@ int main(int argc, char* argv[]) {
     engine.heatRelease       = 4.0f;
     engine.smokeYieldPerFuel = 2.0f;
     engine.flameBrightness   = 3.0f;
+
+    // issue #30 デモ: Pyroは従来wind非対応だったが、addForce()で任意方向の風を
+    // 浮力(buoyancyAlpha/Beta)と独立に追加できる。--wind-x/--wind-z で指定。
+    if(args.wind_x != 0.0f || args.wind_z != 0.0f) {
+      engine.addForce(ConstantWindForce::FromDirection({args.wind_x, 0.0f, args.wind_z}, 1.0f));
+      std::printf("風を追加: wind=(%.2f, 0, %.2f)\n", args.wind_x, args.wind_z);
+    }
 
     const float W = cfg.world_size;
 

@@ -56,6 +56,10 @@ private:
   float simTime_       = 0.0f;
   int debugFrameCount_ = 0;
 
+  // issue #30 デモ: addForce() で任意の風(Turbulence)を追加できることを示す
+  bool turbulenceEnabled_ = false;
+  std::shared_ptr<TurbulenceForce> turbulence_;
+
   void initVulkan(const ClothConfig& cfg) {
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
@@ -161,6 +165,20 @@ private:
     ImGui::Text("FPS: %.1f  |  頂点: %u  経過: %.2f s", ImGui::GetIO().Framerate, sim_.config().clothVertCount(), simTime_);
     ImGui::Separator();
     sim_ui::cloth_params(sim_);
+    ImGui::Separator();
+    ImGui::Text("issue #30: Force API デモ");
+    if(ImGui::Checkbox("Turbulence (乱流風) を追加", &turbulenceEnabled_)) {
+      if(turbulenceEnabled_) {
+        turbulence_ = std::make_shared<TurbulenceForce>();
+        turbulence_->strength  = 4.0f;
+        turbulence_->frequency = 0.3f;
+        sim_.addForce(turbulence_);
+      } else {
+        sim_.removeForce(turbulence_);
+        turbulence_.reset();
+      }
+    }
+    if(turbulenceEnabled_) ImGui::SliderFloat("Turbulence 強さ", &turbulence_->strength, 0.0f, 20.0f);
     ImGui::End();
 
     ImGui::Render();

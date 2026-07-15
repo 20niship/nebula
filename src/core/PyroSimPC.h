@@ -23,8 +23,8 @@ struct PyroSimPC {
 
   // ── 補助バッファ (16 bytes) ────────────────────────────────────────────
   uint32_t flameIdx;      // 32  float×CELLS (発光量、可視化用メタデータ)
-  uint32_t pressureIdxA;  // 36  float×CELLS (Jacobi 反復用)
-  uint32_t pressureIdxB;  // 40
+  uint32_t pressureIdxA;  // 36  float×CELLS (Red-Black Gauss-Seidel、in-place更新)
+  uint32_t gsColor;       // 40  Red-Black反復の色 (0=red/1=black、旧pressureIdxBを転用)
   uint32_t divergenceIdx; // 44  float×CELLS (スクラッチ)
 
   // ── コライダー / エミッタ / グリッド定数 (16 bytes) ────────────────────

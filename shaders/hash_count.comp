@@ -8,6 +8,10 @@ void main() {
     uint i = gl_GlobalInvocationID.x;
     if (i >= pc.particleCount) return;
 
+    // 未使用スロット（境界未ロード分の空き領域; typeFlag=0）は全て predP=(0,0,0) のため
+    // 同一セルに大量に積み上がり近傍探索を破綻させる。ここで除外する。
+    if (readUint(pc.typeFlagIdx, i) == 0u) return;
+
     vec4 predP = readVec4(pc.predPIdx, i);
     uint cid   = cellId(predP.xyz);
 

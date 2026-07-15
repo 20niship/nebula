@@ -75,7 +75,7 @@ private:
   std::shared_ptr<ConstantWindForce> wind_;
   bool windEnabled_        = true;
   float windStrength_      = 6.0f;
-  float windRotationSpeed_ = 0.5f; // [rad/s]
+  float windRotationSpeed_ = 2.5f; // [rad/s] (元の0.5から5倍速に変更)
 
   void updateWind() {
     float angle      = simTime_ * windRotationSpeed_;
@@ -233,7 +233,7 @@ private:
                         "(シェーダー再生成は発生しない)。");
     ImGui::Checkbox("風を有効化", &windEnabled_);
     ImGui::SliderFloat("風の強さ", &windStrength_, 0.0f, 20.0f);
-    ImGui::SliderFloat("風の回転速度 [rad/s]", &windRotationSpeed_, 0.0f, 3.0f, "%.2f");
+    ImGui::SliderFloat("風の回転速度 [rad/s]", &windRotationSpeed_, 0.0f, 10.0f, "%.2f");
     ImGui::Text("現在の風向き: (%.2f, %.2f)", wind_->direction.x, wind_->direction.y);
     ImGui::End();
 

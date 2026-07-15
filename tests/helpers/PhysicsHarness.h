@@ -66,7 +66,7 @@ private:
   uint32_t edgesIdx_ = 0, lambdaIdx_ = 0;
 
   ComputePipeline kPredict_, kSdf_;
-  ComputePipeline kHashCnt_, kScanLoc_, kScanGlob_, kSort_;
+  ComputePipeline kHashCnt_, kScanLoc_, kScanGlob_, kAddBase_, kSort_;
   ComputePipeline kSolveDen_, kSolveSt_, kUpdateVel_;
 
   void recordSubstep(VkCommandBuffer cmd, float subDt);

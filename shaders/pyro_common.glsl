@@ -15,8 +15,8 @@ layout(push_constant) uniform PC {
     uint  fuelIdxA;        // 24  float×CELLS
     uint  fuelIdxB;        // 28
     uint  flameIdx;        // 32  float×CELLS
-    uint  pressureIdxA;    // 36  float×CELLS
-    uint  pressureIdxB;    // 40
+    uint  pressureIdxA;    // 36  float×CELLS (Red-Black Gauss-Seidel、in-place更新)
+    uint  gsColor;         // 40  Red-Black反復の色 (0=red/1=black、旧pressureIdxBを転用)
     uint  divergenceIdx;   // 44  float×CELLS
     uint  colliderSDFIdx;  // 48  float×CELLS (Morton SDF, 0=無効)
     uint  emittersIdx;     // 52  EmitterGPU×emitterCount (0=無効)

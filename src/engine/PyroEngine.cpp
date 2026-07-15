@@ -43,8 +43,7 @@ void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool 
   fuelIdx_[0]        = attrBuf_.addAttribute("fuelA", sizeof(float), NC);
   fuelIdx_[1]        = attrBuf_.addAttribute("fuelB", sizeof(float), NC);
   flameIdx_          = attrBuf_.addAttribute("flame", sizeof(float), NC);
-  pressureIdx_[0]    = attrBuf_.addAttribute("presA", sizeof(float), NC);
-  pressureIdx_[1]    = attrBuf_.addAttribute("presB", sizeof(float), NC);
+  pressureIdx_       = attrBuf_.addAttribute("pres", sizeof(float), NC);
   divergenceIdx_     = attrBuf_.addAttribute("div", sizeof(float), NC);
   curlIdx_           = attrBuf_.addAttribute("curl", sizeof(glm::vec4), NC);
   emittersIdx_       = attrBuf_.addAttribute("pyroEmitters", sizeof(EmitterGPU), cfg_.maxEmitters);
@@ -64,8 +63,7 @@ void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool 
     up("fuelA", zeroFloat.data(), NC * sizeof(float));
     up("fuelB", zeroFloat.data(), NC * sizeof(float));
     up("flame", zeroFloat.data(), NC * sizeof(float));
-    up("presA", zeroFloat.data(), NC * sizeof(float));
-    up("presB", zeroFloat.data(), NC * sizeof(float));
+    up("pres", zeroFloat.data(), NC * sizeof(float));
     up("div", zeroFloat.data(), NC * sizeof(float));
     up("curl", zeroVec4.data(), NC * sizeof(glm::vec4));
   }
@@ -80,7 +78,7 @@ void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool 
   load(kCurl_, "pyro_curl.comp");
   load(kVorticityForce_, "pyro_vorticity_force.comp");
   load(kDivergence_, "pyro_divergence.comp");
-  load(kPressureJacobi_, "pyro_pressure_jacobi.comp");
+  load(kPressureGS_, "pyro_pressure_gs.comp");
   load(kProject_, "pyro_project.comp");
 
   descriptorSetLayout = attrBuf_.descriptorSetLayout;
@@ -88,7 +86,7 @@ void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool 
 }
 
 void PyroEngine::cleanup() {
-  for(auto* k : {&kEmit_, &kCombustion_, &kForces_, &kObstacleBC_, &kAdvect_, &kCurl_, &kVorticityForce_, &kDivergence_, &kPressureJacobi_, &kProject_}) k->cleanup();
+  for(auto* k : {&kEmit_, &kCombustion_, &kForces_, &kObstacleBC_, &kAdvect_, &kCurl_, &kVorticityForce_, &kDivergence_, &kPressureGS_, &kProject_}) k->cleanup();
   cleanupEngineBase();
 }
 
@@ -158,8 +156,8 @@ PyroSimPC PyroEngine::buildPC(float dt) const {
   pc.fuelIdxA        = fuelIdx_[cur_];
   pc.fuelIdxB        = fuelIdx_[1 - cur_];
   pc.flameIdx        = flameIdx_;
-  pc.pressureIdxA    = pressureIdx_[0];
-  pc.pressureIdxB    = pressureIdx_[1];
+  pc.pressureIdxA    = pressureIdx_;
+  pc.gsColor         = 0;
   pc.divergenceIdx   = divergenceIdx_;
   pc.curlIdx         = curlIdx_;
   pc.colliderSDFIdx  = colliderSDFIdx_;
@@ -232,23 +230,19 @@ void PyroEngine::step(VkCommandBuffer cmd, float dt) {
     dispatchPyro(cmd, kObstacleBC_, pc);
     computeBarrier(cmd);
 
-    // ③b 圧力投影 (非圧縮化): divergence → Jacobi 反復 → project
+    // ③b 圧力投影 (非圧縮化): divergence → Red-Black Gauss-Seidel 反復 → project
     dispatchPyro(cmd, kDivergence_, pc);
     computeBarrier(cmd);
 
-    int readIdx  = 0;
-    int writeIdx = 1;
-    for(int it = 0; it < numJacobiIters; it++) {
-      PyroSimPC ppc    = pc;
-      ppc.pressureIdxA = pressureIdx_[readIdx];
-      ppc.pressureIdxB = pressureIdx_[writeIdx];
-      dispatchPyro(cmd, kPressureJacobi_, ppc);
-      computeBarrier(cmd);
-      std::swap(readIdx, writeIdx);
+    for(int sweep = 0; sweep < numPressureIters; sweep++) {
+      for(uint32_t color = 0; color < 2; color++) {
+        PyroSimPC ppc = pc;
+        ppc.gsColor   = color;
+        dispatchPyro(cmd, kPressureGS_, ppc);
+        computeBarrier(cmd);
+      }
     }
-    PyroSimPC pcProject    = pc;
-    pcProject.pressureIdxA = pressureIdx_[readIdx];
-    dispatchPyro(cmd, kProject_, pcProject);
+    dispatchPyro(cmd, kProject_, pc);
     computeBarrier(cmd);
 
     // ③c 障害物 BC (投影後, A バッファへインプレース)

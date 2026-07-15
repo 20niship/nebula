@@ -141,7 +141,7 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/pyro_curl.comp
     ${SHADER_SRC_DIR}/pyro_vorticity_force.comp
     ${SHADER_SRC_DIR}/pyro_divergence.comp
-    ${SHADER_SRC_DIR}/pyro_pressure_jacobi.comp
+    ${SHADER_SRC_DIR}/pyro_pressure_gs.comp
     ${SHADER_SRC_DIR}/pyro_project.comp
 )
 

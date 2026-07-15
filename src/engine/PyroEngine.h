@@ -49,7 +49,8 @@ public:
   float heatRelease        = 0.0f;  // 燃焼による温度上昇量 (Phase3)
   float smokeYieldPerFuel  = 0.0f;  // 燃焼による密度生成量 (Phase3)
   float flameBrightness    = 0.0f;  // 燃焼による発光量 (Phase3)
-  int numJacobiIters       = 40;    // 圧力投影 Jacobi 反復回数 (Phase2)
+  // 圧力投影 Red-Black Gauss-Seidel sweep回数 (1 sweepにつきred/black 2ディスパッチ)。
+  int numPressureIters     = 10;
   int numSubsteps          = 1;
 
   // ── 障害物 SDF (任意形状、mpm_stl_drop.cpp 由来の MeshSDF.h で構築) ──────
@@ -96,7 +97,7 @@ private:
   int cur_                    = 0;
 
   uint32_t flameIdx_       = 0;
-  uint32_t pressureIdx_[2] = {0, 0}; // Jacobi 反復用ダブルバッファ (フレーム内で複数回入れ替える)
+  uint32_t pressureIdx_    = 0; // Red-Black Gauss-Seidel、in-place更新のため単一バッファ
   uint32_t divergenceIdx_  = 0;
   uint32_t curlIdx_        = 0; // 渦度閉じ込め用スクラッチ (vec4)
 
@@ -116,7 +117,7 @@ private:
   ComputePipeline kCurl_;
   ComputePipeline kVorticityForce_;
   ComputePipeline kDivergence_;
-  ComputePipeline kPressureJacobi_;
+  ComputePipeline kPressureGS_;
   ComputePipeline kProject_;
 
   PyroSimPC buildPC(float dt) const;

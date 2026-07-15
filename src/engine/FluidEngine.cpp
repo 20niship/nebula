@@ -56,11 +56,12 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
 
   // 境界パーティクル用固定領域 [0, max_boundary) を zero-init する。
   // hash_count/hash_sort は常にこの領域全体をディスパッチ対象に含むため、
-  // 境界未ロード時のスロットも typeFlag=0（近傍探索の全フィルタで除外される）かつ
-  // predP が有限値である必要がある。
+  // 境界未ロード時のスロットも typeFlag=6=TYPE_FLAG_UNUSED（近傍探索の全フィルタで除外される）
+  // かつ predP が有限値である必要がある。
+  // typeFlag=0 は XPBD エンジン側で「砂」として使われるため未使用スロットには使えない。
   if(cfg_.max_boundary > 0) {
     std::vector<glm::vec4> zeroVec(cfg_.max_boundary, glm::vec4(0.0f));
-    std::vector<uint32_t> zeroFlags(cfg_.max_boundary, 0u);
+    std::vector<uint32_t> zeroFlags(cfg_.max_boundary, 6u);
     attrBuf_.upload("P", zeroVec.data(), sizeof(glm::vec4) * cfg_.max_boundary, cmdPool, queue);
     attrBuf_.upload("predP", zeroVec.data(), sizeof(glm::vec4) * cfg_.max_boundary, cmdPool, queue);
     attrBuf_.upload("typeFlag", zeroFlags.data(), sizeof(uint32_t) * cfg_.max_boundary, cmdPool, queue);

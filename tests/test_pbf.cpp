@@ -29,11 +29,11 @@ TEST_CASE("TC1: incompressibility - floor no-penetration and min distance") {
   float h       = (cfg.worldMax - cfg.worldMin) / float(cfg.gridRes);
   float spacing = h;
 
-  // 4x4 grid in XZ plane at y=5
+  // 4x4 grid in XY plane (重力軸 Z に垂直な面) at z=5
   std::vector<glm::vec4> pos, invM;
   for(int xi = 0; xi < 4; ++xi) {
-    for(int zi = 0; zi < 4; ++zi) {
-      pos.push_back(glm::vec4(4.5f + xi * spacing, 5.0f, 4.5f + zi * spacing, 1.0f));
+    for(int yi = 0; yi < 4; ++yi) {
+      pos.push_back(glm::vec4(4.5f + xi * spacing, 4.5f + yi * spacing, 5.0f, 1.0f));
       invM.push_back(glm::vec4(1.0f, 0, 0, 0));
     }
   }
@@ -44,11 +44,12 @@ TEST_CASE("TC1: incompressibility - floor no-penetration and min distance") {
   const float dt = 1.0f / 60.0f;
   for(int i = 0; i < 60; ++i) h_.step(dt);
 
-  float floorY = cfg.worldMin + h * 0.5f;
+  float floorZ = cfg.worldMin + h * 0.5f;
   float halfH  = h * 0.5f;
 
+  // 床静止時は SDF クランプにより z == floorZ ちょうどになるため >= で判定する
   for(uint32_t i = 0; i < cfg.N; ++i) {
-    CHECK(h_.readPos(i).y > floorY);
+    CHECK(h_.readPos(i).z >= floorZ);
   }
   for(uint32_t i = 0; i < cfg.N; ++i) {
     auto pi = h_.readPos(i);

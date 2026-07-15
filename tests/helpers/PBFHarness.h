@@ -58,6 +58,7 @@ private:
   ComputePipeline kHashCnt_;
   ComputePipeline kScanLoc_;
   ComputePipeline kScanGlob_;
+  ComputePipeline kAddBase_;
   ComputePipeline kSort_;
   ComputePipeline kPbfDensity_;
   ComputePipeline kPbfDeltaP_;

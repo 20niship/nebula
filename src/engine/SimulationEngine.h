@@ -78,6 +78,7 @@ private:
   ComputePipeline kHashCount_;
   ComputePipeline kHashScanLocal_;
   ComputePipeline kHashScanGlobal_;
+  ComputePipeline kHashAddBase_;
   ComputePipeline kHashSort_;
   ComputePipeline kSolveDensity_;
   ComputePipeline kSolveStretch_;

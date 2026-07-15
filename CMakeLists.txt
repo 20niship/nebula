@@ -21,6 +21,18 @@ find_package(Vulkan REQUIRED)
 
 find_program(GLSLC glslc HINTS "${VULKAN_SDK}/bin" REQUIRED)
 
+# ── shaderc (実行時 GLSL→SPIR-V 動的コンパイル; issue #30 Force システム用) ──
+# Vulkan SDK に同梱の shaderc_combined を使用。新規パッケージ導入は不要。
+find_path(SHADERC_INCLUDE_DIR shaderc/shaderc.hpp
+    HINTS "${VULKAN_SDK}/include"
+    REQUIRED
+)
+find_library(SHADERC_LIB
+    NAMES shaderc_combined
+    HINTS "${VULKAN_SDK}/lib"
+    REQUIRED
+)
+
 # ── Homebrew packages ──────────────────────────────────────────────────────
 list(APPEND CMAKE_PREFIX_PATH "/opt/homebrew")
 find_package(glfw3   REQUIRED)

@@ -11,19 +11,21 @@ VkShaderModule ComputePipeline::loadShader(const std::string& path) {
   file.seekg(0);
   file.read(code.data(), size);
 
+  return createShaderModuleFromSpirv(reinterpret_cast<const uint32_t*>(code.data()), size / sizeof(uint32_t));
+}
+
+VkShaderModule ComputePipeline::createShaderModuleFromSpirv(const uint32_t* code, size_t wordCount) {
   VkShaderModuleCreateInfo info{};
   info.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-  info.codeSize = size;
-  info.pCode    = reinterpret_cast<const uint32_t*>(code.data());
+  info.codeSize = wordCount * sizeof(uint32_t);
+  info.pCode    = code;
 
   VkShaderModule mod;
-  if(vkCreateShaderModule(device_, &info, nullptr, &mod) != VK_SUCCESS) throw std::runtime_error("Failed to create shader module: " + path);
+  if(vkCreateShaderModule(device_, &info, nullptr, &mod) != VK_SUCCESS) throw std::runtime_error("Failed to create shader module");
   return mod;
 }
 
-void ComputePipeline::init(VkDevice device, VkDescriptorSetLayout bindlessLayout, const std::string& shaderPath) {
-  device_ = device;
-
+void ComputePipeline::buildPipeline(VkShaderModule shaderModule) {
   VkPushConstantRange pcRange{};
   pcRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
   pcRange.offset     = 0;
@@ -32,13 +34,11 @@ void ComputePipeline::init(VkDevice device, VkDescriptorSetLayout bindlessLayout
   VkPipelineLayoutCreateInfo layoutInfo{};
   layoutInfo.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
   layoutInfo.setLayoutCount         = 1;
-  layoutInfo.pSetLayouts            = &bindlessLayout;
+  layoutInfo.pSetLayouts            = &bindlessSetLayout_;
   layoutInfo.pushConstantRangeCount = 1;
   layoutInfo.pPushConstantRanges    = &pcRange;
 
   if(vkCreatePipelineLayout(device_, &layoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) throw std::runtime_error("Failed to create compute pipeline layout");
-
-  VkShaderModule shaderModule = loadShader(shaderPath);
 
   VkPipelineShaderStageCreateInfo stageInfo{};
   stageInfo.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -56,16 +56,33 @@ void ComputePipeline::init(VkDevice device, VkDescriptorSetLayout bindlessLayout
   vkDestroyShaderModule(device_, shaderModule, nullptr);
 }
 
+void ComputePipeline::init(VkDevice device, VkDescriptorSetLayout bindlessLayout, const std::string& shaderPath) {
+  device_             = device;
+  bindlessSetLayout_  = bindlessLayout;
+  buildPipeline(loadShader(shaderPath));
+}
+
+void ComputePipeline::initFromSpirv(VkDevice device, VkDescriptorSetLayout bindlessLayout, const std::vector<uint32_t>& spirv) {
+  device_            = device;
+  bindlessSetLayout_ = bindlessLayout;
+  buildPipeline(createShaderModuleFromSpirv(spirv.data(), spirv.size()));
+}
+
 void ComputePipeline::cleanup() {
   vkDestroyPipeline(device_, pipeline, nullptr);
   vkDestroyPipelineLayout(device_, pipelineLayout, nullptr);
+  pipeline       = VK_NULL_HANDLE;
+  pipelineLayout = VK_NULL_HANDLE;
 }
 
 void ComputePipeline::dispatch(VkCommandBuffer cmd, VkDescriptorSet bindlessSet, const SimPC& pc, uint32_t particleCount) {
+  uint32_t groups = (particleCount + 255) / 256;
+  dispatchRaw(cmd, bindlessSet, &pc, sizeof(SimPC), groups);
+}
+
+void ComputePipeline::dispatchRaw(VkCommandBuffer cmd, VkDescriptorSet bindlessSet, const void* pcData, uint32_t pcSize, uint32_t groupCountX) {
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &bindlessSet, 0, nullptr);
-  vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(SimPC), &pc);
-
-  uint32_t groups = (particleCount + 255) / 256;
-  vkCmdDispatch(cmd, groups, 1, 1);
+  vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, pcSize, pcData);
+  vkCmdDispatch(cmd, groupCountX, 1, 1);
 }

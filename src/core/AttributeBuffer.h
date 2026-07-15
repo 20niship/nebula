@@ -7,7 +7,9 @@
 #include <vulkan/vulkan.h>
 
 // MoltenVK (Apple M2) maxPerStageDescriptorStorageBuffers = 31
-static constexpr uint32_t MAX_BINDLESS_BUFFERS = 16;
+// MPMEngine が既に16スロット使い切っているため、Force用バッファ (issue #30) 追加分の
+// 余裕を持たせて20に引き上げ (31に対し十分な余裕を確保)
+static constexpr uint32_t MAX_BINDLESS_BUFFERS = 20;
 
 // SoAバッファマネージャ。addAttribute()でVMAバッファを確保し、
 // Bindlessディスクリプタ配列へ自動登録してインデックスを返す。

@@ -34,6 +34,10 @@ void main() {
     ivec3 gi = ivec3(clamp((pi - vec3(pc.worldMin)) / pc.cellSize,
                            vec3(0.0), vec3(float(pc.gridRes) - 1.0)));
 
+    // 27近傍セルのMorton符号を軸ごとに事前計算し、ループ内での重複計算を避ける
+    uint mx[3], my[3], mz[3];
+    mortonAxisTriples(gi, mx, my, mz);
+
     for (int dz = -1; dz <= 1; ++dz)
     for (int dy = -1; dy <= 1; ++dy)
     for (int dx = -1; dx <= 1; ++dx) {
@@ -42,8 +46,7 @@ void main() {
             any(greaterThanEqual(nc, ivec3(int(pc.gridRes))))) continue;
 
         // Morton符号で cid を計算（common.glsl の cellId と一致させる）
-        uint cid   = mortonExpand(uint(nc.x)) | (mortonExpand(uint(nc.y)) << 1u)
-                                              | (mortonExpand(uint(nc.z)) << 2u);
+        uint cid   = mx[dx + 1] | (my[dy + 1] << 1u) | (mz[dz + 1] << 2u);
         uint cnt   = readUint(pc.cellCountIdx, cid);
         uint start = readUint(pc.cellOffsetIdx, cid) - cnt;
 

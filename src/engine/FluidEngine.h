@@ -59,12 +59,6 @@ public:
   void init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const FluidConfig& cfg = {});
   void cleanup();
 
-  // emitter からの粒子生成 (容量不足時は内部で growFluidCapacity() を呼び、
-  // P/v/predP/... バッファを再確保する)。バッファが再確保されると
-  // attrBuf_.getBuffer(...) / getPositionBuffer() の返す VkBuffer は別ハンドルになるため、
-  // 呼び出し側がその時点の VkBuffer ハンドルをコマンドバッファに焼き込む
-  // (vkCmdCopyBuffer など、例: recordKinematicBoundaryUpdate) 前に、
-  // 必ず1フレームにつき1回・最初に呼び出すこと。step() はこれを呼ばない。
   void emitFromEmitters(float dt);
 
   void step(VkCommandBuffer cmd, float dt);
@@ -73,6 +67,12 @@ public:
   void addEmitter(std::shared_ptr<Emitter> emitter);
   void clearEmitters();
   uint32_t nFluid() const { return nFluid_; }
+
+  // 現在確保済みの全パーティクル用バッファ容量（境界固定領域 + 流体可変長領域 +
+  // ディスパッチ端数パディング）。growFluidCapacity() による動的拡張（Issue #13）で
+  // 増加し得るため、呼び出し側（CPU側の readback 先バッファ等）は cfg().fluidCount() 等の
+  // 静的な初期値ではなく、毎フレームこれを見てサイズを追従させること。
+  uint32_t totalParticleCapacity() const { return totalBufferCapacity(); }
 
   void loadBoundary(const std::string& objPath, float spacing);
   void loadBoundary(const std::string& objPath, float spacing, float scale, glm::vec3 offset, bool yup_to_zup);
@@ -157,7 +157,7 @@ private:
   // ── 動的粒子数確保 (Issue #13) ──────────────────────────────────────────
   // バッファレイアウト: [0, max_boundary) 境界(固定) | [max_boundary, max_boundary+fluidCapacity_) 流体(可変長)
   //                     | 末尾 kDispatchPad 要素は端数ワークグループの安全マージン
-  uint32_t fluidCapacity_ = 0; // 現在確保済みの流体パーティクル容量 (>= nFluid_)
+  uint32_t fluidCapacity_                = 0;   // 現在確保済みの流体パーティクル容量 (>= nFluid_)
   static constexpr uint32_t kDispatchPad = 256; // ローカルワークグループサイズと同じ
   uint32_t totalBufferCapacity() const { return cfg_.max_boundary + fluidCapacity_ + kDispatchPad; }
   void growFluidCapacity(uint32_t minRequired);

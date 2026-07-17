@@ -20,7 +20,18 @@ void AttributeBuffer::init(VkDevice device, VmaAllocator allocator, VkDescriptor
 
 void AttributeBuffer::cleanup() {
   for(auto& [name, attr] : attributes_) vmaDestroyBuffer(allocator_, attr.buffer, attr.allocation);
-  vkDestroyDescriptorSetLayout(device_, descriptorSetLayout, nullptr);
+  attributes_.clear();
+  // nextIndex_ をリセットしないと、cleanup() 後に再度 init()+addAttribute() する
+  // (例: NbFluidEngineComponent::rebuild_engine_() の再構築)際、既に破棄済みの
+  // バッファ分だけ nextIndex_ が進んだ状態から再度カウントし始めてしまい、
+  // MAX_BINDLESS_BUFFERS(16) をすぐに超えて addAttribute() が例外を投げる
+  // （FluidEngine::init() だけで12個消費するため、2回目の init() で早々に破綻する）。
+  nextIndex_ = 0;
+  if(descriptorSetLayout != VK_NULL_HANDLE) {
+    vkDestroyDescriptorSetLayout(device_, descriptorSetLayout, nullptr);
+    descriptorSetLayout = VK_NULL_HANDLE;
+  }
+  descriptorSet = VK_NULL_HANDLE;
 }
 
 uint32_t AttributeBuffer::addAttribute(const std::string& name, VkDeviceSize elementSize, uint32_t count) {

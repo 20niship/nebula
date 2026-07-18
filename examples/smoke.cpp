@@ -22,7 +22,9 @@ static const std::string SHADER_DIR_STR = SHADER_DIR;
 // ── CLI ───────────────────────────────────────────────────────────────────────
 
 struct SmokeArgs : public argparse::Args {
-  float& world_size           = kwarg("world-size", "simulation world size").set_default(20.0f);
+  float& domain_size_x        = kwarg("domain-size-x", "domain physical size X [m]").set_default(20.0f);
+  float& domain_size_y        = kwarg("domain-size-y", "domain physical size Y [m]").set_default(20.0f);
+  float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(20.0f);
   int& max_particles          = kwarg("max-particles", "max particle count").set_default(8192);
   float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 60.0f);
   float& rise_accel           = kwarg("rise-accel", "smoke buoyancy acceleration").set_default(8.0f);
@@ -41,13 +43,13 @@ public:
     dt_                 = args.dt;
     base_.screenshotDir = args.screenshot_dir;
 
-    // FluidConfig: 煙専用の小さな設定。grid_res は cellSize >= 2*spacing を満たすよう調整。
+    // FluidConfig: 煙専用の小さな設定。cellSize は cellSize >= 2*spacing を満たすよう調整。
     FluidConfig cfg;
     cfg.fluid_nx     = uint32_t(std::cbrt(double(args.max_particles)));
     cfg.fluid_ny     = cfg.fluid_nx;
     cfg.fluid_nz     = cfg.fluid_nx;
-    cfg.world_size   = args.world_size;
-    cfg.grid_res     = std::max(16u, cfg.fluid_nx / 2u);
+    cfg.domainSize   = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
+    cfg.cellSize     = args.domain_size_x / float(std::max(16u, cfg.fluid_nx / 2u));
     cfg.max_boundary = 0;
 
     base_.initWindow("Vulkan Sim – Smoke");
@@ -87,8 +89,8 @@ private:
   }
 
   void setupSmoke(const FluidConfig& cfg, const SmokeArgs& args) {
-    const float w  = cfg.world_size;
-    const float cx = w * 0.5f, cy = w * 0.5f;
+    const glm::vec3 w = cfg.domainSize;
+    const float cx = w.x * 0.5f, cy = w.y * 0.5f;
 
     // 底面中央から連続放出するソース（typeFlag=4 = 煙）
     auto src                = std::make_shared<SphereEmitter>();
@@ -187,8 +189,8 @@ private:
     pc.posIdx        = engine_.posIdx;
     pc.velIdx        = engine_.velIdx;
     pc.particleCount = engine_.nFluid();
-    pc.worldMin      = 0.0f;
-    pc.worldMax      = engine_.config().world_size;
+    pc.worldMin      = glm::vec3(0.0f);
+    pc.worldMax      = engine_.config().domainSize;
     pc.boundaryStart = engine_.config().max_boundary; // 流体パーティクル領域の開始オフセット
 
     graphicsPipe_.draw(cmd, engine_.descriptorSet, pc, engine_.nFluid());

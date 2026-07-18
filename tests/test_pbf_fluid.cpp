@@ -321,11 +321,11 @@ TEST_CASE("TC6: fluid block settles at bottom, does not fill box") {
 // h >= 2d が成立しない場合、隣接粒子数が激減し密度≈0 → lambda爆発 → 全充填。
 // FluidConfig デフォルト値でチェック。
 TEST_CASE("TC7: SPH kernel radius satisfies h >= 2 * particle_spacing") {
-  // h = world_size / grid_res, d = world_size / fluid_nx
-  // h >= 2d  ⟺  grid_res * 2 <= fluid_nx
+  // h = cellSize (全軸共通), d = domainSize.x / fluid_nx
+  // h >= 2d  ⟺  cellSize >= 2 * domainSize.x / fluid_nx
   FluidConfig cfg{};
-  CHECK(cfg.grid_res * 2 <= cfg.fluid_nx);
-  CHECK(cfg.particleSpacing() * 2.0f <= cfg.cellSize() + 1e-5f);
+  CHECK(cfg.cellSize >= 2.0f * cfg.domainSize.x / float(cfg.fluid_nx));
+  CHECK(cfg.particleSpacing() * 2.0f <= cfg.cellSize + 1e-5f);
 }
 
 // ── TC8: SPH密度キャリブレーション ───────────────────────────────────────────────
@@ -394,8 +394,8 @@ TEST_CASE("TC9: fluid capacity grows dynamically beyond initial fluidCount() via
     cfg.fluid_nx     = 4;
     cfg.fluid_ny     = 1;
     cfg.fluid_nz     = 4; // fluidCount() = 16 (小さい初期容量)
-    cfg.world_size   = 10.0f;
-    cfg.grid_res     = 4;
+    cfg.domainSize   = glm::vec3(10.0f, 10.0f, 10.0f);
+    cfg.cellSize     = 10.0f / 4.0f;
     cfg.max_boundary = 0;
 
     FluidEngine engine;
@@ -437,8 +437,8 @@ TEST_CASE("TC10: boundary particle data survives fluid capacity growth") {
     cfg.fluid_nx     = 4;
     cfg.fluid_ny     = 1;
     cfg.fluid_nz     = 4; // fluidCount() = 16
-    cfg.world_size   = 10.0f;
-    cfg.grid_res     = 4;
+    cfg.domainSize   = glm::vec3(10.0f, 10.0f, 10.0f);
+    cfg.cellSize     = 10.0f / 4.0f;
     cfg.max_boundary = 8;
 
     FluidEngine engine;
@@ -476,6 +476,61 @@ TEST_CASE("TC10: boundary particle data survives fluid capacity growth") {
         CHECK(p.y == 2.0f);
         CHECK(p.z == 3.0f);
     }
+
+    engine.cleanup();
+    ctx.cleanup();
+}
+
+// ── TC11: 直方体(非立方体)ドメイン — 短辺軸の境界クランプ (issue #46) ──────────
+// domainSize を Y 軸だけ短い偏平ドメインにし、Y 方向へ高速射出した粒子が
+// Y 軸の実際の上限 (domainSize.y=5) でクランプされることを確認する。
+// worldMin/worldMax が vec3 化される前は全軸共通のスカラーだったため、
+// このテストは「Y軸の境界判定に誤って X/Z 軸のサイズが使われていないか」を検出する。
+TEST_CASE("TC11: rectangular (non-cube) domain clamps particles to the short axis boundary") {
+    HeadlessCtx ctx;
+    ctx.init();
+
+    FluidConfig cfg;
+    cfg.fluid_nx     = 4;
+    cfg.fluid_ny     = 4;
+    cfg.fluid_nz     = 4;
+    cfg.domainSize   = glm::vec3(20.0f, 5.0f, 20.0f); // Y 軸だけ短い偏平ドメイン
+    cfg.cellSize     = 1.25f;
+    cfg.max_boundary = 0;
+
+    FluidEngine engine;
+    engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
+
+    // ドメイン中央付近から Y 方向へ高速発射 (X/Z 方向には力を加えない)
+    auto src                = std::make_shared<AABBEmitter>();
+    src->center              = glm::vec3(10.0f, 2.5f, 10.0f);
+    src->size                = glm::vec3(0.1f, 0.1f, 0.1f);
+    src->vel                 = glm::vec3(0.0f, 50.0f, 0.0f);
+    src->particles_per_step = 1;
+    src->step_count          = 1;
+    src->particleType        = 1u;
+    engine.addEmitter(src);
+
+    const float dt = 1.0f / 60.0f;
+    for(int f = 0; f < 30; ++f) {
+        engine.emitFromEmitters(dt);
+        VkCommandBuffer cmd = ctx.beginCmd();
+        engine.step(cmd, dt);
+        ctx.submitCmd(cmd);
+    }
+
+    CHECK(engine.nFluid() == 1);
+
+    glm::vec4 p{};
+    ctx.readBuffer(engine.getPositionBuffer(), cfg.max_boundary * sizeof(glm::vec4), &p, sizeof(p));
+
+    // Y 軸は短いドメイン (5m) の境界でクランプされているはず。
+    // もし誤って X/Z 側の 20m がクランプ境界に使われていれば p.y はここまで到達しない。
+    CHECK(p.y <= cfg.domainSize.y);
+    CHECK(p.y > cfg.domainSize.y * 0.5f);
+    // X/Z には力を加えていないため、ほぼ初期位置に留まっているはず。
+    CHECK(std::abs(p.x - 10.0f) < 1.0f);
+    CHECK(std::abs(p.z - 10.0f) < 1.0f);
 
     engine.cleanup();
     ctx.cleanup();

@@ -5,6 +5,9 @@ layout(set = 0, binding = 0) buffer StorageBuffers {
     uint data[];
 } buffers[];
 
+// C++側 src/core/SimPC.h と同一オフセット順であること (offsetof の static_assert 参照)。
+// hash compat: cellCountIdx(20)/cellOffsetIdx(24)/hashCells(36) は MPMSimPC (mpm_common.glsl)
+// と完全一致。gridRes/worldMin/worldMax はこの3フィールドより後ろにあるため一致不要。
 layout(push_constant) uniform PC {
     // Bindless indices
     uint  posIdx;
@@ -12,24 +15,25 @@ layout(push_constant) uniform PC {
     uint  predPIdx;
     uint  invMassIdx;
     uint  typeFlagIdx;
-    uint  cellCountIdx;
-    uint  cellOffsetIdx;
+    uint  cellCountIdx;   // ← hash compat
+    uint  cellOffsetIdx;  // ← hash compat
     uint  sortedIdxIdx;
     // Particle / grid
     uint  particleCount;
-    uint  gridRes;
+    uint  hashCells;      // 空間ハッシュバッファの実要素数 (=cubeRes^3) ← hash compat
     uint  stretchEdgesIdx;
     uint  lambdasIdx;
     // World / time
     float dt;
-    float cellSize;
-    float worldMin;
-    float worldMax;
-    // SDF (gravity は issue #30 で Force システムへ移行し削除)
+    float cellSize;       // 全軸共通のセルサイズ [m]
     float restitution;
     float friction;
+    // Grid resolution / world bounds
+    uvec3 gridRes;         // 各軸の実セル数 (nx,ny,nz)
     float particleRadius;
+    vec3  worldMin;         // ドメイン下限座標 [m]
     uint  forceBufIdx;      // Force配列 (ForceGPU×forceCount) の bindless index (0=無効)
+    vec3  worldMax;         // ドメイン上限座標 [m]
     // Cloth / Coupling
     uint  couplingForceIdx;
     uint  clothVertexCount;
@@ -95,7 +99,7 @@ uint mortonExpand(uint v) {
 
 uint cellId(vec3 p) {
     vec3 local = clamp((p - pc.worldMin) / pc.cellSize,
-                       vec3(0.0), vec3(float(pc.gridRes) - 1.0));
+                       vec3(0.0), vec3(pc.gridRes) - vec3(1.0));
     uvec3 g = uvec3(local);
     return mortonExpand(g.x) | (mortonExpand(g.y) << 1u) | (mortonExpand(g.z) << 2u);
 }

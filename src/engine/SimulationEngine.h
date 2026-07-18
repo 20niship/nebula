@@ -5,19 +5,24 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
+#include "../core/Domain.h"
 #include "ClothMesh.h"
 #include "ComputePipeline.h"
 #include "EngineBase.h"
 #include "SimPC.h"
 
+// issue #46: ドメインは domainSize(vec3, 物理サイズ[m]) + cellSize(float, 全軸共通の
+// セルサイズ[m]) で指定する。各軸の実セル数は gridRes() (= domain::gridRes()) から導出。
 struct ClothConfig {
   uint32_t cloth_grid_n = 128;
-  float world_size      = 10.0f;
-  uint32_t grid_res     = 64;
+
+  glm::vec3 domainSize{10.0f, 10.0f, 10.0f}; // ドメイン物理サイズ [m] (旧 world_size)
+  float cellSize = 10.0f / 64.0f;            // 全軸共通のセルサイズ [m] (旧 grid_res の逆算値)
 
   uint32_t clothVertCount() const { return cloth_grid_n * cloth_grid_n; }
-  uint32_t totalCells() const { return grid_res * grid_res * grid_res; }
-  float cellSize() const { return world_size / float(grid_res); }
+  glm::uvec3 gridRes() const { return domain::gridRes(domainSize, cellSize); }
+  // 空間ハッシュバッファの実要素数 (= cubeRes^3。gridRes.x*y*zではない点に注意)
+  uint32_t totalCells() const { return domain::hashCells(gridRes()); }
 };
 
 // 重力・風は addForce() で GravityForce/ConstantWindForce を登録すること
@@ -34,7 +39,7 @@ public:
   // ImGui から書き換え可能
   float restitution        = 0.3f;
   float friction           = 0.1f;
-  float particleRadius     = 0.0f; // init() で cfg_.cellSize()*0.5 に設定
+  float particleRadius     = 0.0f; // init() で cfg_.cellSize*0.5 に設定
   float stretchCompliance  = 1e-4f;
   float bendCompliance     = 1e-2f;
   int solverIterations     = 3;

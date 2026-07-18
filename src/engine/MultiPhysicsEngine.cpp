@@ -41,16 +41,17 @@ SimPC MultiPhysicsEngine::buildPC(float subDt) const {
   pc.cellOffsetIdx     = cellOffsetIdx_;
   pc.sortedIdxIdx      = sortedIdxIdx_;
   pc.particleCount     = cfg_.totalMax();
-  pc.gridRes           = cfg_.grid_res;
+  pc.hashCells         = cfg_.totalCells();
   pc.stretchEdgesIdx   = stretchEdgesIdx_;
   pc.lambdasIdx        = clothLambdasIdx_;
   pc.dt                = subDt;
-  pc.cellSize          = cfg_.cellSize();
-  pc.worldMin          = 0.0f;
-  pc.worldMax          = cfg_.world_size;
+  pc.cellSize          = cfg_.cellSize;
+  pc.gridRes           = cfg_.gridRes();
+  pc.worldMin          = glm::vec3(0.0f);
+  pc.worldMax          = cfg_.domainSize;
   pc.restitution       = restitution;
   pc.friction          = friction;
-  pc.particleRadius    = cfg_.cellSize() * 0.5f;
+  pc.particleRadius    = cfg_.cellSize * 0.5f;
   pc.forceBufIdx       = forcesIdx_;
   pc.couplingForceIdx  = couplingForceIdx_;
   pc.clothVertexCount  = cfg_.clothCount();
@@ -113,8 +114,10 @@ void MultiPhysicsEngine::init(VkDevice device, VmaAllocator allocator, VkDescrip
 }
 
 void MultiPhysicsEngine::initClothParticles(VkCommandPool cmdPool, VkQueue queue) {
-  // 布: XY 平面、Z = world * 0.78 付近
-  clothMesh_.build(cfg_.cloth_grid_n, cfg_.world_size / float(cfg_.cloth_grid_n) * 0.9f, cfg_.world_size * 0.5f, cfg_.world_size * 0.5f, cfg_.world_size * 0.78f);
+  // 布: XY 平面、Z = domainSize.z * 0.78 付近
+  // spacing は XY 最短軸を基準にし、非立方体ドメインでも布が短辺からはみ出さないようにする
+  const float minXY = std::min(cfg_.domainSize.x, cfg_.domainSize.y);
+  clothMesh_.build(cfg_.cloth_grid_n, minXY / float(cfg_.cloth_grid_n) * 0.9f, cfg_.domainSize.x * 0.5f, cfg_.domainSize.y * 0.5f, cfg_.domainSize.z * 0.78f);
 
   // 上端全行 (i==0) をピン留め (invMass=0)
   for(int j = 0; j < (int)cfg_.cloth_grid_n; ++j) clothMesh_.invMasses[clothMesh_.idx(0, j)].x = 0.0f;
@@ -143,9 +146,9 @@ void MultiPhysicsEngine::initClothParticles(VkCommandPool cmdPool, VkQueue queue
 void MultiPhysicsEngine::initFluidParticles(VkCommandPool cmdPool, VkQueue queue) {
   // 流体: XY平面に32×32、Z方向に16層積み上げ (Z-up座標系)
   // 布は Z≈7.8 に配置。流体は Z=0.5 から積み上げ → 重力で底(Z≈0)に溜まる
-  const float spacing = cfg_.world_size / float(cfg_.fluid_nx);
-  const float startX  = (cfg_.world_size - (cfg_.fluid_nx - 1) * spacing) * 0.5f;
-  const float startY  = (cfg_.world_size - (cfg_.fluid_nz - 1) * spacing) * 0.5f;
+  const float spacing = cfg_.domainSize.x / float(cfg_.fluid_nx);
+  const float startX  = (cfg_.domainSize.x - (cfg_.fluid_nx - 1) * spacing) * 0.5f;
+  const float startY  = (cfg_.domainSize.y - (cfg_.fluid_nz - 1) * spacing) * 0.5f;
   const float startZ  = 0.5f; // 布(Z=7.8)の下から積み上げ
 
   std::vector<glm::vec4> pos(cfg_.fluidCount());

@@ -48,9 +48,9 @@ void main() {
 
     // SDF ボックス壁衝突（位置を箱内へクランプ）
     float r  = pc.particleRadius;
-    float lo = pc.worldMin + r;
-    float hi = pc.worldMax - r;
-    predP.xyz = clamp(predP.xyz, vec3(lo), vec3(hi));
+    vec3 lo = pc.worldMin + vec3(r);
+    vec3 hi = pc.worldMax - vec3(r);
+    predP.xyz = clamp(predP.xyz, lo, hi);
 
     writeVec4(pc.velIdx,   idx, v);       // 力を積分した速度（衝突応答はしない）
     writeVec4(pc.predPIdx, idx, predP);

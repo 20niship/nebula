@@ -6,6 +6,7 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
+#include "../core/Domain.h"
 #include "ClothConstraint.h"
 #include "ClothMesh.h"
 #include "ComputePipeline.h"
@@ -23,7 +24,9 @@ public:
   uint32_t addCloth(const ClothMesh& mesh);
   void addConstraint(const ClothConstraint& c);
 
-  void init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, float worldSize, uint32_t gridRes);
+  // issue #46: domainSize(vec3, ドメイン物理サイズ[m]) + cellSize(float, 全軸共通の
+  // セルサイズ[m]) で指定する。
+  void init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, glm::vec3 domainSize, float cellSize);
   void cleanup();
 
   // 1フレーム進める (compute command buffer に積む)
@@ -66,8 +69,8 @@ private:
   std::vector<ClothConstraint> constraints_;
 
   uint32_t totalCount_ = 0;
-  float worldSize_     = 10.0f;
-  uint32_t gridRes_    = 64;
+  glm::vec3 domainSize_{10.0f, 10.0f, 10.0f};
+  float cellSize_ = 10.0f / 64.0f;
 
   uint32_t predPIdx_        = 0;
   uint32_t invMassIdx_      = 0;
@@ -118,6 +121,7 @@ private:
   void createStagingBuffer();
   void computeBarrier(VkCommandBuffer cmd);
   void transferBarrier(VkCommandBuffer cmd);
-  uint32_t totalCells() const { return gridRes_ * gridRes_ * gridRes_; }
-  float cellSize() const { return worldSize_ / float(gridRes_); }
+  glm::uvec3 gridRes() const { return domain::gridRes(domainSize_, cellSize_); }
+  // 空間ハッシュバッファの実要素数 (= cubeRes^3。gridRes.x*y*zではない点に注意)
+  uint32_t totalCells() const { return domain::hashCells(gridRes()); }
 };

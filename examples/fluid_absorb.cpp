@@ -107,8 +107,8 @@ public:
     cfg.fluid_nx     = 26;
     cfg.fluid_ny     = 26;
     cfg.fluid_nz     = 2;
-    cfg.world_size   = kWorldSize;
-    cfg.grid_res     = 13; // cellSize≈1.54m, h/d≈2.0 ✓ (spacing=20/26≈0.77m)
+    cfg.domainSize   = glm::vec3(kWorldSize, kWorldSize, kWorldSize);
+    cfg.cellSize     = kWorldSize / 13.0f; // ≈1.54m, h/d≈2.0 ✓ (spacing=20/26≈0.77m)
     cfg.max_boundary = 5000;
 
     base_.initWindow("Vulkan Sim – Fluid Absorb");
@@ -172,7 +172,7 @@ private:
     movingVel_.resize(nMoving_);
 
     // 楕円水たまりを一発投入 (XY 中央, 床面の1粒子間隔上)
-    const float particleR   = cfg.cellSize() * 0.5f;             // SDF 衝突距離
+    const float particleR   = cfg.cellSize * 0.5f;                // SDF 衝突距離
     const float floorZ      = particleR + cfg.particleSpacing(); // 床ちょうど上から投下
     auto src                = std::make_shared<EllipseEmitter>();
     src->center             = glm::vec3(kWorldSize * 0.5f, kWorldSize * 0.5f, floorZ);
@@ -257,8 +257,8 @@ private:
     pc.velIdx        = engine_.velIdx;
     pc.typeFlagIdx   = engine_.typeFlagIdx;
     pc.particleCount = engine_.nFluid();
-    pc.worldMin      = 0.0f;
-    pc.worldMax      = engine_.config().world_size;
+    pc.worldMin      = glm::vec3(0.0f);
+    pc.worldMax      = engine_.config().domainSize;
     pc.boundaryStart = engine_.config().max_boundary; // 流体パーティクル領域の開始オフセット
 
     graphicsPipe_.draw(cmd, engine_.descriptorSet, pc, engine_.nFluid());

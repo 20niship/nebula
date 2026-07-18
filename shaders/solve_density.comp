@@ -23,7 +23,7 @@ void main() {
     float r = pc.particleRadius;
 
     ivec3 gi = ivec3(clamp((pi - pc.worldMin) / pc.cellSize,
-                            vec3(0.0), vec3(float(pc.gridRes) - 1.0)));
+                            vec3(0.0), vec3(pc.gridRes) - vec3(1.0)));
 
     // 27近傍セルのMorton符号を軸ごとに事前計算し、ループ内での重複計算を避ける
     uint mx[3], my[3], mz[3];
@@ -36,7 +36,7 @@ void main() {
     for (int dx = -1; dx <= 1; ++dx) {
         ivec3 nc = gi + ivec3(dx, dy, dz);
         if (any(lessThan(nc, ivec3(0))) ||
-            any(greaterThanEqual(nc, ivec3(int(pc.gridRes))))) continue;
+            any(greaterThanEqual(nc, ivec3(pc.gridRes)))) continue;
 
         // Morton符号で cid を計算（common.glsl の cellId / hash_count.comp と一致させる必要がある）
         uint cid   = mx[dx + 1] | (my[dy + 1] << 1u) | (mz[dz + 1] << 2u);
@@ -85,7 +85,7 @@ void main() {
     }
 
     pp.xyz = clamp(pi + correction,
-                   vec3(pc.worldMin + r),
-                   vec3(pc.worldMax - r));
+                   pc.worldMin + vec3(r),
+                   pc.worldMax - vec3(r));
     writeVec4(pc.predPIdx, i, pp);
 }

@@ -1,10 +1,17 @@
 #pragma once
 
+#include "MPMSimPC.h"
+#include "PyroSimPC.h"
 #include "SimPC.h"
 #include <cstdint>
 #include <string>
 #include <vector>
 #include <vulkan/vulkan.h>
+
+// buildPipeline() は全パイプライン共通で push constant range を sizeof(SimPC) に固定する
+// (下記 initFromSpirv のコメント参照)。MPMSimPC/PyroSimPC がこの範囲に収まることを保証する。
+static_assert(sizeof(MPMSimPC) <= sizeof(SimPC), "MPMSimPC must fit within the shared push constant range (sizeof(SimPC))");
+static_assert(sizeof(PyroSimPC) <= sizeof(SimPC), "PyroSimPC must fit within the shared push constant range (sizeof(SimPC))");
 
 class ComputePipeline {
 public:

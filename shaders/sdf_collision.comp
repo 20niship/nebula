@@ -13,24 +13,24 @@ void main() {
     vec4 v     = readVec4(pc.velIdx,   idx);
 
     float r   = pc.particleRadius;
-    float lo  = pc.worldMin + r;
-    float hi  = pc.worldMax - r;
+    vec3 lo   = pc.worldMin + vec3(r);
+    vec3 hi   = pc.worldMax - vec3(r);
 
     // X軸
-    if (predP.x < lo) { predP.x = lo; v.x = abs(v.x) * pc.restitution; }
-    if (predP.x > hi) { predP.x = hi; v.x = -abs(v.x) * pc.restitution; }
+    if (predP.x < lo.x) { predP.x = lo.x; v.x = abs(v.x) * pc.restitution; }
+    if (predP.x > hi.x) { predP.x = hi.x; v.x = -abs(v.x) * pc.restitution; }
     // Y軸 (壁)
-    if (predP.y < lo) { predP.y = lo; v.y = abs(v.y) * pc.restitution; }
-    if (predP.y > hi) { predP.y = hi; v.y = -abs(v.y) * pc.restitution; }
+    if (predP.y < lo.y) { predP.y = lo.y; v.y = abs(v.y) * pc.restitution; }
+    if (predP.y > hi.y) { predP.y = hi.y; v.y = -abs(v.y) * pc.restitution; }
     // Z軸 (床・天井, Z-up)
-    if (predP.z < lo) {
-        predP.z = lo;
+    if (predP.z < lo.z) {
+        predP.z = lo.z;
         v.z = abs(v.z) * pc.restitution;
         // 床摩擦: XY 速度を減衰
         v.x *= (1.0 - pc.friction);
         v.y *= (1.0 - pc.friction);
     }
-    if (predP.z > hi) { predP.z = hi; v.z = -abs(v.z) * pc.restitution; }
+    if (predP.z > hi.z) { predP.z = hi.z; v.z = -abs(v.z) * pc.restitution; }
 
     writeVec4(pc.predPIdx, idx, predP);
     writeVec4(pc.velIdx,   idx, v);

@@ -2,6 +2,7 @@
 // セクション1-2: CPU-onlyテスト (形状関数、構成式)
 // セクション2-6: GPUテスト (P2G/GridUpdate/G2P/統合)
 #include "core/Emitter.h"
+#include "engine/MPMEngine.h"
 #include "helpers/HeadlessCtx.h"
 #include "helpers/MPMHarness.h"
 #include <cmath>
@@ -738,5 +739,53 @@ TEST_CASE("MPM GPU Advanced - 7-4: Wall boundary clamps particle position and ve
   CHECK(!std::isnan(finalVel.z));
 
   sim.cleanup();
+  ctx.cleanup();
+}
+
+// ── 直方体(非立方体)ドメイン — 短辺軸の境界クランプ (issue #46) ────────────────
+// MPMHarness は簡略化のため常に立方体ドメイン (gridRes/worldSize スカラー) を
+// 前提とするため、このテストは MPMEngine/MPMConfig を直接使い、domainSize を
+// Y 軸だけ短い偏平ドメインにして G2P の境界クランプ (mpm_g2p.comp) を検証する。
+TEST_CASE("MPM GPU - 8-1: rectangular (non-cube) domain clamps particle to the short axis boundary") {
+  HeadlessCtx ctx;
+  ctx.init();
+
+  MPMConfig cfg;
+  cfg.nx           = 0;
+  cfg.ny           = 0;
+  cfg.nz           = 0;
+  cfg.maxParticles = 4;
+  cfg.domainSize   = glm::vec3(20.0f, 5.0f, 20.0f); // Y 軸だけ短い偏平ドメイン
+  cfg.cellSize     = 1.25f;
+
+  MPMEngine engine;
+  engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
+
+  const float Vp = cfg.cellSize * cfg.cellSize * cfg.cellSize;
+  // ドメイン中央付近から Y 方向へ高速発射 (X/Z 方向には力を加えない)
+  std::vector<glm::vec4> pos = {glm::vec4(10.0f, 2.5f, 10.0f, Vp)};
+  std::vector<glm::vec4> vel = {glm::vec4(0.0f, 50.0f, 0.0f, 0.0f)};
+  engine.appendParticles(pos, vel);
+
+  const float dt = 1.0f / 60.0f;
+  for(int f = 0; f < 30; ++f) {
+    VkCommandBuffer cmd = ctx.beginCmd();
+    engine.step(cmd, dt);
+    ctx.submitCmd(cmd);
+  }
+
+  glm::vec4 p{};
+  ctx.readBuffer(engine.getPositionBuffer(), 0, &p, sizeof(p));
+
+  // Y 軸は短いドメイン (5m) の境界でクランプされているはず。
+  // もし誤って X/Z 側の 20m がクランプ境界に使われていれば p.y はここまで到達しない。
+  CHECK(!std::isnan(p.y));
+  CHECK(p.y <= cfg.domainSize.y);
+  CHECK(p.y > cfg.domainSize.y * 0.3f);
+  // X/Z には力を加えていないため、ほぼ初期位置に留まっているはず。
+  CHECK(std::abs(p.x - 10.0f) < 2.0f);
+  CHECK(std::abs(p.z - 10.0f) < 2.0f);
+
+  engine.cleanup();
   ctx.cleanup();
 }

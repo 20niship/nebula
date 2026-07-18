@@ -17,8 +17,10 @@ static const std::string SHADER_DIR_STR = SHADER_DIR;
 // ── CLI ───────────────────────────────────────────────────────────────────
 
 struct MpmSnowImpactArgs : public argparse::Args {
-  float& world_size           = kwarg("world-size", "world size [m]").set_default(10.0f);
-  int& grid_res               = kwarg("grid-res", "MPM grid resolution").set_default(64);
+  float& domain_size_x        = kwarg("domain-size-x", "domain physical size X [m]").set_default(10.0f);
+  float& domain_size_y        = kwarg("domain-size-y", "domain physical size Y [m]").set_default(10.0f);
+  float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(10.0f);
+  float& cell_size            = kwarg("cell-size", "MPM grid cell size [m]").set_default(10.0f / 64.0f);
   float& dt                   = kwarg("dt", "frame timestep [s]").set_default(1.0f / 60.0f);
   int& substeps               = kwarg("substeps", "substeps per frame").set_default(25);
   int& pn                     = kwarg("pn", "particle grid per side (N^3 total)").set_default(44);
@@ -44,8 +46,8 @@ public:
     cfg.nx         = uint32_t(args.pn);
     cfg.ny         = uint32_t(args.pn);
     cfg.nz         = uint32_t(args.pn);
-    cfg.world_size = args.world_size;
-    cfg.grid_res   = uint32_t(args.grid_res);
+    cfg.domainSize = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
+    cfg.cellSize   = args.cell_size;
 
     base_.initWindow("MPM Snow Impact – 移動箱コライダー衝突");
     initVulkan(cfg, args.substeps);
@@ -69,11 +71,11 @@ private:
   bool boxMoving_ = false;
 
   void rebuildColliders() {
-    const float ws = engine_.config().world_size;
+    const glm::vec3 ws = engine_.config().domainSize;
     ColliderSet cols;
     cols.addPlane({0.0f, 0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, 0.1f, 0.5f);
     glm::vec3 vel = boxMoving_ ? glm::vec3(-boxSpeed_, 0.0f, 0.0f) : glm::vec3(0.0f);
-    cols.addBox({boxPosX_, 1.5f * boxScale_, ws * 0.5f}, {0.5f * boxScale_, 1.5f * boxScale_, ws * 0.3f * boxScale_}, 0.1f, 0.6f, vel);
+    cols.addBox({boxPosX_, 1.5f * boxScale_, ws.z * 0.5f}, {0.5f * boxScale_, 1.5f * boxScale_, ws.z * 0.3f * boxScale_}, 0.1f, 0.6f, vel);
     engine_.setColliders(cols);
   }
 
@@ -96,7 +98,7 @@ private:
     snow.q_max  = 3000.0f;
     engine_.setMaterials({snow});
 
-    boxPosX_ = cfg.world_size * 0.85f;
+    boxPosX_ = cfg.domainSize.x * 0.85f;
     rebuildColliders();
 
     graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/particle.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");
@@ -157,8 +159,8 @@ private:
     renderPc.posIdx        = engine_.posIdx;
     renderPc.velIdx        = engine_.velIdx;
     renderPc.particleCount = engine_.liveParticleCount();
-    renderPc.worldMin      = 0.0f;
-    renderPc.worldMax      = engine_.config().world_size;
+    renderPc.worldMin      = glm::vec3(0.0f);
+    renderPc.worldMax      = engine_.config().domainSize;
 
     graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.liveParticleCount());
 
@@ -198,7 +200,7 @@ private:
         ImGui::TextDisabled("自動発進まで: %d フレーム", launchFrame_ - frameCount_);
       }
       if(ImGui::Button("Launch Box →衝突開始")) {
-        boxPosX_   = engine_.config().world_size * 0.85f;
+        boxPosX_   = engine_.config().domainSize.x * 0.85f;
         boxMoving_ = true;
         rebuildColliders();
       }
@@ -215,7 +217,7 @@ private:
 
     // 固定フレームに到達したらボタン操作なしで自動的に箱を発進させる
     if(!boxMoving_ && launchFrame_ >= 0 && frameCount_ >= launchFrame_) {
-      boxPosX_   = engine_.config().world_size * 0.85f;
+      boxPosX_   = engine_.config().domainSize.x * 0.85f;
       boxMoving_ = true;
     }
 

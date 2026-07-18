@@ -128,9 +128,9 @@ void ClothSceneEngine::initBuffers(VkCommandPool cmdPool, VkQueue queue) {
   }
 }
 
-void ClothSceneEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, float worldSize, uint32_t gridRes) {
-  worldSize_ = worldSize;
-  gridRes_   = gridRes;
+void ClothSceneEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, glm::vec3 domainSize, float cellSize) {
+  domainSize_ = domainSize;
+  cellSize_   = cellSize;
 
   if(meshes_.empty()) throw std::runtime_error("ClothSceneEngine: addCloth() before init()");
 
@@ -242,16 +242,17 @@ void ClothSceneEngine::step(VkCommandBuffer cmd, float dt) {
     pc.cellOffsetIdx     = cellOffsetIdx_;
     pc.sortedIdxIdx      = sortedIdxIdx_;
     pc.particleCount     = totalCount_;
-    pc.gridRes           = gridRes_;
+    pc.hashCells         = totalCells();
     pc.stretchEdgesIdx   = stretchEdgesIdx_;
     pc.lambdasIdx        = lambdasIdx_;
     pc.dt                = subDt;
-    pc.cellSize          = cellSize();
-    pc.worldMin          = 0.0f;
-    pc.worldMax          = worldSize_;
+    pc.cellSize          = cellSize_;
+    pc.gridRes           = gridRes();
+    pc.worldMin          = glm::vec3(0.0f);
+    pc.worldMax          = domainSize_;
     pc.restitution       = restitution;
     pc.friction          = friction;
-    pc.particleRadius    = cellSize() * 0.5f;
+    pc.particleRadius    = cellSize_ * 0.5f;
     pc.forceBufIdx       = forcesIdx_;
     pc.couplingForceIdx  = 0;
     pc.clothVertexCount  = totalCount_;

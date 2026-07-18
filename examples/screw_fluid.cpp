@@ -27,8 +27,10 @@ struct ScrewArgs : public argparse::Args {
   int& nx                     = kwarg("nx", "fluid grid X").set_default(192);
   int& ny                     = kwarg("ny", "fluid grid Y").set_default(192);
   int& nz                     = kwarg("nz", "fluid grid Z").set_default(6);
-  float& world_size           = kwarg("world-size", "simulation domain size").set_default(20.0f);
-  int& grid_res               = kwarg("grid-res", "spatial hash grid resolution").set_default(64);
+  float& domain_size_x        = kwarg("domain-size-x", "domain physical size X [m]").set_default(20.0f);
+  float& domain_size_y        = kwarg("domain-size-y", "domain physical size Y [m]").set_default(20.0f);
+  float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(20.0f);
+  float& cell_size            = kwarg("cell-size", "spatial hash cell size [m]").set_default(20.0f / 64.0f);
   float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 60.0f);
   float& ang_vel              = kwarg("ang-vel", "screw angular velocity [rad/s]").set_default(2.0f);
   float& viscosity            = kwarg("viscosity", "XSPH viscosity coefficient").set_default(0.05f);
@@ -134,8 +136,8 @@ public:
     cfg.fluid_nx     = uint32_t(args.nx);
     cfg.fluid_ny     = uint32_t(args.ny);
     cfg.fluid_nz     = uint32_t(args.nz);
-    cfg.world_size   = args.world_size;
-    cfg.grid_res     = uint32_t(args.grid_res);
+    cfg.domainSize   = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
+    cfg.cellSize     = args.cell_size;
     cfg.max_boundary = 20000;
 
     base_.initWindow("Vulkan Sim – Screw Fluid (TC8)");
@@ -171,8 +173,8 @@ private:
     engine_.rho0          = 30;
 
     // ── スクリュー境界粒子を手続き生成 → GPU 登録 ──────────────────────────
-    const float w    = cfg.world_size;
-    screw_.pivotXY   = glm::vec2(w * 0.5f, w * 0.5f);
+    const glm::vec3 w = cfg.domainSize;
+    screw_.pivotXY     = glm::vec2(w.x * 0.5f, w.y * 0.5f);
     screw_.angVelZ   = args.ang_vel;
     screw_.gpuOffset = 0; // 境界パーティクルは常に buffer index 0 から配置される
 
@@ -192,7 +194,7 @@ private:
     // ── 流体ソース: スクリュー周囲を充填 ──────────────────────────────────
     // スクリュー外径 5m に合わせた 12m 角タンクに集中配置して粒子密度を上げる
     auto src                = std::make_shared<AABBEmitter>();
-    src->center             = glm::vec3(w * 0.2f, w * 0.3f, 4.0f);
+    src->center             = glm::vec3(w.x * 0.2f, w.y * 0.3f, 4.0f);
     src->size               = glm::vec3(4.0f, 3.0f, 4.0f);
     src->vel                = glm::vec3(0.0f);
     src->particles_per_step = 1024;
@@ -268,8 +270,8 @@ private:
     SimPC pc{};
     pc.posIdx   = engine_.posIdx;
     pc.velIdx   = engine_.velIdx;
-    pc.worldMin = 0.0f;
-    pc.worldMax = engine_.config().world_size;
+    pc.worldMin = glm::vec3(0.0f);
+    pc.worldMax = engine_.config().domainSize;
 
     // 境界（スクリュー）: buffer index 0 から
     pc.boundaryStart = 0;

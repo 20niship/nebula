@@ -5,26 +5,32 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
+#include "../core/Domain.h"
 #include "ClothMesh.h"
 #include "ComputePipeline.h"
 #include "EngineBase.h"
 #include "SimPC.h"
 
-// h = cellSize = world_size/grid_res, 流体粒子間隔 d = world_size/fluid_nx
-// 必要: h >= 2d → grid_res <= fluid_nx/2
+// issue #46: ドメインは domainSize(vec3, 物理サイズ[m]) + cellSize(float, 全軸共通の
+// セルサイズ[m]) で指定する。h = cellSize, 流体粒子間隔 d = domainSize.x/fluid_nx
+// 必要: h >= 2d → cellSize >= 2 * domainSize.x/fluid_nx
+// cloth(XPBD)とfluid(PBF)は同一Domainを共有する (coupling_cloth.compが両者を同じ
+// セルで近傍探索するため)。
 struct MultiPhysicsConfig {
   uint32_t cloth_grid_n = 64;
   uint32_t fluid_nx     = 32;
   uint32_t fluid_ny     = 16;
   uint32_t fluid_nz     = 32;
-  float world_size      = 10.0f;
-  uint32_t grid_res     = 16;
+
+  glm::vec3 domainSize{10.0f, 10.0f, 10.0f}; // ドメイン物理サイズ [m] (旧 world_size)
+  float cellSize = 10.0f / 16.0f;            // 全軸共通のセルサイズ [m] (旧 grid_res の逆算値)
 
   uint32_t clothCount() const { return cloth_grid_n * cloth_grid_n; }
   uint32_t fluidCount() const { return fluid_nx * fluid_ny * fluid_nz; }
   uint32_t totalMax() const { return clothCount() + fluidCount(); }
-  uint32_t totalCells() const { return grid_res * grid_res * grid_res; }
-  float cellSize() const { return world_size / float(grid_res); }
+  glm::uvec3 gridRes() const { return domain::gridRes(domainSize, cellSize); }
+  // 空間ハッシュバッファの実要素数 (= cubeRes^3。gridRes.x*y*zではない点に注意)
+  uint32_t totalCells() const { return domain::hashCells(gridRes()); }
   uint32_t fluidStart() const { return clothCount(); }
 };
 

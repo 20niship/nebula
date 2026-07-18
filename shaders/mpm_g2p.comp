@@ -82,7 +82,7 @@ void main() {
     vec3  vpic_old = vec3(0.0);  // FLIP 用: グリッド物理前速度の加重和
     mat3  vgrad = mat3(0.0);  // ∇v_p = Σ v_i ⊗ ∇w_ip
     mat3  B_new = mat3(0.0);  // APIC アフィン B_p = Σ w * v_i ⊗ (x_i - x_p)
-    uint  totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    uint  totalCells = pc.hashCells;
 
     for (int iz = 0; iz < 3; iz++)
     for (int iy = 0; iy < 3; iy++)
@@ -219,7 +219,7 @@ void main() {
     // 固体内部での弾性エネルギー蓄積 (速度爆発の根本原因) を防ぐ。
     if (pc.nanoVDBIdx != 0u) {
         ivec3 pijk = ivec3(floor((x_new - pc.worldMin) / pc.cellSize));
-        ivec3 gres = ivec3(int(pc.gridRes));
+        ivec3 gres = ivec3(pc.gridRes);
         pijk = clamp(pijk, ivec3(0), gres - 1);
         float psdf = readFloat(pc.nanoVDBIdx, mortonEncodeI(pijk));
         if (psdf < 0.0) {
@@ -253,8 +253,8 @@ void main() {
 
     // ── ワールド境界クランプ ─────────────────────────────────────────────
     float margin = pc.cellSize * 1.5;
-    vec3 lo = vec3(pc.worldMin) + margin;
-    vec3 hi = vec3(pc.worldMax) - margin;
+    vec3 lo = pc.worldMin + vec3(margin);
+    vec3 hi = pc.worldMax - vec3(margin);
     if (x_new.x < lo.x) { x_new.x = lo.x; v_new.x = max(v_new.x, 0.0); }
     if (x_new.x > hi.x) { x_new.x = hi.x; v_new.x = min(v_new.x, 0.0); }
     if (x_new.y < lo.y) { x_new.y = lo.y; v_new.y = max(v_new.y, 0.0); }

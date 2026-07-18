@@ -1,5 +1,6 @@
 #include "SoftBodyEngine.h"
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <glm/glm.hpp>
@@ -29,20 +30,16 @@ uint32_t SoftBodyEngine::addInstance(const SoftBodyInstance& inst) {
 }
 
 void SoftBodyEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, float worldSize, uint32_t gridRes) {
-  device_    = device;
-  allocator_ = allocator;
-  cmdPool_   = cmdPool;
-  queue_     = queue;
   worldSize_ = worldSize;
   gridRes_   = gridRes;
 
   buildCombinedBuffers();
 
-  attrBuf_.init(device, allocator, descriptorPool);
+  initEngineBase(device, allocator, descriptorPool, cmdPool, queue);
   initGPUBuffers(cmdPool, queue);
+  initForces();
 
   auto load = [&](ComputePipeline& k, const std::string& name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
-  load(kPredict_, "predict.comp");
   load(kSdfCollision_, "sdf_collision.comp");
   load(kSolveEdge_, "solve_stretch.comp");
   load(kZeroEdgeLambda_, "zero_lambdas.comp");
@@ -66,11 +63,13 @@ void SoftBodyEngine::cleanup() {
   kZeroVolLambda_.cleanup();
   kParticleCollision_.cleanup();
   kUpdateVelocity_.cleanup();
-  attrBuf_.cleanup();
+  cleanupEngineBase();
 }
 
 void SoftBodyEngine::step(VkCommandBuffer cmd, float dt) {
   if(totalCount_ == 0) return;
+
+  uploadForces(dt);
 
   VkDescriptorSet ds = attrBuf_.descriptorSet;
   const float subDt  = dt / float(std::max(1, numSubsteps));
@@ -88,10 +87,10 @@ void SoftBodyEngine::step(VkCommandBuffer cmd, float dt) {
     pc.cellSize       = worldSize_ / float(gridRes_);
     pc.worldMin       = 0.0f;
     pc.worldMax       = worldSize_;
-    pc.gravity        = gravity;
     pc.restitution    = restitution;
     pc.friction       = friction;
     pc.particleRadius = particleRadius;
+    pc.forceBufIdx    = forcesIdx_;
 
     // エッジ距離拘束 (solve_stretch.comp / zero_lambdas.comp が参照)
     pc.stretchEdgesIdx   = edgeDataIdx_;
@@ -109,8 +108,9 @@ void SoftBodyEngine::step(VkCommandBuffer cmd, float dt) {
     // 速度減衰 (update_velocity.comp)
     pc.linearDamping = linearDamping;
 
-    // 粒子間衝突半径 (sb_particle_collision.comp が windX を流用)
-    pc.windX = particleCollisionRadius;
+    // 粒子間衝突半径 (sb_particle_collision.comp 専用)
+    pc.particleCollisionRadius = particleCollisionRadius;
+    pc.forceCount               = (uint32_t)forces_.size();
 
     // ① Predict: 重力 → predP
     kPredict_.dispatch(cmd, ds, pc, totalCount_);

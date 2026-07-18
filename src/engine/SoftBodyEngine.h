@@ -6,8 +6,8 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
-#include "AttributeBuffer.h"
 #include "ComputePipeline.h"
+#include "EngineBase.h"
 #include "SimPC.h"
 
 struct SoftBodyInstance {
@@ -16,7 +16,9 @@ struct SoftBodyInstance {
   float scale      = 1.0f;
 };
 
-class SoftBodyEngine {
+// 重力は addForce() で GravityForce を登録すること (issue #30 レビュー対応:
+// gravity の public メンバは廃止)。
+class SoftBodyEngine : public EngineBase {
 public:
   // init() 前に呼ぶ。戻り値はインスタンスの粒子開始インデックス
   uint32_t addInstance(const SoftBodyInstance& inst);
@@ -37,7 +39,6 @@ public:
   uint32_t totalEdgeCount() const { return totalEdgeCount_; }
 
   // ImGui から直接書き換え可能
-  float gravity                 = -9.8f;
   float restitution             = 0.5f;
   float friction                = 0.15f;
   float stretchCompliance       = 1e-5f;
@@ -47,6 +48,10 @@ public:
   float particleCollisionRadius = 0.25f; // ボディ間衝突半径 [m]
   int solverIterations          = 5;
   int numSubsteps               = 15;
+
+protected:
+  ComputePipeline& forceTargetPipeline() override { return kPredict_; }
+  const char* forceShaderName() const override { return "predict.comp"; }
 
 private:
   struct InstanceData {
@@ -104,12 +109,6 @@ private:
 
   float worldSize_  = 10.0f;
   uint32_t gridRes_ = 64;
-
-  AttributeBuffer attrBuf_;
-  VkDevice device_        = VK_NULL_HANDLE;
-  VmaAllocator allocator_ = VK_NULL_HANDLE;
-  VkCommandPool cmdPool_  = VK_NULL_HANDLE;
-  VkQueue queue_          = VK_NULL_HANDLE;
 
   ComputePipeline kPredict_;
   ComputePipeline kSdfCollision_;

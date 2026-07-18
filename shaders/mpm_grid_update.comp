@@ -2,6 +2,8 @@
 #extension GL_EXT_nonuniform_qualifier : enable
 #include "mpm_common.glsl"
 #include "collider_common.glsl"
+#include "force_common.glsl"
+#include "force_noise.glsl"
 
 // MPM グリッド更新: 運動量→速度変換 + 重力 + 壁 BC + 解析コライダー BC
 //
@@ -34,11 +36,21 @@ void main() {
     // FLIP: 物理適用前の速度を後半バッファへ退避 (G2P が v_i_old として参照)
     writeVec4(pc.gridMomIdx, gid + totalCells, vec4(v, 0.0));
 
-    // ① 重力
-    v.y += pc.gravity * pc.dt;
+    // Force(空間ノイズ用の位置)より前倒しで計算 (issue #30)
+    ivec3 ijk = mortonDecodeI(gid);
+    vec3 forcePos = (vec3(ijk) + 0.5) * pc.cellSize + pc.worldMin;
+    uint forceTypeFlag = 0u; // MPMグリッドセルにtypeFlagはないため常時全Force適用
+
+    // FORCE_AUTOGEN_BEGIN
+    // Engine::addForce/removeForce/setForces() 実行時に ForceShaderCompiler が
+    // このブロックを登録済み Force 群の速度適用コード(各ForceのglslApplyVelocity()
+    // から動的生成)で置換し、shaderc で全体を再コンパイルする (issue #30)。この
+    // プレースホルダのままでも単体で valid な GLSL であること (既定=何もしない)。
+    // 注意: mpm_grid_update.comp には predP/p の概念がないため、
+    // FORCE_AUTOGEN_POST マーカー(位置制約)はここには存在しない。
+    // FORCE_AUTOGEN_END
 
     // ② 軸平行壁 BC (B-spline support = 1.5h → 境界 2 ノード以内を不透過)
-    ivec3 ijk = mortonDecodeI(gid);
     int N = int(pc.gridRes) - 1;
     if (ijk.x <= 1   && v.x < 0.0) v.x = 0.0;
     if (ijk.x >= N-1 && v.x > 0.0) v.x = 0.0;
@@ -50,7 +62,7 @@ void main() {
     // ③ 解析コライダー BC
     // MoltenVK: buffers[] は main() でのみアクセス可（関数内不可）
     if (pc.colliderCount > 0u) {
-        vec3 xi = (vec3(ijk) + 0.5) * pc.cellSize + pc.worldMin;
+        vec3 xi = forcePos; // Forceブロックで計算済みの位置を再利用
 
         for (uint ci = 0u; ci < pc.colliderCount; ci++) {
             uint  ctype = buffers[pc.colliderIdx].data[ci * 16u];

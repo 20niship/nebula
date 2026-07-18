@@ -1,11 +1,15 @@
 #version 450
 #extension GL_EXT_nonuniform_qualifier : enable
 #include "pyro_common.glsl"
+#include "force_common.glsl"
+#include "force_noise.glsl"
 
 // 浮力: 温度が周囲より高いほど上昇し、密度が高いほど重くなる (下降)。
 // v.y += dt * (buoyancyAlpha * (T - Tambient) - buoyancyBeta * density)
 // A バッファへインプレースで適用する。渦度閉じ込めは pyro_curl.comp /
 // pyro_vorticity_force.comp (2パス構成、隣接セル読み取りが必要なため) で別途行う。
+// 浮力はPyro固有の温度連成物理でありForceシステムには含めない (issue #30)。
+// 風・Turbulence・Noise等の任意のForceは浮力適用後にFORCE_AUTOGENブロックで加算する。
 // dispatch: (totalCells + 255) / 256
 
 layout(local_size_x = 256) in;
@@ -18,7 +22,21 @@ void main() {
     float T   = readFloat(pc.temperatureIdxA, gid);
     float rho = readFloat(pc.densityIdxA, gid);
 
-    vec3 v = readVec4(pc.velIdxA, gid).xyz;
+    vec4 v = readVec4(pc.velIdxA, gid);
     v.y += pc.dt * (pc.buoyancyAlpha * (T - pc.ambientTemp) - pc.buoyancyBeta * rho);
-    writeVec4(pc.velIdxA, gid, vec4(v, 0.0));
+
+    ivec3 ijk = pyroMortonDecodeI(gid);
+    vec3 forcePos = (vec3(ijk) + 0.5) * pc.cellSize + pc.worldMin;
+    uint forceTypeFlag = 0u; // Pyroグリッドセルにtypeflagはないため常時全Force適用
+
+    // FORCE_AUTOGEN_BEGIN
+    // Engine::addForce/removeForce/setForces() 実行時に ForceShaderCompiler が
+    // このブロックを登録済み Force 群の速度適用コード(各ForceのglslApplyVelocity()
+    // から動的生成)で置換し、shaderc で全体を再コンパイルする (issue #30)。この
+    // プレースホルダのままでも単体で valid な GLSL であること (既定=何もしない)。
+    // 注意: pyro_forces.comp には predP/p の概念がないため、
+    // FORCE_AUTOGEN_POST マーカー(位置制約)はここには存在しない。
+    // FORCE_AUTOGEN_END
+
+    writeVec4(pc.velIdxA, gid, v);
 }

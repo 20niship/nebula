@@ -4,6 +4,8 @@
 
 #include "AttributeBuffer.h"
 #include "ComputePipeline.h"
+#include "Force.h"
+#include "ForceShaderCompiler.h"
 #include "SimPC.h"
 #include "VulkanContext.h"
 
@@ -237,6 +239,14 @@ private:
   std::vector<uint32_t> colorBatch_;
   int nColors_ = 0;
 
+  // Force (issue #30): gravity/windX 互換の既定Forceを常時登録 (型追加はしないため
+  // rebuildForceShaderはinit()で1回のみ呼ぶ)
+  std::vector<std::shared_ptr<Force>> forces_;
+  std::shared_ptr<GravityForce> legacyGravity_;
+  std::shared_ptr<ConstantWindForce> legacyWind_;
+  uint32_t forcesIdx_ = 0;
+  void uploadForces();
+
   ComputePipeline kPredict_, kSdfCollision_;
   ComputePipeline kHashCount_, kHashScanLocal_, kHashScanGlobal_, kHashSort_;
   ComputePipeline kSolveDensity_, kSolveStretch_, kUpdateVelocity_;
@@ -316,9 +326,19 @@ void String2DSim::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   descriptorSetLayout = attrBuf_.descriptorSetLayout;
   descriptorSet       = attrBuf_.descriptorSet;
 
+  // Force (issue #30): gravity/windX 互換の既定Forceを常時登録する
+  forcesIdx_     = attrBuf_.addAttribute("forces", sizeof(ForceGPU), 2);
+  legacyGravity_ = GravityForce::FromDirection({0.0f, 0.0f, 1.0f}, gravity); // Z-up; strengthに符号を持たせる
+  legacyWind_    = ConstantWindForce::FromDirection({windX, 0.0f, 0.0f}, 1.0f);
+  legacyWind_->affectMask = ForceAffectTypeFlag(2u); // 布頂点 (typeFlag==2) のみ
+  forces_                 = {legacyGravity_, legacyWind_};
+  {
+    std::vector<uint32_t> spirv = ForceShaderCompiler::compile(forces_, "predict.comp");
+    kPredict_.initFromSpirv(device, attrBuf_.descriptorSetLayout, spirv);
+  }
+
   // ── Compute パイプライン ───────────────────────────────────────────
   auto load = [&](ComputePipeline& k, const std::string& name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
-  load(kPredict_, "predict.comp");
   load(kSdfCollision_, "sdf_collision.comp");
   load(kHashCount_, "hash_count.comp");
   load(kHashScanLocal_, "hash_scan_local.comp");
@@ -339,8 +359,21 @@ void String2DSim::computeBarrier(VkCommandBuffer cmd) {
   vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &b, 0, nullptr, 0, nullptr);
 }
 
+void String2DSim::uploadForces() {
+  std::vector<ForceGPU> packed;
+  packed.reserve(forces_.size());
+  for(const auto& f : forces_) packed.push_back(f->pack());
+  if(!packed.empty()) attrBuf_.upload("forces", packed.data(), sizeof(ForceGPU) * packed.size(), cmdPool_, queue_);
+}
+
 void String2DSim::step(VkCommandBuffer cmd, float dt) {
-  auto ds     = attrBuf_.descriptorSet;
+  auto ds = attrBuf_.descriptorSet;
+
+  // Force (issue #30): gravity/windX 互換値を毎フレーム反映してアップロード
+  legacyGravity_->strength = gravity;
+  legacyWind_->direction   = glm::vec3(windX, 0.0f, 0.0f);
+  uploadForces();
+
   float subDt = dt / std::max(1, numSubsteps);
 
   for(int sub = 0; sub < numSubsteps; ++sub) {
@@ -361,15 +394,14 @@ void String2DSim::step(VkCommandBuffer cmd, float dt) {
     pc.cellSize          = STR_CELL;
     pc.worldMin          = 0.0f;
     pc.worldMax          = STR_WORLD;
-    pc.gravity           = gravity;
     pc.restitution       = restitution;
     pc.friction          = friction;
     pc.particleRadius    = particleRadius;
+    pc.forceBufIdx       = forcesIdx_;
     pc.clothVertexCount  = STR_N;
     pc.edgeCount         = STR_EDGES;
     pc.stretchCompliance = stretchCompliance;
-    pc.windX             = windX;
-    pc.windZ             = 0.0f;
+    pc.forceCount        = (uint32_t)forces_.size();
 
     // ① Predict (重力 + 風)
     kPredict_.dispatch(cmd, ds, pc, STR_N);

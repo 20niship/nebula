@@ -29,13 +29,8 @@ void PyroEngine::dispatchPyro(VkCommandBuffer cmd, ComputePipeline& k, const Pyr
 void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const PyroConfig& cfg) {
   if(cfg.grid_res == 0 || (cfg.grid_res & (cfg.grid_res - 1)) != 0) throw std::runtime_error("PyroConfig.grid_res must be a power of two (Morton encoding requirement): " + std::to_string(cfg.grid_res));
 
-  cfg_       = cfg;
-  device_    = device;
-  allocator_ = allocator;
-  cmdPool_   = cmdPool;
-  queue_     = queue;
-
-  attrBuf_.init(device, allocator, descriptorPool);
+  cfg_ = cfg;
+  initEngineBase(device, allocator, descriptorPool, cmdPool, queue);
 
   const uint32_t NC = cfg_.totalCells();
 
@@ -73,10 +68,11 @@ void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool 
     up("curl", zeroVec4.data(), NC * sizeof(glm::vec4));
   }
 
+  initForces();
+
   auto load = [&](ComputePipeline& k, const char* name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
   load(kEmit_, "pyro_emit.comp");
   load(kCombustion_, "pyro_combustion.comp");
-  load(kForces_, "pyro_forces.comp");
   load(kObstacleBC_, "pyro_obstacle_bc.comp");
   load(kAdvect_, "pyro_advect.comp");
   load(kCurl_, "pyro_curl.comp");
@@ -91,7 +87,7 @@ void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool 
 
 void PyroEngine::cleanup() {
   for(auto* k : {&kEmit_, &kCombustion_, &kForces_, &kObstacleBC_, &kAdvect_, &kCurl_, &kVorticityForce_, &kDivergence_, &kPressureGS_, &kProject_}) k->cleanup();
-  attrBuf_.cleanup();
+  cleanupEngineBase();
 }
 
 // ── 障害物 SDF ────────────────────────────────────────────────────────────
@@ -188,12 +184,17 @@ PyroSimPC PyroEngine::buildPC(float dt) const {
   pc.heatRelease       = heatRelease;
   pc.smokeYieldPerFuel = smokeYieldPerFuel;
   pc.flameBrightness   = flameBrightness;
+
+  pc.forceBufIdx = forcesIdx_;
+  pc.forceCount  = (uint32_t)forces_.size();
   return pc;
 }
 
 // ── ステップ ──────────────────────────────────────────────────────────────
 
 void PyroEngine::step(VkCommandBuffer cmd, float dt) {
+  uploadForces(dt);
+
   const float subDt = dt / float(std::max(1, numSubsteps));
 
   for(int s = 0; s < numSubsteps; s++) {

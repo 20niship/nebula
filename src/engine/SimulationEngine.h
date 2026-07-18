@@ -5,9 +5,9 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
-#include "AttributeBuffer.h"
 #include "ClothMesh.h"
 #include "ComputePipeline.h"
+#include "EngineBase.h"
 #include "SimPC.h"
 
 struct ClothConfig {
@@ -20,7 +20,9 @@ struct ClothConfig {
   float cellSize() const { return world_size / float(grid_res); }
 };
 
-class SimulationEngine {
+// 重力・風は addForce() で GravityForce/ConstantWindForce を登録すること
+// (issue #30 レビュー対応: gravity/windX/windZ の public メンバは廃止)。
+class SimulationEngine : public EngineBase {
 public:
   void init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const ClothConfig& cfg = {});
   void cleanup();
@@ -30,14 +32,11 @@ public:
   const ClothConfig& config() const { return cfg_; }
 
   // ImGui から書き換え可能
-  float gravity            = -9.8f;
   float restitution        = 0.3f;
   float friction           = 0.1f;
   float particleRadius     = 0.0f; // init() で cfg_.cellSize()*0.5 に設定
   float stretchCompliance  = 1e-4f;
   float bendCompliance     = 1e-2f;
-  float windX              = 0.0f;
-  float windZ              = 0.0f;
   int solverIterations     = 3;
   int numSubsteps          = 15;
   bool enableSelfCollision = true;
@@ -51,14 +50,12 @@ public:
   const ClothMesh& getClothMesh() const { return clothMesh_; }
   void debugPrintVertices(VkCommandPool cmdPool, VkQueue queue) const;
 
+protected:
+  ComputePipeline& forceTargetPipeline() override { return kPredict_; }
+  const char* forceShaderName() const override { return "predict.comp"; }
+
 private:
   ClothConfig cfg_;
-  VkDevice device_        = VK_NULL_HANDLE;
-  VmaAllocator allocator_ = VK_NULL_HANDLE;
-  VkCommandPool cmdPool_  = VK_NULL_HANDLE;
-  VkQueue queue_          = VK_NULL_HANDLE;
-
-  AttributeBuffer attrBuf_;
   ClothMesh clothMesh_;
 
   uint32_t predPIdx_        = 0;

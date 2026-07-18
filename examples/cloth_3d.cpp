@@ -56,11 +56,31 @@ private:
   float simTime_       = 0.0f;
   int debugFrameCount_ = 0;
 
+  // issue #30 レビュー対応: gravity/windX/windZ の public メンバは廃止されたため
+  // ここで Force を作って addForce() する (Engineには自動登録しない)。
+  std::shared_ptr<GravityForce> gravity_;
+  std::shared_ptr<ConstantWindForce> wind_;
+
+  // issue #30 デモ: addForce() で任意の風(Turbulence)を追加できることを示す
+  bool turbulenceEnabled_ = false;
+  std::shared_ptr<TurbulenceForce> turbulence_;
+
+  // issue #30 デモ: 位置制約(ZClampForce)で粒子のz座標を固定できることを示す
+  // (レビュー言及の「z座標を常に0にする」の実証)
+  bool zClampEnabled_ = false;
+  std::shared_ptr<ZClampForce> zClamp_;
+
   void initVulkan(const ClothConfig& cfg) {
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
     sim_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
+
+    gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f); // Z-up
+    wind_    = ConstantWindForce::FromDirection({0.0f, 0.0f, 0.0f}, 1.0f);
+    wind_->affectMask = ForceAffectTypeFlag(2u); // 布頂点 (typeFlag==2) のみ
+    sim_.addForce(gravity_);
+    sim_.addForce(wind_);
 
     graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, sim_.descriptorSetLayout, SHADER_DIR_STR + "/particle.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");
 
@@ -160,7 +180,31 @@ private:
     ImGui::Begin("Cloth Control");
     ImGui::Text("FPS: %.1f  |  頂点: %u  経過: %.2f s", ImGui::GetIO().Framerate, sim_.config().clothVertCount(), simTime_);
     ImGui::Separator();
-    sim_ui::cloth_params(sim_);
+    sim_ui::cloth_params(sim_, *gravity_, *wind_);
+    ImGui::Separator();
+    ImGui::Text("issue #30: Force API デモ");
+    if(ImGui::Checkbox("Turbulence (乱流風) を追加", &turbulenceEnabled_)) {
+      if(turbulenceEnabled_) {
+        turbulence_ = std::make_shared<TurbulenceForce>();
+        turbulence_->strength  = 4.0f;
+        turbulence_->frequency = 0.3f;
+        sim_.addForce(turbulence_);
+      } else {
+        sim_.removeForce(turbulence_);
+        turbulence_.reset();
+      }
+    }
+    if(turbulenceEnabled_) ImGui::SliderFloat("Turbulence 強さ", &turbulence_->strength, 0.0f, 20.0f);
+    if(ImGui::Checkbox("位置制約(ZClamp): z座標を固定", &zClampEnabled_)) {
+      if(zClampEnabled_) {
+        zClamp_ = ZClampForce::At(0.0f);
+        sim_.addForce(zClamp_);
+      } else {
+        sim_.removeForce(zClamp_);
+        zClamp_.reset();
+      }
+    }
+    if(zClampEnabled_) ImGui::SliderFloat("固定z座標", &zClamp_->zValue, 0.0f, sim_.config().world_size);
     ImGui::End();
 
     ImGui::Render();

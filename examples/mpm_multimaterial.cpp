@@ -51,6 +51,7 @@ private:
   BaseApp base_;
   MPMEngine engine_;
   GraphicsPipeline graphicsPipe_;
+  std::shared_ptr<GravityForce> gravity_;
   float dt_      = 1.0f / 60.0f;
   float simTime_ = 0.0f;
 
@@ -60,7 +61,8 @@ private:
 
     engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
     engine_.numSubsteps = substeps;
-    engine_.gravity     = -9.8f;
+    gravity_ = GravityForce::FromDirection({0.0f, 1.0f, 0.0f}, 9.8f); // Y-up
+    engine_.addForce(gravity_);
 
     // slot 0: ゼリー状弾性体 (下半分)
     // slot 1: Drucker-Prager 砂 (上半分)
@@ -174,7 +176,7 @@ private:
     ImGui::Text("[下半分] slot 0: Hencky 弾性体 (E=10kPa, nu=0.4)");
     ImGui::Text("[上半分] slot 1: Drucker-Prager 砂 (E=50kPa, M=0.577)");
     ImGui::Separator();
-    ImGui::SliderFloat("重力", &engine_.gravity, -20.0f, 0.0f);
+    ImGui::SliderFloat("重力", &gravity_->strength, 0.0f, 20.0f);
     ImGui::SliderInt("サブステップ", &engine_.numSubsteps, 1, 50);
     ImGui::End();
 

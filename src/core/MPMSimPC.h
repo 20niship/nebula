@@ -26,7 +26,7 @@ struct MPMSimPC {
   float worldMax; // 60  ← hash compat ★
 
   // ── Material properties (16 bytes) ───────────────────────────────────
-  float gravity;        // 64
+  uint32_t forceBufIdx; // 64  Force配列(ForceGPU×forceCount)のbindless index (issue #30; 旧gravity)
   float mu_lame;        // 68  グローバルデフォルト μ（material id ≥ 件数のフォールバック）
   float lambda_lame;    // 72  グローバルデフォルト λ
   float particleVolume; // 76  初期パーティクル体積 V_p（グローバルデフォルト）
@@ -58,7 +58,7 @@ struct MPMSimPC {
   // ── Rest density / softening (16 bytes) ──────────────────────────────
   float rho0;             // 144 グローバルデフォルト密度
   float p0_mcc;           // 148 MCC 予圧密圧力
-  float xi_hard;          // 152 軟化パラメータ
-  float maxParticlesFrac; // 156 予約（将来用）
+  float xi_hard;      // 152 軟化パラメータ
+  uint32_t forceCount; // 156 有効なForce数 (issue #30; 旧maxParticlesFrac予約枠)
 };
 static_assert(sizeof(MPMSimPC) == 160, "MPMSimPC must be 160 bytes");

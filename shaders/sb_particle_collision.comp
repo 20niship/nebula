@@ -3,7 +3,6 @@
 #include "common.glsl"
 
 // 粒子間反発 — 1スレッド = 1粒子、全ペアを O(N²) でチェック
-// pc.windX を衝突半径として流用 (soft body では wind 不使用)
 layout(local_size_x = 256) in;
 
 void main() {
@@ -14,7 +13,7 @@ void main() {
     if (wi <= 0.0) return;
 
     vec3  pi = readVec4(pc.predPIdx, i).xyz;
-    float r  = pc.windX;          // 衝突半径 [m]
+    float r  = pc.particleCollisionRadius; // 衝突半径 [m]
     float r2 = r * r;
 
     vec3 corr = vec3(0.0);

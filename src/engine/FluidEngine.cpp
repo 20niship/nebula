@@ -1,6 +1,7 @@
 #include "FluidEngine.h"
 #include "BoundaryParticles.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
@@ -23,16 +24,12 @@ void FluidEngine::computeBarrier(VkCommandBuffer cmd) {
 // ── 初期化 ────────────────────────────────────────────────────────────────────
 
 void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const FluidConfig& cfg) {
-  cfg_       = cfg;
-  device_    = device;
-  allocator_ = allocator;
-  cmdPool_   = cmdPool;
-  queue_     = queue;
+  cfg_ = cfg;
 
   // h/d 比に対応した静止密度を自動設定（ImGui から上書き可能）
   // rho0 = cfg_.computeRestDensity();
 
-  attrBuf_.init(device, allocator, descriptorPool);
+  initEngineBase(device, allocator, descriptorPool, cmdPool, queue);
 
   const uint32_t N_GROUPS = (cfg_.totalCells() + 255u) / 256u;
 
@@ -71,8 +68,11 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   emitters_.clear();
   emitterStepsDone_.clear();
 
+  // Force (issue #30): 既定では空リスト。重力が必要な場合は呼び出し側が
+  // addForce(GravityForce::FromDirection(...)) 等で登録する。
+  initForces();
+
   auto load = [&](ComputePipeline& k, const char* name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
-  load(kPredictSdf_, "predict_sdf.comp");
   load(kSdfCollision_, "sdf_collision.comp");
   load(kHashCount_, "hash_count.comp");
   load(kHashScanLocal_, "hash_scan_local.comp");
@@ -294,7 +294,7 @@ void FluidEngine::cleanup() {
   kVorticityOmega_.cleanup();
   kVorticityForce_.cleanup();
   kAbsorb_.cleanup();
-  attrBuf_.cleanup();
+  cleanupEngineBase();
 }
 
 // ── TC8: kinematic 境界粒子 staging ────────────────────────────────────────────
@@ -378,7 +378,10 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
 
   if(nFluid_ == 0 && nBoundary == 0) return;
 
-  auto ds         = attrBuf_.descriptorSet;
+  auto ds = attrBuf_.descriptorSet;
+
+  uploadForces(dt);
+
   float subDt     = dt / float(std::max(1, numSubsteps));
   uint32_t totalN = cfg_.max_boundary + nFluid_;
 
@@ -400,10 +403,10 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     pc.cellSize          = cfg_.cellSize();
     pc.worldMin          = 0.0f;
     pc.worldMax          = cfg_.world_size;
-    pc.gravity           = gravity;
     pc.restitution       = restitution;
     pc.friction          = friction;
     pc.particleRadius    = cfg_.cellSize() * 0.5f;
+    pc.forceBufIdx       = forcesIdx_;
     pc.couplingForceIdx  = 0;
     pc.clothVertexCount  = 0; // 流体では未使用（布頂点数ではない）
     pc.edgeCount         = 0;
@@ -411,8 +414,7 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     pc.batchEdgeEnd      = 0;
     pc.stretchCompliance = rho0;
     pc.bendCompliance    = viscosityC;
-    pc.windX             = 0.0f;
-    pc.windZ             = 0.0f;
+    pc.forceCount        = (uint32_t)forces_.size();
     pc.densityIdx        = densityIdx_;
     pc.lambdaPbfIdx      = lambdaPbfIdx_;
     pc.fluidStart        = cfg_.max_boundary;

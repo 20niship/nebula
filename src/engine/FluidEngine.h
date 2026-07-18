@@ -10,8 +10,8 @@
 #include <vulkan/vulkan.h>
 
 #include "../core/Emitter.h"
-#include "AttributeBuffer.h"
 #include "ComputePipeline.h"
+#include "EngineBase.h"
 #include "SimPC.h"
 
 // h = cellSize = world_size/grid_res, 粒子間隔 d = world_size/fluid_nx
@@ -52,7 +52,9 @@ struct FluidConfig {
   }
 };
 
-class FluidEngine {
+// 重力は addForce() で GravityForce を登録すること (issue #30 レビュー対応:
+// gravity の public メンバは廃止)。
+class FluidEngine : public EngineBase {
 public:
   void init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const FluidConfig& cfg = {});
   void cleanup();
@@ -81,8 +83,12 @@ public:
   const std::vector<glm::vec3>& getBoundaryTriVerts() const { return boundaryTriVerts_; }
   const FluidConfig& config() const { return cfg_; }
 
+protected:
+  ComputePipeline& forceTargetPipeline() override { return kPredictSdf_; }
+  const char* forceShaderName() const override { return "predict_sdf.comp"; }
+
+public:
   // ImGui から調整可能なパラメータ
-  float gravity     = -9.8f;
   float restitution = 0.1f;  // ※PBF流体では未使用（衝突は位置投影のみ）
   float friction    = 0.05f; // ※PBF流体では未使用
   float rho0        = 35.0f;
@@ -147,12 +153,6 @@ public:
 
 private:
   FluidConfig cfg_;
-  VkDevice device_        = VK_NULL_HANDLE;
-  VmaAllocator allocator_ = VK_NULL_HANDLE;
-  VkCommandPool cmdPool_  = VK_NULL_HANDLE;
-  VkQueue queue_          = VK_NULL_HANDLE;
-
-  AttributeBuffer attrBuf_;
 
   // ── 動的粒子数確保 (Issue #13) ──────────────────────────────────────────
   // バッファレイアウト: [0, max_boundary) 境界(固定) | [max_boundary, max_boundary+fluidCapacity_) 流体(可変長)

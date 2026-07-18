@@ -8,8 +8,8 @@
 
 #include "../core/Emitter.h"
 #include "../core/PyroSimPC.h"
-#include "AttributeBuffer.h"
 #include "ComputePipeline.h"
+#include "EngineBase.h"
 
 struct PyroConfig {
   // Morton (Z-order) 符号化を使うため 2 のべき乗であること (例: 16, 32, 64)。
@@ -28,7 +28,7 @@ struct PyroConfig {
 // Houdini Pyro 的なグリッド(オイラー)ソルバー。MPMEngine と異なりパーティクルを
 // 持たず、Morton順の Dense セル中心グリッド上で density/temperature/fuel/velocity
 // を直接解く (semi-Lagrangian 移流 + 圧力投影 + 燃焼反応)。
-class PyroEngine {
+class PyroEngine : public EngineBase {
 public:
   void init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const PyroConfig& cfg = {});
   void cleanup();
@@ -62,6 +62,9 @@ public:
   void addEmitter(std::shared_ptr<Emitter> emitter);
   void clearEmitters();
 
+  // 任意方向の風・Turbulence・Noise は addForce() で登録する (issue #30)。
+  // 浮力(buoyancyAlpha/Beta)はPyro固有の温度連成物理でありForce化しない。
+
   // ── 読み取り (テスト/ダンプ用) ────────────────────────────────────────
   VkBuffer getDensityBuffer() const;
   VkBuffer getTemperatureBuffer() const;
@@ -79,14 +82,12 @@ public:
   VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
   VkDescriptorSet descriptorSet             = VK_NULL_HANDLE;
 
+protected:
+  ComputePipeline& forceTargetPipeline() override { return kForces_; }
+  const char* forceShaderName() const override { return "pyro_forces.comp"; }
+
 private:
   PyroConfig cfg_;
-  VkDevice device_        = VK_NULL_HANDLE;
-  VmaAllocator allocator_ = VK_NULL_HANDLE;
-  VkCommandPool cmdPool_  = VK_NULL_HANDLE;
-  VkQueue queue_          = VK_NULL_HANDLE;
-
-  AttributeBuffer attrBuf_;
 
   // ダブルバッファ (A/B): cur_==0 なら [0]が現在値/[1]が次フレーム書き込み先
   uint32_t velIdx_[2]         = {0, 0};

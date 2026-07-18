@@ -44,6 +44,7 @@ private:
   BaseApp base_;
   SoftBodyEngine engine_;
   GraphicsPipeline graphicsPipe_;
+  std::shared_ptr<GravityForce> gravity_;
   float dt_      = 1.0f / 60.0f;
   float simTime_ = 0.0f;
   int nShots_    = 0;
@@ -101,6 +102,8 @@ private:
     }
 
     engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, args.world_size, uint32_t(args.grid_res));
+    gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f); // Z-up
+    engine_.addForce(gravity_);
     engine_.numSubsteps = args.substeps;
 
     graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/sb_wire.vert.spv", SHADER_DIR_STR + "/sb_wire.frag.spv", VK_PRIMITIVE_TOPOLOGY_LINE_LIST);
@@ -196,7 +199,7 @@ private:
     ImGui::Text("FPS: %.1f  |  N=%u  |  t=%.2f s", ImGui::GetIO().Framerate, engine_.totalParticleCount(), simTime_);
     ImGui::Text("dt_sub=%.4f s", dt_ / float(engine_.numSubsteps));
     ImGui::Separator();
-    ImGui::SliderFloat("重力", &engine_.gravity, -20.0f, 0.0f);
+    ImGui::SliderFloat("重力", &gravity_->strength, 0.0f, 20.0f);
     ImGui::SliderFloat("反発係数", &engine_.restitution, 0.0f, 1.0f);
     ImGui::SliderFloat("摩擦係数", &engine_.friction, 0.0f, 1.0f);
     ImGui::SliderFloat("エッジ剛性", &engine_.stretchCompliance, 1e-7f, 1e-3f, "%.2e");

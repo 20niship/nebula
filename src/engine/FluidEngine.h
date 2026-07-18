@@ -160,6 +160,10 @@ private:
   uint32_t fluidCapacity_                = 0;   // 現在確保済みの流体パーティクル容量 (>= nFluid_)
   static constexpr uint32_t kDispatchPad = 256; // ローカルワークグループサイズと同じ
   uint32_t totalBufferCapacity() const { return cfg_.max_boundary + fluidCapacity_ + kDispatchPad; }
+  // density/lambdaPbf/omega は流体粒子のみが使う値 (pbf_density.comp 等が
+  // ローカルインデックス i=idx-fluidStart で読み書きする) なので境界粒子分の
+  // 領域を確保する必要が無い。totalBufferCapacity() より max_boundary 分小さい。
+  uint32_t fluidBufferCapacity() const { return fluidCapacity_ + kDispatchPad; }
   void growFluidCapacity(uint32_t minRequired);
 
   uint32_t cellCountIdx_  = 0;

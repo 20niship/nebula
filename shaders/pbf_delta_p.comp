@@ -22,7 +22,9 @@ void main() {
     float h   = pc.cellSize;
     float h2  = h * h;
     float rho0 = pc.stretchCompliance;
-    float lambda_i = readFloat(pc.lambdaPbfIdx, idx);
+    // lambdaPbf は流体粒子専用バッファ (境界粒子分の領域なし) のためローカル
+    // インデックスで読む (i = idx - pc.fluidStart)
+    float lambda_i = readFloat(pc.lambdaPbfIdx, i);
 
     float spiky_coeff = 45.0 / (3.14159265 * h2 * h2 * h2);
     float poly6_coeff = 315.0 / (64.0 * 3.14159265 * h2 * h2 * h2 * h2 * h);
@@ -73,7 +75,9 @@ void main() {
             vec3 grad_w = -(spiky_coeff * hr * hr / rlen) * r;
 
             // 境界粒子の λ_j = 0 (固定)。粉体は流体と同様に λ を使用。
-            float lambda_j = (fj == 1u || fj == 5u) ? readFloat(pc.lambdaPbfIdx, j) : 0.0;
+            // j は流体/粉体タイプであることが確定済み (上のfjチェック) なので
+            // 必ず [fluidStart, fluidStart+particleCount) の範囲内 → ローカル化して読む
+            float lambda_j = (fj == 1u || fj == 5u) ? readFloat(pc.lambdaPbfIdx, j - pc.fluidStart) : 0.0;
 
             // 人工圧力 s_corr = -k * (W(r)/W(Δq))^4
             float hr2  = h2 - r2;

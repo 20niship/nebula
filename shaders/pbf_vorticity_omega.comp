@@ -64,5 +64,7 @@ void main() {
         }
     }
 
-    writeVec4(pc.omegaIdx, idx, vec4(omega, 0.0));
+    // omega は流体粒子専用バッファ (境界粒子分の領域なし) のためローカル
+    // インデックス i (= idx - pc.fluidStart) で書き込む
+    writeVec4(pc.omegaIdx, i, vec4(omega, 0.0));
 }

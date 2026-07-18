@@ -21,7 +21,9 @@ void main() {
     if (fi != 1u) return; // 流体粒子のみ
 
     vec3 pi    = readVec4(pc.posIdx,   idx).xyz;
-    vec3 omega_i = readVec4(pc.omegaIdx, idx).xyz;
+    // omega は流体粒子専用バッファ (境界粒子分の領域なし) のためローカル
+    // インデックス i (= idx - pc.fluidStart) で読む
+    vec3 omega_i = readVec4(pc.omegaIdx, i).xyz;
 
     float h  = pc.cellSize;
     float h2 = h * h;
@@ -61,7 +63,9 @@ void main() {
             float hr   = h - rlen;
             vec3 grad_w = (spiky_coeff * hr * hr / rlen) * r;
 
-            float omega_j_mag = length(readVec4(pc.omegaIdx, j).xyz);
+            // j は流体タイプであることが確定済み (上のtypeFlagチェック) なので
+            // 必ず [fluidStart, fluidStart+particleCount) の範囲内 → ローカル化して読む
+            float omega_j_mag = length(readVec4(pc.omegaIdx, j - pc.fluidStart).xyz);
             eta += omega_j_mag * grad_w;
         }
     }

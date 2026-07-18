@@ -46,9 +46,11 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   cellCountIdx_   = attrBuf_.addAttribute("cellCnt", sizeof(uint32_t), cfg_.totalCells());
   cellOffsetIdx_  = attrBuf_.addAttribute("cellOff", sizeof(uint32_t), cfg_.totalCells() + N_GROUPS);
   sortedIdxIdx_   = attrBuf_.addAttribute("sorted", sizeof(uint32_t), totalCap);
-  densityIdx_     = attrBuf_.addAttribute("density", sizeof(float), totalCap);
-  lambdaPbfIdx_   = attrBuf_.addAttribute("lambdaPbf", sizeof(float), totalCap);
-  omegaIdx_       = attrBuf_.addAttribute("omega", sizeof(glm::vec4), totalCap);
+  // density/lambdaPbf/omega は流体粒子のみに使われる (境界粒子は使わない) ため、
+  // totalCap ではなく fluidBufferCapacity() (= fluidCapacity_+pad) で確保する。
+  densityIdx_     = attrBuf_.addAttribute("density", sizeof(float), fluidBufferCapacity());
+  lambdaPbfIdx_   = attrBuf_.addAttribute("lambdaPbf", sizeof(float), fluidBufferCapacity());
+  omegaIdx_       = attrBuf_.addAttribute("omega", sizeof(glm::vec4), fluidBufferCapacity());
   absorberBufIdx_ = attrBuf_.addAttribute("absorbers", sizeof(float), MAX_ABSORBERS * 8u);
 
   // 境界パーティクル用固定領域 [0, max_boundary) を zero-init する。
@@ -260,9 +262,11 @@ void FluidEngine::growFluidCapacity(uint32_t minRequired) {
   for(const char* name : {"P", "predP", "v", "invMass"}) attrBuf_.resizeAttribute(name, newTotal, cmdPool_, queue_);
   attrBuf_.resizeAttribute("typeFlag", newTotal, cmdPool_, queue_);
   attrBuf_.resizeAttribute("sorted", newTotal, cmdPool_, queue_);
-  attrBuf_.resizeAttribute("density", newTotal, cmdPool_, queue_);
-  attrBuf_.resizeAttribute("lambdaPbf", newTotal, cmdPool_, queue_);
-  attrBuf_.resizeAttribute("omega", newTotal, cmdPool_, queue_);
+  // density/lambdaPbf/omega は流体専用の縮小バッファ (init() 参照)
+  uint32_t newFluidCap = fluidBufferCapacity();
+  attrBuf_.resizeAttribute("density", newFluidCap, cmdPool_, queue_);
+  attrBuf_.resizeAttribute("lambdaPbf", newFluidCap, cmdPool_, queue_);
+  attrBuf_.resizeAttribute("omega", newFluidCap, cmdPool_, queue_);
 }
 
 // ── 粒子リセット ─────────────────────────────────────────────────────────────

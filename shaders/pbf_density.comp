@@ -87,6 +87,8 @@ void main() {
     float denom = dot(grad_ci, grad_ci) / (rho0 * rho0) + sum_grad_sq + pc.cfmEpsilon;
     float lambda = -C / denom;
 
-    writeFloat(pc.densityIdx,   idx, rho);
-    writeFloat(pc.lambdaPbfIdx, idx, lambda);
+    // density/lambdaPbf は流体粒子専用バッファ (境界粒子分の領域を確保していない)
+    // なのでローカルインデックス i (= idx - pc.fluidStart) で書き込む
+    writeFloat(pc.densityIdx,   i, rho);
+    writeFloat(pc.lambdaPbfIdx, i, lambda);
 }

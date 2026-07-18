@@ -75,7 +75,7 @@ std::string ForceShaderCompiler::buildVelocityCallBlock(const std::vector<std::s
   ss << "    {\n";
   ss << "        vec3 fVel = v.xyz;\n";
   ss << "        for (uint fi = 0u; fi < pc.forceCount; fi++) {\n";
-  ss << "            uint fbase = fi * 16u;\n";
+  ss << "            uint fbase = fi * 8u;\n";
   ss << "            uint ftype = FORCE_TYPE_AT(pc.forceBufIdx, fbase);\n";
   ss << "            uint fmask = FORCE_AFFECT_MASK(pc.forceBufIdx, fbase);\n";
   ss << "            if (fmask != 0u && ((fmask >> forceTypeFlag) & 1u) == 0u) continue;\n";
@@ -104,7 +104,7 @@ std::string ForceShaderCompiler::buildConstraintCallBlock(const std::vector<std:
 
   std::ostringstream ss;
   ss << "    for (uint fi = 0u; fi < pc.forceCount; fi++) {\n";
-  ss << "        uint fbase = fi * 16u;\n";
+  ss << "        uint fbase = fi * 8u;\n";
   ss << "        uint ftype = FORCE_TYPE_AT(pc.forceBufIdx, fbase);\n";
   ss << "        uint fmask = FORCE_AFFECT_MASK(pc.forceBufIdx, fbase);\n";
   ss << "        if (fmask != 0u && ((fmask >> forceTypeFlag) & 1u) == 0u) continue;\n";

@@ -6,6 +6,7 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
+#include "../core/Domain.h"
 #include "ComputePipeline.h"
 #include "EngineBase.h"
 #include "SimPC.h"
@@ -23,7 +24,9 @@ public:
   // init() 前に呼ぶ。戻り値はインスタンスの粒子開始インデックス
   uint32_t addInstance(const SoftBodyInstance& inst);
 
-  void init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, float worldSize = 10.0f, uint32_t gridRes = 64);
+  // issue #46: domainSize(vec3, ドメイン物理サイズ[m]) + cellSize(float, 全軸共通の
+  // セルサイズ[m]) で指定する。
+  void init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, glm::vec3 domainSize = {10.0f, 10.0f, 10.0f}, float cellSize = 10.0f / 64.0f);
   void step(VkCommandBuffer cmd, float dt);
   void cleanup();
 
@@ -107,8 +110,8 @@ private:
   uint32_t tetLambdaIdx_  = 0;
   uint32_t tetRestVolIdx_ = 0;
 
-  float worldSize_  = 10.0f;
-  uint32_t gridRes_ = 64;
+  glm::vec3 domainSize_{10.0f, 10.0f, 10.0f};
+  float cellSize_ = 10.0f / 64.0f;
 
   ComputePipeline kPredict_;
   ComputePipeline kSdfCollision_;

@@ -215,13 +215,14 @@ MPMSimPC MPMHarness::makePC(float dt, float rho0, float mu, float lam, float gra
   pc.cellOffsetIdx    = cellOffIdx_;
   pc.sortedIdxIdx     = sortedIdx_;
   pc.particleCount    = maxParticles_;
-  pc.gridRes          = gridRes_;
+  pc.hashCells        = totalCells();
   pc.F2Idx            = F2Idx_;
   pc.materialsIdx     = materialsIdx_;
   pc.dt               = dt;
   pc.cellSize         = cellSize();
-  pc.worldMin         = 0.0f;
-  pc.worldMax         = worldSize_;
+  pc.gridRes          = glm::uvec3(gridRes_);
+  pc.worldMin         = glm::vec3(0.0f);
+  pc.worldMax         = glm::vec3(worldSize_);
   pc.forceBufIdx      = forcesIdx_;
   pc.mu_lame          = mu;
   pc.lambda_lame      = lam;

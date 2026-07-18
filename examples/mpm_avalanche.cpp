@@ -56,8 +56,10 @@ static uint32_t mortonEncode(uint32_t x, uint32_t y, uint32_t z) { return morton
 // ── CLI ────────────────────────────────────────────────────────────────────
 
 struct AvalancheArgs : public argparse::Args {
-  float& world_size           = kwarg("world-size", "world size [m]").set_default(10.0f);
-  int& grid_res               = kwarg("grid-res", "MPM grid resolution").set_default(128);
+  float& domain_size_x        = kwarg("domain-size-x", "domain physical size X [m]").set_default(10.0f);
+  float& domain_size_y        = kwarg("domain-size-y", "domain physical size Y [m]").set_default(10.0f);
+  float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(10.0f);
+  float& cell_size            = kwarg("cell-size", "MPM grid cell size [m]").set_default(10.0f / 128.0f);
   int& max_n                  = kwarg("max-n", "max particle count").set_default(80000);
   float& dt                   = kwarg("dt", "frame timestep [s]").set_default(1.0f / 60.0f);
   int& substeps               = kwarg("substeps", "substeps per frame").set_default(40);
@@ -74,7 +76,7 @@ class AvalancheApp {
 public:
   void run(const AvalancheArgs& args) {
     dt_                 = args.dt;
-    worldSize_          = args.world_size;
+    worldSize_          = args.domain_size_x;
     velCheckEvery_      = args.vel_check;
     base_.screenshotDir = args.screenshot_dir;
 
@@ -83,8 +85,8 @@ public:
     cfg.ny           = 0;
     cfg.nz           = 0;
     cfg.maxParticles = uint32_t(args.max_n);
-    cfg.world_size   = args.world_size;
-    cfg.grid_res     = uint32_t(args.grid_res);
+    cfg.domainSize   = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
+    cfg.cellSize     = args.cell_size;
 
     base_.initWindow("MPM Mountain Avalanche — Drucker-Prager Snow");
     initVulkan(cfg, args.substeps, args.flip_ratio);
@@ -172,13 +174,13 @@ private:
   // smooth版を使用: 高周波 rough/texture を含まないのでSDF境界が安定
   // さらに cs*0.5 の安全マージンを加算 → 粒子が固体内に入りにくくなる
   std::vector<float> buildTerrainSDF(const MPMConfig& cfg) {
-    const uint32_t G = cfg.grid_res;
-    const float cs   = cfg.cellSize();
-    const float W    = cfg.world_size;
+    const glm::uvec3 G = cfg.gridRes();
+    const float cs      = cfg.cellSize;
+    const float W        = cfg.domainSize.x; // 地形関数は等方(cube)前提のスカラーWを使用
     std::vector<float> sdf(cfg.totalCells(), 1e9f);
-    for(uint32_t iz = 0; iz < G; ++iz)
-      for(uint32_t iy = 0; iy < G; ++iy)
-        for(uint32_t ix = 0; ix < G; ++ix) {
+    for(uint32_t iz = 0; iz < G.z; ++iz)
+      for(uint32_t iy = 0; iy < G.y; ++iy)
+        for(uint32_t ix = 0; ix < G.x; ++ix) {
           float cx                      = (ix + 0.5f) * cs;
           float cy                      = (iy + 0.5f) * cs;
           float cz                      = (iz + 0.5f) * cs;
@@ -193,11 +195,11 @@ private:
   // rough/texture の最大勾配は ~1.0 rad/m → セル幅 cs で最大 cs 程度の誤差
   // → 2*cs のマージンで初期位置が SDF 内部に入るのを防ぐ
   void placeSnow(const MPMConfig& cfg) {
-    const float W  = cfg.world_size;
-    const float cs = cfg.cellSize();
+    const float W  = cfg.domainSize.x; // 地形関数は等方(cube)前提のスカラーWを使用
+    const float cs = cfg.cellSize;
 
-    const float x0 = W * 0.05f, x1 = W * 0.95f;
-    const float z0 = W * 0.05f, z1 = W * 0.45f;
+    const float x0 = cfg.domainSize.x * 0.05f, x1 = cfg.domainSize.x * 0.95f;
+    const float z0 = cfg.domainSize.z * 0.05f, z1 = cfg.domainSize.z * 0.45f;
     const int nx_p   = 160;
     const int nz_p   = 160;
     const int nlay   = 3;
@@ -219,7 +221,7 @@ private:
         for(int iy = 0; iy < nlay && int(pos.size()) < maxN; ++iy) {
           // 2*cs マージンで確実に SDF の外側に配置
           float py = h + 2.0f * cs + (iy + 0.5f) * dy;
-          if(py >= W - cs) continue;
+          if(py >= cfg.domainSize.y - cs) continue;
           pos.push_back({px, py, pz, Vp});
           vel.push_back({0.0f, 0.0f, 0.0f, 0.0f});
         }
@@ -256,12 +258,12 @@ private:
     // ドメイン境界 (床・4壁)
     {
       ColliderSet cols;
-      float W = cfg.world_size;
-      cols.addPlane({W * 0.5f, 0.0f, W * 0.5f}, {0, 1, 0}, 0.0f, 0.3f);
-      cols.addPlane({0.0f, W * 0.5f, W * 0.5f}, {1, 0, 0}, 0.0f, 0.1f);
-      cols.addPlane({W, W * 0.5f, W * 0.5f}, {-1, 0, 0}, 0.0f, 0.1f);
-      cols.addPlane({W * 0.5f, W * 0.5f, 0.0f}, {0, 0, 1}, 0.0f, 0.1f);
-      cols.addPlane({W * 0.5f, W * 0.5f, W}, {0, 0, -1}, 0.0f, 0.1f);
+      glm::vec3 D = cfg.domainSize;
+      cols.addPlane({D.x * 0.5f, 0.0f, D.z * 0.5f}, {0, 1, 0}, 0.0f, 0.3f);
+      cols.addPlane({0.0f, D.y * 0.5f, D.z * 0.5f}, {1, 0, 0}, 0.0f, 0.1f);
+      cols.addPlane({D.x, D.y * 0.5f, D.z * 0.5f}, {-1, 0, 0}, 0.0f, 0.1f);
+      cols.addPlane({D.x * 0.5f, D.y * 0.5f, 0.0f}, {0, 0, 1}, 0.0f, 0.1f);
+      cols.addPlane({D.x * 0.5f, D.y * 0.5f, D.z}, {0, 0, -1}, 0.0f, 0.1f);
       engine_.setColliders(cols);
     }
 
@@ -326,8 +328,8 @@ private:
     renderPc.posIdx        = engine_.posIdx;
     renderPc.velIdx        = engine_.velIdx;
     renderPc.particleCount = engine_.liveParticleCount();
-    renderPc.worldMin      = 0.0f;
-    renderPc.worldMax      = engine_.config().world_size;
+    renderPc.worldMin      = glm::vec3(0.0f);
+    renderPc.worldMax      = engine_.config().domainSize;
     graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.liveParticleCount());
 
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);

@@ -12,7 +12,7 @@
 
 void SimulationEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const ClothConfig& cfg) {
   cfg_           = cfg;
-  particleRadius = cfg_.cellSize() * 0.5f;
+  particleRadius = cfg_.cellSize * 0.5f;
   initEngineBase(device, allocator, descriptorPool, cmdPool, queue);
 
   initParticleBuffers(cmdPool, queue);
@@ -62,8 +62,8 @@ void SimulationEngine::initParticleBuffers(VkCommandPool cmdPool, VkQueue queue)
 
 void SimulationEngine::initClothBuffers(VkCommandPool cmdPool, VkQueue queue) {
   // ClothMesh 生成
-  float clothZ = cfg_.world_size * 0.85f; // 箱上部付近 (Z-up)
-  clothMesh_.build(cfg_.cloth_grid_n, 0.065f, cfg_.world_size * 0.5f, cfg_.world_size * 0.5f, clothZ);
+  float clothZ = cfg_.domainSize.z * 0.85f; // 箱上部付近 (Z-up)
+  clothMesh_.build(cfg_.cloth_grid_n, 0.065f, cfg_.domainSize.x * 0.5f, cfg_.domainSize.y * 0.5f, clothZ);
 
   // 上端全行 (i==0) をピン留め (invMass=0)
   for(int j = 0; j < (int)cfg_.cloth_grid_n; ++j) clothMesh_.invMasses[clothMesh_.idx(0, j)].x = 0.0f;
@@ -231,13 +231,14 @@ void SimulationEngine::step(VkCommandBuffer cmd, float dt) {
     pc.cellOffsetIdx     = cellOffsetIdx_;
     pc.sortedIdxIdx      = sortedIdxIdx_;
     pc.particleCount     = cfg_.clothVertCount();
-    pc.gridRes           = cfg_.grid_res;
+    pc.hashCells         = cfg_.totalCells();
     pc.stretchEdgesIdx   = stretchEdgesIdx_;
     pc.lambdasIdx        = lambdasIdx_;
     pc.dt                = subDt;
-    pc.cellSize          = cfg_.cellSize();
-    pc.worldMin          = 0.0f;
-    pc.worldMax          = cfg_.world_size;
+    pc.cellSize          = cfg_.cellSize;
+    pc.gridRes           = cfg_.gridRes();
+    pc.worldMin          = glm::vec3(0.0f);
+    pc.worldMax          = cfg_.domainSize;
     pc.restitution       = restitution;
     pc.friction          = friction;
     pc.particleRadius    = particleRadius;

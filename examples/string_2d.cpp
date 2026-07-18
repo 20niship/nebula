@@ -387,13 +387,14 @@ void String2DSim::step(VkCommandBuffer cmd, float dt) {
     pc.cellOffsetIdx     = cellOffsetIdx_;
     pc.sortedIdxIdx      = sortedIdxIdx_;
     pc.particleCount     = STR_N;
-    pc.gridRes           = STR_GRID;
+    pc.hashCells         = STR_CELLS;
     pc.stretchEdgesIdx   = stretchEdgesIdx_;
     pc.lambdasIdx        = lambdasIdx_;
     pc.dt                = subDt;
     pc.cellSize          = STR_CELL;
-    pc.worldMin          = 0.0f;
-    pc.worldMax          = STR_WORLD;
+    pc.gridRes           = glm::uvec3(STR_GRID);
+    pc.worldMin          = glm::vec3(0.0f);
+    pc.worldMax          = glm::vec3(STR_WORLD);
     pc.restitution       = restitution;
     pc.friction          = friction;
     pc.particleRadius    = particleRadius;
@@ -762,8 +763,8 @@ void String2DApp::recordGraphicsCmd(VkCommandBuffer cmd, uint32_t imageIdx) {
   SimPC pc{};
   pc.posIdx   = sim_.posIdx;
   pc.velIdx   = sim_.velIdx;
-  pc.worldMin = 0.0f;
-  pc.worldMax = STR_WORLD;
+  pc.worldMin = glm::vec3(0.0f);
+  pc.worldMax = glm::vec3(STR_WORLD);
 
   renderer_.draw(cmd, sim_.descriptorSet, pc, STR_N);
 

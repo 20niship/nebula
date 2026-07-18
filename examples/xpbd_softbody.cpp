@@ -17,8 +17,10 @@ static const std::string ASSET_DIR_STR  = ASSET_DIR;
 // ── CLI ───────────────────────────────────────────────────────────────────────
 
 struct SoftBodyArgs : public argparse::Args {
-  float& world_size     = kwarg("world-size", "world size [m]").set_default(10.0f);
-  int& grid_res         = kwarg("grid-res", "spatial grid resolution").set_default(64);
+  float& domain_size_x  = kwarg("domain-size-x", "domain physical size X [m]").set_default(10.0f);
+  float& domain_size_y  = kwarg("domain-size-y", "domain physical size Y [m]").set_default(10.0f);
+  float& domain_size_z  = kwarg("domain-size-z", "domain physical size Z [m]").set_default(10.0f);
+  float& cell_size      = kwarg("cell-size", "spatial grid cell size [m]").set_default(10.0f / 64.0f);
   float& dt             = kwarg("dt", "frame timestep [s]").set_default(1.0f / 60.0f);
   int& substeps         = kwarg("substeps", "substeps per frame").set_default(15);
   int& n_shots          = kwarg("n-shots", "screenshot count (0=off)").set_default(0);
@@ -53,7 +55,7 @@ private:
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
-    float ws   = args.world_size;
+    float ws   = args.domain_size_x; // 配置ロジックは等方(cube)前提のスカラーwsを使用
     float mid  = ws * 0.5f;
     float high = ws * 0.75f;
 
@@ -101,7 +103,7 @@ private:
                                "-o assets/bunny_sb.sb");
     }
 
-    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, args.world_size, uint32_t(args.grid_res));
+    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z), args.cell_size);
     gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f); // Z-up
     engine_.addForce(gravity_);
     engine_.numSubsteps = args.substeps;
@@ -165,8 +167,8 @@ private:
     SimPC renderPc{};
     renderPc.posIdx          = engine_.posIdx;
     renderPc.stretchEdgesIdx = engine_.edgeDataIdx;
-    renderPc.worldMin        = 0.0f;
-    renderPc.worldMax        = 10.0f;
+    renderPc.worldMin        = glm::vec3(0.0f);
+    renderPc.worldMax        = glm::vec3(10.0f);
 
     // LINE_LIST: 1辺 = 頂点2個
     graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.totalEdgeCount() * 2);

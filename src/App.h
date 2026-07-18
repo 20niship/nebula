@@ -2,6 +2,7 @@
 
 #include <GLFW/glfw3.h>
 #include <array>
+#include <chrono>
 #include <string>
 #include <vulkan/vulkan.h>
 
@@ -33,6 +34,10 @@ public:
   std::string screenshotDir;
   int screenshotsTaken = 0;
   bool shouldExit      = false;
+
+  // task perf 用計測 (screenshotDir が空でも n_shots フレームで終了し、
+  // stdout に PERF_RESULT 行を出力する。screenshotDir 指定時はPPM保存も行う)。
+  std::chrono::steady_clock::time_point perfStartTime_;
 
   void initWindow(const char* title, int w = 640, int h = 480);
   void createDescriptorPool();

@@ -1,8 +1,10 @@
 #include "PyroEngine.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <map>
 #include <stdexcept>
 
 // ── バリア ────────────────────────────────────────────────────────────────
@@ -87,6 +89,7 @@ void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool 
 
 void PyroEngine::cleanup() {
   for(auto* k : {&kEmit_, &kCombustion_, &kForces_, &kObstacleBC_, &kAdvect_, &kCurl_, &kVorticityForce_, &kDivergence_, &kPressureGS_, &kProject_}) k->cleanup();
+  if(profPool_ != VK_NULL_HANDLE) vkDestroyQueryPool(device_, profPool_, nullptr);
   cleanupEngineBase();
 }
 
@@ -143,6 +146,43 @@ void PyroEngine::updateEmitters(float dt) {
   emittersActiveCount_ = uint32_t(active.size());
 }
 
+// ── [temp] GPUパス単位プロファイリング ────────────────────────────────────
+
+void PyroEngine::enableGpuProfiling(VkPhysicalDevice physicalDevice) {
+  VkPhysicalDeviceProperties props{};
+  vkGetPhysicalDeviceProperties(physicalDevice, &props);
+  profTsPeriodNs_ = props.limits.timestampPeriod;
+  VkQueryPoolCreateInfo qpci{};
+  qpci.sType      = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+  qpci.queryType  = VK_QUERY_TYPE_TIMESTAMP;
+  qpci.queryCount = kProfMaxQueries;
+  vkCreateQueryPool(device_, &qpci, nullptr, &profPool_);
+  profEnabled_ = true;
+}
+
+void PyroEngine::printGpuProfile() {
+  if(!profEnabled_ || profLabels_.empty()) return;
+  uint32_t n = uint32_t(profLabels_.size()) * 2;
+  std::vector<uint64_t> ts(n);
+  vkGetQueryPoolResults(device_, profPool_, 0, n, ts.size() * sizeof(uint64_t), ts.data(), sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+
+  std::map<std::string, double> sumMs;
+  std::map<std::string, int> counts;
+  double total = 0.0;
+  for(size_t i = 0; i < profLabels_.size(); i++) {
+    double ms = double(ts[i * 2 + 1] - ts[i * 2]) * profTsPeriodNs_ / 1e6;
+    sumMs[profLabels_[i]] += ms;
+    counts[profLabels_[i]] += 1;
+    total += ms;
+  }
+  std::vector<std::pair<std::string, double>> sorted(sumMs.begin(), sumMs.end());
+  std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+  std::fprintf(stderr, "=== [PyroEngine GPU profile] total=%.4f ms ===\n", total);
+  for(const auto& [label, ms] : sorted) {
+    std::fprintf(stderr, "  %-26s %9.4f ms  (%5.1f%%, x%d)\n", label.c_str(), ms, ms / total * 100.0, counts[label]);
+  }
+}
+
 // ── Push Constants 構築 ──────────────────────────────────────────────────
 
 PyroSimPC PyroEngine::buildPC(float dt) const {
@@ -197,6 +237,22 @@ void PyroEngine::step(VkCommandBuffer cmd, float dt) {
 
   const float subDt = dt / float(std::max(1, numSubsteps));
 
+  uint32_t qi = 0;
+  if(profEnabled_) {
+    vkCmdResetQueryPool(cmd, profPool_, 0, kProfMaxQueries);
+    profLabels_.clear();
+  }
+  auto prof = [&](ComputePipeline& k, const PyroSimPC& ppc, const char* label) {
+    if(profEnabled_ && qi + 1 < kProfMaxQueries) vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, profPool_, qi);
+    dispatchPyro(cmd, k, ppc);
+    computeBarrier(cmd);
+    if(profEnabled_ && qi + 1 < kProfMaxQueries) {
+      vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, profPool_, qi + 1);
+      profLabels_.push_back(label);
+      qi += 2;
+    }
+  };
+
   for(int s = 0; s < numSubsteps; s++) {
     updateEmitters(subDt);
 
@@ -207,57 +263,45 @@ void PyroEngine::step(VkCommandBuffer cmd, float dt) {
     }
 
     // ① Emitter 注入 (A バッファへインプレース)
-    dispatchPyro(cmd, kEmit_, pc);
-    computeBarrier(cmd);
+    prof(kEmit_, pc, "emit");
 
     // ①b 燃焼反応 (A バッファへインプレース)
-    dispatchPyro(cmd, kCombustion_, pc);
-    computeBarrier(cmd);
+    prof(kCombustion_, pc, "combustion");
 
     // ② 浮力 (A バッファへインプレース)
-    dispatchPyro(cmd, kForces_, pc);
-    computeBarrier(cmd);
+    prof(kForces_, pc, "forces");
 
     // ②b 渦度閉じ込め (2パス: curl → 閉じ込め力適用、A バッファへインプレース)
     if(vorticityEps > 0.0f) {
-      dispatchPyro(cmd, kCurl_, pc);
-      computeBarrier(cmd);
-      dispatchPyro(cmd, kVorticityForce_, pc);
-      computeBarrier(cmd);
+      prof(kCurl_, pc, "curl");
+      prof(kVorticityForce_, pc, "vorticity_force");
     }
 
     // ③ 障害物 BC (投影前, A バッファへインプレース)
-    dispatchPyro(cmd, kObstacleBC_, pc);
-    computeBarrier(cmd);
+    prof(kObstacleBC_, pc, "obstacle_bc_pre");
 
     // ③b 圧力投影 (非圧縮化): divergence → Red-Black Gauss-Seidel 反復 → project
-    dispatchPyro(cmd, kDivergence_, pc);
-    computeBarrier(cmd);
+    prof(kDivergence_, pc, "divergence");
 
     for(int sweep = 0; sweep < numPressureIters; sweep++) {
       for(uint32_t color = 0; color < 2; color++) {
         PyroSimPC ppc = pc;
         ppc.gsColor   = color;
-        dispatchPyro(cmd, kPressureGS_, ppc);
-        computeBarrier(cmd);
+        prof(kPressureGS_, ppc, "pressure_gs");
       }
     }
-    dispatchPyro(cmd, kProject_, pc);
-    computeBarrier(cmd);
+    prof(kProject_, pc, "project");
 
     // ③c 障害物 BC (投影後, A バッファへインプレース)
-    dispatchPyro(cmd, kObstacleBC_, pc);
-    computeBarrier(cmd);
+    prof(kObstacleBC_, pc, "obstacle_bc_post_proj");
 
     // ④ 移流 (A→B)
-    dispatchPyro(cmd, kAdvect_, pc);
-    computeBarrier(cmd);
+    prof(kAdvect_, pc, "advect");
 
     // ⑤ 障害物 BC (移流後, B バッファへインプレース)
     PyroSimPC pcPost = pc;
     pcPost.velIdxA   = pc.velIdxB;
-    dispatchPyro(cmd, kObstacleBC_, pcPost);
-    computeBarrier(cmd);
+    prof(kObstacleBC_, pcPost, "obstacle_bc_post_advect");
 
     // ダブルバッファ入れ替え: 次フレームは B が現在値になる
     cur_ = 1 - cur_;

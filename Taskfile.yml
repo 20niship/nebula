@@ -181,6 +181,12 @@ tasks:
       - rm -rf sim_captures
     prompt: "sim_captures/ を削除します。よろしいですか？"
 
+  perf:
+    desc: "画面キャプチャ/pvoxダンプ/vsyncを排除した純粋なシミュレーション実行時間を計測 (task captureの代替、perf_sim.py)"
+    deps: [build]
+    cmds:
+      - /opt/homebrew/bin/python3 perf_sim.py {{.CLI_ARGS}}
+
   # ── デフォルト ──────────────────────────────────────────────────────────────
   default:
     desc: "タスク一覧を表示"

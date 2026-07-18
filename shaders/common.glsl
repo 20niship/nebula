@@ -100,4 +100,17 @@ uint cellId(vec3 p) {
     return mortonExpand(g.x) | (mortonExpand(g.y) << 1u) | (mortonExpand(g.z) << 2u);
 }
 
+// ── 27近傍セル走査用: 軸ごとのMorton成分を事前計算 ──────────────────
+// dx,dy,dz∈{-1,0,1}の27通りを毎回 mortonExpand()×3 で計算すると、同じ軸値
+// (gi.x-1, gi.x, gi.x+1 等) に対する重複計算が26/27発生する。
+// 軸ごとに3値だけ計算しておき、ループ内では mx[dx+1]|(my[dy+1]<<1)|(mz[dz+1]<<2)
+// で組み合わせることで mortonExpand の呼び出し回数を 81 回→9 回に削減する。
+// 範囲外座標 (gi±1 が [0,gridRes) の外) の要素は呼び出し側の境界チェックで
+// 使用されないため、値自体は計算しても捨てられるだけで安全。
+void mortonAxisTriples(ivec3 gi, out uint mx[3], out uint my[3], out uint mz[3]) {
+    mx[0] = mortonExpand(uint(gi.x - 1)); mx[1] = mortonExpand(uint(gi.x)); mx[2] = mortonExpand(uint(gi.x + 1));
+    my[0] = mortonExpand(uint(gi.y - 1)); my[1] = mortonExpand(uint(gi.y)); my[2] = mortonExpand(uint(gi.y + 1));
+    mz[0] = mortonExpand(uint(gi.z - 1)); mz[1] = mortonExpand(uint(gi.z)); mz[2] = mortonExpand(uint(gi.z + 1));
+}
+
 #endif // COMMON_GLSL

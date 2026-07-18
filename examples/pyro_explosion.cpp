@@ -47,6 +47,9 @@ int main(int argc, char* argv[]) {
 
     PyroEngine engine;
     engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR, cfg);
+#ifdef NEBULA_GPU_PROFILING
+    engine.enableGpuProfiling(ctx.physicalDevice);
+#endif
 
     engine.numSubsteps        = args.substeps;
     engine.numPressureIters   = args.pressure_iters;
@@ -99,6 +102,9 @@ int main(int argc, char* argv[]) {
       std::printf("PERF_RESULT frames=%d elapsed_s=%.6f ms_per_frame=%.6f\n", args.n_frames, elapsed_s, elapsed_s * 1000.0 / double(args.n_frames));
       std::fflush(stdout);
     }
+#ifdef NEBULA_GPU_PROFILING
+    engine.printGpuProfile();
+#endif
 
     engine.cleanup();
     ctx.cleanup();

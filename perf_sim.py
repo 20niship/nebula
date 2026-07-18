@@ -43,8 +43,8 @@ N_FRAMES = 100  # task capture (300) より少なめ。ポーリング/レイマ
 PERF_RESULT_RE = re.compile(r"PERF_RESULT frames=(\d+) elapsed_s=([\d.]+) ms_per_frame=([\d.]+)")
 
 
-def run_one(sim: dict, n_frames: int) -> dict:
-    exe = BUILD_DIR / sim["exe"]
+def run_one(sim: dict, n_frames: int, build_dir: Path) -> dict:
+    exe = build_dir / sim["exe"]
     if not exe.exists():
         return {"status": "missing"}
 
@@ -66,7 +66,7 @@ def run_one(sim: dict, n_frames: int) -> dict:
     cmd += sim.get("extra_args", [])
 
     try:
-        proc = subprocess.run(cmd, env=env, cwd=str(BUILD_DIR), capture_output=True, text=True, timeout=300)
+        proc = subprocess.run(cmd, env=env, cwd=str(build_dir), capture_output=True, text=True, timeout=300)
     except subprocess.TimeoutExpired:
         return {"status": "timeout"}
 
@@ -93,15 +93,20 @@ def main():
     parser.add_argument("--frames", type=int, default=N_FRAMES, help=f"各シムの実行フレーム数 (デフォルト: {N_FRAMES})")
     parser.add_argument("--perf-json", type=str, default=None, help="計測結果をJSONで書き出すパス")
     parser.add_argument("--commit-sha", type=str, default="", help="perf-json に埋め込む commit sha (未指定なら git rev-parse HEAD)")
+    parser.add_argument("--build-dir", type=str, default=None, help=f"ビルドディレクトリ (デフォルト: {BUILD_DIR}。task perf からは build-perf/ が渡される)")
     cli = parser.parse_args()
 
-    print(f"=== task perf: {cli.frames} frames/case, キャプチャI/O無し, vsync無効 ===")
+    # cmd[0]/cwd に同じ相対パスを渡すと、実行ファイル解決がcwd変更前の相対パスとして
+    # 扱われて失敗するため (Popenの仕様)、絶対パスに解決しておく
+    build_dir = Path(cli.build_dir).resolve() if cli.build_dir else BUILD_DIR
+
+    print(f"=== task perf: {cli.frames} frames/case, キャプチャI/O無し, vsync無効 (build_dir={build_dir}) ===")
     results = {}
     for sim in SIMS:
         if sim["exe"] is None:
             continue
         print(f"\n--- {sim['title']} ({sim['exe']}) ---")
-        r = run_one(sim, cli.frames)
+        r = run_one(sim, cli.frames, build_dir)
         results[sim["id"]] = {"title": sim["title"], **r}
         if r["status"] == "ok":
             print(f"  {r['ms_per_frame']:.4f} ms/frame  (total {r['elapsed_s']:.3f}s / {r['frames']}frames)")

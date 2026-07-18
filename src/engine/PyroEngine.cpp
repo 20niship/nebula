@@ -89,7 +89,9 @@ void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool 
 
 void PyroEngine::cleanup() {
   for(auto* k : {&kEmit_, &kCombustion_, &kForces_, &kObstacleBC_, &kAdvect_, &kCurl_, &kVorticityForce_, &kDivergence_, &kPressureGS_, &kProject_}) k->cleanup();
+#ifdef NEBULA_GPU_PROFILING
   if(profPool_ != VK_NULL_HANDLE) vkDestroyQueryPool(device_, profPool_, nullptr);
+#endif
   cleanupEngineBase();
 }
 
@@ -146,7 +148,8 @@ void PyroEngine::updateEmitters(float dt) {
   emittersActiveCount_ = uint32_t(active.size());
 }
 
-// ── [temp] GPUパス単位プロファイリング ────────────────────────────────────
+// ── GPUパス単位プロファイリング ──────────────────────────────────────────
+#ifdef NEBULA_GPU_PROFILING
 
 void PyroEngine::enableGpuProfiling(VkPhysicalDevice physicalDevice) {
   VkPhysicalDeviceProperties props{};
@@ -182,6 +185,8 @@ void PyroEngine::printGpuProfile() {
     std::fprintf(stderr, "  %-26s %9.4f ms  (%5.1f%%, x%d)\n", label.c_str(), ms, ms / total * 100.0, counts[label]);
   }
 }
+
+#endif // NEBULA_GPU_PROFILING
 
 // ── Push Constants 構築 ──────────────────────────────────────────────────
 
@@ -237,6 +242,7 @@ void PyroEngine::step(VkCommandBuffer cmd, float dt) {
 
   const float subDt = dt / float(std::max(1, numSubsteps));
 
+#ifdef NEBULA_GPU_PROFILING
   uint32_t qi = 0;
   if(profEnabled_) {
     vkCmdResetQueryPool(cmd, profPool_, 0, kProfMaxQueries);
@@ -252,6 +258,12 @@ void PyroEngine::step(VkCommandBuffer cmd, float dt) {
       qi += 2;
     }
   };
+#else
+  auto prof = [&](ComputePipeline& k, const PyroSimPC& ppc, const char* /*label*/) {
+    dispatchPyro(cmd, k, ppc);
+    computeBarrier(cmd);
+  };
+#endif
 
   for(int s = 0; s < numSubsteps; s++) {
     updateEmitters(subDt);

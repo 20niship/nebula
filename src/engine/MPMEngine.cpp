@@ -402,7 +402,7 @@ void MPMEngine::step(VkCommandBuffer cmd, float dt) {
   // Emitter (GPU upload は compute dispatch の前に完結)
   emitFromEmitters(dt);
 
-  uploadForces(dt);
+  uploadForces(cmd, dt);
 
   const uint32_t N  = nParticles_; // ライブパーティクル数
   const uint32_t NC = cfg_.totalCells();

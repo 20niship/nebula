@@ -69,7 +69,7 @@ void SoftBodyEngine::cleanup() {
 void SoftBodyEngine::step(VkCommandBuffer cmd, float dt) {
   if(totalCount_ == 0) return;
 
-  uploadForces(dt);
+  uploadForces(cmd, dt);
 
   VkDescriptorSet ds = attrBuf_.descriptorSet;
   const float subDt  = dt / float(std::max(1, numSubsteps));

@@ -233,7 +233,7 @@ PyroSimPC PyroEngine::buildPC(float dt) const {
 // ── ステップ ──────────────────────────────────────────────────────────────
 
 void PyroEngine::step(VkCommandBuffer cmd, float dt) {
-  uploadForces(dt);
+  uploadForces(cmd, dt);
 
   const float subDt = dt / float(std::max(1, numSubsteps));
 

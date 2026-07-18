@@ -380,7 +380,7 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
 
   auto ds = attrBuf_.descriptorSet;
 
-  uploadForces(dt);
+  uploadForces(cmd, dt);
 
   float subDt     = dt / float(std::max(1, numSubsteps));
   uint32_t totalN = cfg_.max_boundary + nFluid_;

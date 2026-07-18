@@ -227,7 +227,7 @@ void ClothSceneEngine::step(VkCommandBuffer cmd, float dt) {
     pinnedTargetDirty_ = false;
   }
 
-  uploadForces(dt);
+  uploadForces(cmd, dt);
 
   const float subDt = dt / std::max(1, numSubsteps);
 

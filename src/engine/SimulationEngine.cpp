@@ -216,7 +216,7 @@ void SimulationEngine::computeBarrier(VkCommandBuffer cmd) {
 void SimulationEngine::step(VkCommandBuffer cmd, float dt) {
   auto ds = attrBuf_.descriptorSet;
 
-  uploadForces(dt);
+  uploadForces(cmd, dt);
 
   float subDt = dt / std::max(1, numSubsteps);
 

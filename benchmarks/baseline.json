@@ -1,38 +1,38 @@
 {
-  "generated_at": "2026-07-15T15:06:13Z",
-  "commit": "c04006e30e94afa6b12c29de8c7dfd97a630fe67",
+  "generated_at": "2026-07-18T03:17:15Z",
+  "commit": "e7baabda68684f7579c35af1503e518a2d5cb4a7",
   "frames": 60,
   "sims": {
     "tc1": {
       "title": "TC1: Dam Break",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 32.011,
-      "ms_per_frame": 533.522,
+      "elapsed_s": 32.012,
+      "ms_per_frame": 533.531,
       "returncode": 0
     },
     "tc2": {
       "title": "TC2: Moving Source Flow",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 14.007,
-      "ms_per_frame": 233.443,
+      "elapsed_s": 12.006,
+      "ms_per_frame": 200.098,
       "returncode": 0
     },
     "tc3": {
       "title": "TC3: Jelly (High Viscosity)",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 30.011,
-      "ms_per_frame": 500.181,
+      "elapsed_s": 30.01,
+      "ms_per_frame": 500.169,
       "returncode": 0
     },
     "tc4": {
       "title": "TC4: Cloth Drape",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 22.009,
-      "ms_per_frame": 366.817,
+      "elapsed_s": 22.008,
+      "ms_per_frame": 366.794,
       "returncode": 0
     },
     "tc5": {
@@ -40,7 +40,7 @@
       "status": "ok",
       "frames": 60,
       "elapsed_s": 6.005,
-      "ms_per_frame": 100.084,
+      "ms_per_frame": 100.088,
       "returncode": 0
     },
     "tc6": {
@@ -48,23 +48,23 @@
       "status": "ok",
       "frames": 60,
       "elapsed_s": 2.002,
-      "ms_per_frame": 33.358,
+      "ms_per_frame": 33.361,
       "returncode": 0
     },
     "tc7": {
       "title": "TC7: Cloth Twist",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 14.005,
-      "ms_per_frame": 233.421,
+      "elapsed_s": 14.008,
+      "ms_per_frame": 233.461,
       "returncode": 0
     },
     "tc8": {
       "title": "TC8: Rotating Screw",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 14.006,
-      "ms_per_frame": 233.436,
+      "elapsed_s": 14.004,
+      "ms_per_frame": 233.406,
       "returncode": 0
     },
     "tc9": {
@@ -72,79 +72,79 @@
       "status": "ok",
       "frames": 60,
       "elapsed_s": 4.002,
-      "ms_per_frame": 66.698,
+      "ms_per_frame": 66.702,
       "returncode": 0
     },
     "tc10": {
       "title": "TC10: XPBD Softbody",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 58.016,
-      "ms_per_frame": 966.937,
+      "elapsed_s": 62.017,
+      "ms_per_frame": 1033.622,
       "returncode": 0
     },
     "tc_pic": {
       "title": "TC-A: MPM Elastic — PIC",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 70.024,
-      "ms_per_frame": 1167.066,
+      "elapsed_s": 76.023,
+      "ms_per_frame": 1267.055,
       "returncode": 0
     },
     "tc_apic": {
       "title": "TC-B: MPM Elastic — APIC",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 70.022,
-      "ms_per_frame": 1167.04,
+      "elapsed_s": 78.027,
+      "ms_per_frame": 1300.457,
       "returncode": 0
     },
     "tc_avalanche": {
       "title": "TC-E: MPM Avalanche — Snow",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 746.281,
-      "ms_per_frame": 12438.011,
+      "elapsed_s": 744.267,
+      "ms_per_frame": 12404.453,
       "returncode": 0
     },
     "tc_multi": {
       "title": "TC-F: MPM Multi-Material",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 70.025,
-      "ms_per_frame": 1167.082,
+      "elapsed_s": 76.023,
+      "ms_per_frame": 1267.052,
       "returncode": 0
     },
     "tc_snow": {
       "title": "TC-G: MPM Snow Impact",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 154.054,
-      "ms_per_frame": 2567.559,
+      "elapsed_s": 184.063,
+      "ms_per_frame": 3067.719,
       "returncode": 0
     },
     "tc_geolayer": {
       "title": "TC-H: MPM Geo-Layer Collapse",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 64.022,
-      "ms_per_frame": 1067.032,
+      "elapsed_s": 68.027,
+      "ms_per_frame": 1133.775,
       "returncode": 0
     },
     "tc_cow": {
       "title": "TC-K: Pyro Cow Blast",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 86.075,
-      "ms_per_frame": 1434.579,
+      "elapsed_s": 84.361,
+      "ms_per_frame": 1406.01,
       "returncode": 0
     },
     "tc_explosion": {
       "title": "TC-L: Pyro Explosion (Mushroom Cloud)",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 57.534,
-      "ms_per_frame": 958.899,
+      "elapsed_s": 53.532,
+      "ms_per_frame": 892.199,
       "returncode": 0
     }
   }

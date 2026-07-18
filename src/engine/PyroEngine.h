@@ -129,6 +129,7 @@ private:
   PyroSimPC buildPC(float dt) const;
   void dispatchPyro(VkCommandBuffer cmd, ComputePipeline& k, const PyroSimPC& pc);
   void computeBarrier(VkCommandBuffer cmd);
+  void dispatchAndBarrier(VkCommandBuffer cmd, ComputePipeline& k, const PyroSimPC& pc, const char* label);
   void updateEmitters(float dt); // CPU側でアクティブな Emitter を選別・アップロード
 
   // ステージングバッファ経由の GPU→CPU 同期読み戻し (dumpFrame 専用)
@@ -141,5 +142,6 @@ private:
   double profTsPeriodNs_ = 1.0;
   static constexpr uint32_t kProfMaxQueries = 256;
   std::vector<std::string> profLabels_;
+  uint32_t profQueryIndex_ = 0;
 #endif
 };

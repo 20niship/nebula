@@ -26,6 +26,23 @@ void PyroEngine::dispatchPyro(VkCommandBuffer cmd, ComputePipeline& k, const Pyr
   vkCmdDispatch(cmd, cfg_.nGroups(), 1, 1);
 }
 
+void PyroEngine::dispatchAndBarrier(VkCommandBuffer cmd, ComputePipeline& k, const PyroSimPC& pc, const char* label) {
+#ifdef NEBULA_GPU_PROFILING
+  if(profEnabled_ && profQueryIndex_ + 1 < kProfMaxQueries) vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, profPool_, profQueryIndex_);
+#else
+  (void)label;
+#endif
+  dispatchPyro(cmd, k, pc);
+  computeBarrier(cmd);
+#ifdef NEBULA_GPU_PROFILING
+  if(profEnabled_ && profQueryIndex_ + 1 < kProfMaxQueries) {
+    vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, profPool_, profQueryIndex_ + 1);
+    profLabels_.push_back(label);
+    profQueryIndex_ += 2;
+  }
+#endif
+}
+
 // ── 初期化 ────────────────────────────────────────────────────────────────
 
 void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const PyroConfig& cfg) {
@@ -243,26 +260,11 @@ void PyroEngine::step(VkCommandBuffer cmd, float dt) {
   const float subDt = dt / float(std::max(1, numSubsteps));
 
 #ifdef NEBULA_GPU_PROFILING
-  uint32_t qi = 0;
   if(profEnabled_) {
     vkCmdResetQueryPool(cmd, profPool_, 0, kProfMaxQueries);
     profLabels_.clear();
   }
-  auto prof = [&](ComputePipeline& k, const PyroSimPC& ppc, const char* label) {
-    if(profEnabled_ && qi + 1 < kProfMaxQueries) vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, profPool_, qi);
-    dispatchPyro(cmd, k, ppc);
-    computeBarrier(cmd);
-    if(profEnabled_ && qi + 1 < kProfMaxQueries) {
-      vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, profPool_, qi + 1);
-      profLabels_.push_back(label);
-      qi += 2;
-    }
-  };
-#else
-  auto prof = [&](ComputePipeline& k, const PyroSimPC& ppc, const char* /*label*/) {
-    dispatchPyro(cmd, k, ppc);
-    computeBarrier(cmd);
-  };
+  profQueryIndex_ = 0;
 #endif
 
   for(int s = 0; s < numSubsteps; s++) {
@@ -275,45 +277,45 @@ void PyroEngine::step(VkCommandBuffer cmd, float dt) {
     }
 
     // ① Emitter 注入 (A バッファへインプレース)
-    prof(kEmit_, pc, "emit");
+    dispatchAndBarrier(cmd, kEmit_, pc, "emit");
 
     // ①b 燃焼反応 (A バッファへインプレース)
-    prof(kCombustion_, pc, "combustion");
+    dispatchAndBarrier(cmd, kCombustion_, pc, "combustion");
 
     // ② 浮力 (A バッファへインプレース)
-    prof(kForces_, pc, "forces");
+    dispatchAndBarrier(cmd, kForces_, pc, "forces");
 
     // ②b 渦度閉じ込め (2パス: curl → 閉じ込め力適用、A バッファへインプレース)
     if(vorticityEps > 0.0f) {
-      prof(kCurl_, pc, "curl");
-      prof(kVorticityForce_, pc, "vorticity_force");
+      dispatchAndBarrier(cmd, kCurl_, pc, "curl");
+      dispatchAndBarrier(cmd, kVorticityForce_, pc, "vorticity_force");
     }
 
     // ③ 障害物 BC (投影前, A バッファへインプレース)
-    prof(kObstacleBC_, pc, "obstacle_bc_pre");
+    dispatchAndBarrier(cmd, kObstacleBC_, pc, "obstacle_bc_pre");
 
     // ③b 圧力投影 (非圧縮化): divergence → Red-Black Gauss-Seidel 反復 → project
-    prof(kDivergence_, pc, "divergence");
+    dispatchAndBarrier(cmd, kDivergence_, pc, "divergence");
 
     for(int sweep = 0; sweep < numPressureIters; sweep++) {
       for(uint32_t color = 0; color < 2; color++) {
         PyroSimPC ppc = pc;
         ppc.gsColor   = color;
-        prof(kPressureGS_, ppc, "pressure_gs");
+        dispatchAndBarrier(cmd, kPressureGS_, ppc, "pressure_gs");
       }
     }
-    prof(kProject_, pc, "project");
+    dispatchAndBarrier(cmd, kProject_, pc, "project");
 
     // ③c 障害物 BC (投影後, A バッファへインプレース)
-    prof(kObstacleBC_, pc, "obstacle_bc_post_proj");
+    dispatchAndBarrier(cmd, kObstacleBC_, pc, "obstacle_bc_post_proj");
 
     // ④ 移流 (A→B)
-    prof(kAdvect_, pc, "advect");
+    dispatchAndBarrier(cmd, kAdvect_, pc, "advect");
 
     // ⑤ 障害物 BC (移流後, B バッファへインプレース)
     PyroSimPC pcPost = pc;
     pcPost.velIdxA   = pc.velIdxB;
-    prof(kObstacleBC_, pcPost, "obstacle_bc_post_advect");
+    dispatchAndBarrier(cmd, kObstacleBC_, pcPost, "obstacle_bc_post_advect");
 
     // ダブルバッファ入れ替え: 次フレームは B が現在値になる
     cur_ = 1 - cur_;

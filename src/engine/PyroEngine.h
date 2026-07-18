@@ -35,6 +35,10 @@ public:
 
   void step(VkCommandBuffer cmd, float dt);
 
+  // ── [temp] GPUパス単位プロファイリング(診断用) ──────────────────────────
+  void enableGpuProfiling(VkPhysicalDevice physicalDevice);
+  void printGpuProfile();
+
   const PyroConfig& config() const { return cfg_; }
 
   // ── 物理パラメータ (ImGui/CLI から調整可能) ─────────────────────────────
@@ -127,4 +131,11 @@ private:
 
   // ステージングバッファ経由の GPU→CPU 同期読み戻し (dumpFrame 専用)
   void readBufferToCPU(VkBuffer src, void* dst, size_t bytes) const;
+
+  // [temp] プロファイリング用
+  VkQueryPool profPool_ = VK_NULL_HANDLE;
+  bool profEnabled_     = false;
+  double profTsPeriodNs_ = 1.0;
+  static constexpr uint32_t kProfMaxQueries = 256;
+  std::vector<std::string> profLabels_;
 };

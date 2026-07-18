@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <limits>
@@ -30,6 +31,9 @@ static void destroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMesse
 
 void VulkanContext::init(GLFWwindow* window) {
   window_ = window;
+  // task perf 用: vsyncによるフレームレート上限で純粋なシミュレーション性能差が
+  // 隠れてしまうため、NEBULA_NO_VSYNC=1 の場合は vsync 設定を強制的に無効化する。
+  if(std::getenv("NEBULA_NO_VSYNC") != nullptr) vsync = false;
   createInstance();
 #ifdef VULKAN_VALIDATION
   createDebugMessenger();

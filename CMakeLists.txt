@@ -21,6 +21,10 @@ find_package(Vulkan REQUIRED)
 
 find_program(GLSLC glslc HINTS "${VULKAN_SDK}/bin" REQUIRED)
 
+# ── GPUプロファイリング (Vulkan timestamp query、診断用) ──────────────────
+# デフォルトOFF。task perf (build-perf/) からのみ ON でconfigureされる。
+option(NEBULA_GPU_PROFILING "Enable Vulkan timestamp-query based GPU pass profiling (PyroEngine)" OFF)
+
 # ── shaderc (実行時 GLSL→SPIR-V 動的コンパイル; issue #30 Force システム用) ──
 # Vulkan SDK に同梱の shaderc_combined を使用。新規パッケージ導入は不要。
 find_path(SHADERC_INCLUDE_DIR shaderc/shaderc.hpp

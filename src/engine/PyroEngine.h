@@ -35,9 +35,11 @@ public:
 
   void step(VkCommandBuffer cmd, float dt);
 
-  // ── [temp] GPUパス単位プロファイリング(診断用) ──────────────────────────
+#ifdef NEBULA_GPU_PROFILING
+  // ── GPUパス単位プロファイリング(診断用) ──────────────────────────────
   void enableGpuProfiling(VkPhysicalDevice physicalDevice);
   void printGpuProfile();
+#endif
 
   const PyroConfig& config() const { return cfg_; }
 
@@ -127,15 +129,19 @@ private:
   PyroSimPC buildPC(float dt) const;
   void dispatchPyro(VkCommandBuffer cmd, ComputePipeline& k, const PyroSimPC& pc);
   void computeBarrier(VkCommandBuffer cmd);
+  void dispatchAndBarrier(VkCommandBuffer cmd, ComputePipeline& k, const PyroSimPC& pc, const char* label);
   void updateEmitters(float dt); // CPU側でアクティブな Emitter を選別・アップロード
 
   // ステージングバッファ経由の GPU→CPU 同期読み戻し (dumpFrame 専用)
   void readBufferToCPU(VkBuffer src, void* dst, size_t bytes) const;
 
-  // [temp] プロファイリング用
+#ifdef NEBULA_GPU_PROFILING
+  // プロファイリング用
   VkQueryPool profPool_ = VK_NULL_HANDLE;
   bool profEnabled_     = false;
   double profTsPeriodNs_ = 1.0;
   static constexpr uint32_t kProfMaxQueries = 256;
   std::vector<std::string> profLabels_;
+  uint32_t profQueryIndex_ = 0;
+#endif
 };

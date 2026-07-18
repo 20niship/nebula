@@ -2,6 +2,7 @@ version: "3"
 
 vars:
   BUILD_DIR: build
+  PERF_BUILD_DIR: build-perf # task perf 専用ビルドツリー (NEBULA_GPU_PROFILING=ON)
   BUILD_TYPE: Release
   # ローカル開発は ~/VulkanSDK を優先、CI は /opt/homebrew を使う
   VULKAN_SDK:
@@ -44,12 +45,36 @@ tasks:
     generates:
       - "{{.BUILD_DIR}}/CMakeCache.txt"
 
+  # ── CMake 設定 (task perf 専用: GPUプロファイリングON、別ビルドツリー) ────
+  configure:perf:
+    desc: "task perf 専用に CMake を構成する (NEBULA_GPU_PROFILING=ON, 別ビルドツリー)"
+    cmds:
+      - |
+        git submodule update --init --recursive
+        cmake -B {{.PERF_BUILD_DIR}} \
+          -DCMAKE_BUILD_TYPE={{.BUILD_TYPE}} \
+          -DVULKAN_SDK={{.VULKAN_SDK}} \
+          -DNEBULA_GPU_PROFILING=ON
+    env:
+      VULKAN_SDK: "{{.VULKAN_SDK}}"
+    sources:
+      - CMakeLists.txt
+      - tests/CMakeLists.txt
+    generates:
+      - "{{.PERF_BUILD_DIR}}/CMakeCache.txt"
+
   # ── ビルド ──────────────────────────────────────────────────────────────────
   build:
     desc: "全ターゲットをビルド"
     deps: [configure]
     cmds:
       - cmake --build {{.BUILD_DIR}} -j{{.JOBS}}
+
+  build:perf:
+    desc: "task perf 専用ビルド (build-perf/, NEBULA_GPU_PROFILING=ON)"
+    deps: [configure:perf]
+    cmds:
+      - cmake --build {{.PERF_BUILD_DIR}} -j{{.JOBS}}
 
   build:tests:
     desc: "テスト用バイナリのみビルド"
@@ -133,6 +158,12 @@ tasks:
     cmds:
       - find {{.BUILD_DIR}}/shaders -name "*.spv" -delete 2>/dev/null || true
 
+  clean:perf:
+    desc: "build-perf/ (task perf専用ビルドツリー) を削除"
+    cmds:
+      - rm -rf {{.PERF_BUILD_DIR}}
+    prompt: "{{.PERF_BUILD_DIR}}/ を削除します。よろしいですか？"
+
   # ── アプリ起動 ──────────────────────────────────────────────────────────────
   run:multi:
     desc: "multi_physics (Phase 6) を起動"
@@ -182,10 +213,10 @@ tasks:
     prompt: "sim_captures/ を削除します。よろしいですか？"
 
   perf:
-    desc: "画面キャプチャ/pvoxダンプ/vsyncを排除した純粋なシミュレーション実行時間を計測 (task captureの代替、perf_sim.py)"
-    deps: [build]
+    desc: "純粋なシミュレーション実行時間計測"
+    deps: [build:perf]
     cmds:
-      - /opt/homebrew/bin/python3 perf_sim.py {{.CLI_ARGS}}
+      - /opt/homebrew/bin/python3 perf_sim.py --build-dir {{.PERF_BUILD_DIR}} {{.CLI_ARGS}}
 
   # ── デフォルト ──────────────────────────────────────────────────────────────
   default:

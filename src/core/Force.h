@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cassert>
 #include <cstdint>
 #include <cstring>
 #include <glm/glm.hpp>
@@ -17,17 +18,18 @@ enum class ForceType : uint32_t {
   Z_CLAMP       = 4u, // 位置制約の実証例 (粒子のz座標を固定する)
 };
 
-// GPU 転送用 packed struct (64 bytes = 16 words)。
-// [0]=type [1]=affectMask [2-3]=pad [4-15]=data[0..11] (float単位の汎用スロット)
+// GPU 転送用 packed struct (32 bytes = 8 words)。
+// word0 の下位16bit=type、上位16bit=affectMask (GLSL側はビット演算で分離して読む)。
+// [1-7]=data[0..6] (float単位の汎用スロット、既存Force群の最大使用量ちょうどで
+// スラック無し。新しいForceを追加してdata[]が7要素を超える場合は表現を見直すこと)。
 // data[] の意味は各 Force::variables() が宣言する ForceVar 群が定義し、GLSL側は
 // shaders/force_common.glsl の FORCE_DATA_FLOAT/VEC3/UINT アクセサで読む。
-struct alignas(16) ForceGPU {
-  uint32_t type;
-  uint32_t affectMask;
-  uint32_t pad0, pad1;
-  float data[12];
+struct ForceGPU {
+  uint16_t type;
+  uint16_t affectMask;
+  float data[7];
 };
-static_assert(sizeof(ForceGPU) == 64, "ForceGPU must be 64 bytes");
+static_assert(sizeof(ForceGPU) == 32, "ForceGPU must be 32 bytes");
 
 inline uint32_t ForceAffectTypeFlag(uint32_t typeFlag) { return 1u << typeFlag; }
 
@@ -86,24 +88,34 @@ struct Force {
   uint32_t affectMask = 0u; // 0=全typeFlag対象
 
   // ForceGPUへの変換 (共通実装、派生クラスはoverrideしない)。
+  // affectMask は下位16bitのみが ForceGPU::affectMask (uint16_t) に収まる
+  // (typeFlag は0-15の範囲で使うこと)。
   ForceGPU pack() const {
     ForceGPU g{};
-    g.type       = uint32_t(type());
-    g.affectMask = affectMask;
+    g.type       = uint16_t(type());
+    g.affectMask = uint16_t(affectMask);
     packData(g.data);
     return g;
   }
 
 protected:
-  static void packFloat(float* out, uint32_t off, float v) { out[off] = v; }
+  // ForceGPU::data[] は7要素ちょうど(スラック無し)なので範囲外書き込みを assert で検出する。
+  static void packFloat(float* out, uint32_t off, float v) {
+    assert(off < 7 && "ForceGPU::data[] overflow");
+    out[off] = v;
+  }
   static void packVec3(float* out, uint32_t off, const glm::vec3& v) {
+    assert(off + 2 < 7 && "ForceGPU::data[] overflow");
     out[off]     = v.x;
     out[off + 1] = v.y;
     out[off + 2] = v.z;
   }
   // uint はビットパターンをそのまま書き込む (GLSL側 FORCE_DATA_UINT は
   // uintBitsToFloat変換をしないため、単純代入すると値が壊れる)。
-  static void packUint(float* out, uint32_t off, uint32_t v) { std::memcpy(&out[off], &v, sizeof(uint32_t)); }
+  static void packUint(float* out, uint32_t off, uint32_t v) {
+    assert(off < 7 && "ForceGPU::data[] overflow");
+    std::memcpy(&out[off], &v, sizeof(uint32_t));
+  }
 };
 
 // ── GravityForce: 任意方向・強さの重力 ──────────────────────────────────────

@@ -1,11 +1,13 @@
 #pragma once
 #include "AttributeBuffer.h"
 #include "ComputePipeline.h"
+#include "Force.h"
 #include "HeadlessCtx.h"
 #include "SimPC.h"
 #include <cstdint>
 #include <cstring>
 #include <glm/glm.hpp>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -64,6 +66,11 @@ private:
   uint32_t invMIdx_ = 0, typeFIdx_ = 0;
   uint32_t cellCntIdx_ = 0, cellOffIdx_ = 0, sortedIdx_ = 0;
   uint32_t edgesIdx_ = 0, lambdaIdx_ = 0;
+
+  // Force (issue #30): cfg.gravity/windX/windZ 互換の既定Forceを一度だけ登録する
+  // (テストハーネスは cfg_ が init() 後に変わらないため毎フレーム再アップロード不要)
+  std::vector<std::shared_ptr<Force>> forces_;
+  uint32_t forcesIdx_ = 0;
 
   ComputePipeline kPredict_, kSdf_;
   ComputePipeline kHashCnt_, kScanLoc_, kScanGlob_, kAddBase_, kSort_;

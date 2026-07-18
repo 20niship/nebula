@@ -1,5 +1,6 @@
 #include "MultiPhysicsEngine.h"
 
+#include <algorithm>
 #include <glm/glm.hpp>
 #include <stdexcept>
 #include <vector>
@@ -47,17 +48,16 @@ SimPC MultiPhysicsEngine::buildPC(float subDt) const {
   pc.cellSize          = cfg_.cellSize();
   pc.worldMin          = 0.0f;
   pc.worldMax          = cfg_.world_size;
-  pc.gravity           = gravity;
   pc.restitution       = restitution;
   pc.friction          = friction;
   pc.particleRadius    = cfg_.cellSize() * 0.5f;
+  pc.forceBufIdx       = forcesIdx_;
   pc.couplingForceIdx  = couplingForceIdx_;
   pc.clothVertexCount  = cfg_.clothCount();
   pc.edgeCount         = (uint32_t)clothMesh_.edgeCount();
   pc.stretchCompliance = rho0; // coupling_cloth / pbf_density が参照
   pc.bendCompliance    = viscosityC;
-  pc.windX             = windX;
-  pc.windZ             = windZ;
+  pc.forceCount        = (uint32_t)forces_.size();
   pc.densityIdx        = densityIdx_;
   pc.lambdaPbfIdx      = lambdaPbfIdx_;
   pc.boundaryStart     = cfg_.fluidStart(); // 境界粒子なし; 流体開始でも使用される
@@ -69,13 +69,8 @@ SimPC MultiPhysicsEngine::buildPC(float subDt) const {
 // ── 初期化 ───────────────────────────────────────────────────────────────────
 
 void MultiPhysicsEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const MultiPhysicsConfig& cfg) {
-  cfg_       = cfg;
-  device_    = device;
-  allocator_ = allocator;
-  cmdPool_   = cmdPool;
-  queue_     = queue;
-
-  attrBuf_.init(device, allocator, descriptorPool);
+  cfg_ = cfg;
+  initEngineBase(device, allocator, descriptorPool, cmdPool, queue);
 
   const uint32_t N_GROUPS = (cfg_.totalCells() + 255u) / 256u;
 
@@ -95,8 +90,11 @@ void MultiPhysicsEngine::init(VkDevice device, VmaAllocator allocator, VkDescrip
   initClothParticles(cmdPool, queue);
   initFluidParticles(cmdPool, queue);
 
+  // Force (issue #30): 既定では空リスト。重力・風が必要な場合は呼び出し側が
+  // addForce(GravityForce::FromDirection(...)) 等で登録する。
+  initForces();
+
   auto load = [&](ComputePipeline& k, const char* name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
-  load(kPredict_, "predict.comp");
   load(kSdfCollision_, "sdf_collision.comp");
   load(kHashCount_, "hash_count.comp");
   load(kHashScanLocal_, "hash_scan_local.comp");
@@ -190,13 +188,16 @@ void MultiPhysicsEngine::cleanup() {
   kSolveStretch_.cleanup();
   kPbfViscosity_.cleanup();
   kUpdateVelocity_.cleanup();
-  attrBuf_.cleanup();
+  cleanupEngineBase();
 }
 
 // ── 1フレームのシミュレーション ───────────────────────────────────────────────
 
 void MultiPhysicsEngine::step(VkCommandBuffer cmd, float dt) {
-  auto ds     = attrBuf_.descriptorSet;
+  auto ds = attrBuf_.descriptorSet;
+
+  uploadForces(dt);
+
   float subDt = dt / float(std::max(1, numSubsteps));
 
   for(int sub = 0; sub < numSubsteps; ++sub) {

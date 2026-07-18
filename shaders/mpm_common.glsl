@@ -22,7 +22,7 @@ layout(push_constant) uniform PC {
     float cellSize;      // 52  ← hash compat
     float worldMin;      // 56  ← hash compat
     float worldMax;      // 60  ← hash compat
-    float gravity;       // 64
+    uint  forceBufIdx;   // 64  Force配列(ForceGPU×forceCount)のbindless index (issue #30; 旧gravity)
     float mu_lame;       // 68  グローバルデフォルト μ
     float lambda_lame;   // 72  グローバルデフォルト λ
     float particleVolume;// 76  グローバルデフォルト Vp
@@ -45,7 +45,7 @@ layout(push_constant) uniform PC {
     float rho0;          // 144 グローバルデフォルト密度
     float p0_mcc;        // 148
     float xi_hard;       // 152
-    float maxParticlesFrac; // 156 予約
+    uint  forceCount;    // 156 有効なForce数 (issue #30; 旧maxParticlesFrac予約枠)
 } pc;
 
 // ── Buffer read/write マクロ ──────────────────────────────────────────────

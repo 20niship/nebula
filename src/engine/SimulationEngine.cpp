@@ -1,5 +1,6 @@
 #include "SimulationEngine.h"
 
+#include <algorithm>
 #include <cstring>
 #include <glm/glm.hpp>
 #include <iostream>
@@ -12,18 +13,17 @@
 void SimulationEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const ClothConfig& cfg) {
   cfg_           = cfg;
   particleRadius = cfg_.cellSize() * 0.5f;
-  device_        = device;
-  allocator_     = allocator;
-  cmdPool_       = cmdPool;
-  queue_         = queue;
+  initEngineBase(device, allocator, descriptorPool, cmdPool, queue);
 
-  attrBuf_.init(device, allocator, descriptorPool);
   initParticleBuffers(cmdPool, queue);
   initClothBuffers(cmdPool, queue);
 
+  // Force (issue #30): 既定では空リスト。重力・風が必要な場合は呼び出し側が
+  // addForce(GravityForce::FromDirection(...)) 等で登録する。
+  initForces();
+
   auto load = [&](ComputePipeline& k, const std::string& name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
 
-  load(kPredict_, "predict.comp");
   load(kSdfCollision_, "sdf_collision.comp");
   load(kHashCount_, "hash_count.comp");
   load(kHashScanLocal_, "hash_scan_local.comp");
@@ -198,7 +198,7 @@ void SimulationEngine::cleanup() {
   kUpdateVelocity_.cleanup();
   kZeroLambdas_.cleanup();
   kZeroCells_.cleanup();
-  attrBuf_.cleanup();
+  cleanupEngineBase();
 }
 
 // ─── バリア ────────────────────────────────────────────────────────────────
@@ -215,6 +215,8 @@ void SimulationEngine::computeBarrier(VkCommandBuffer cmd) {
 
 void SimulationEngine::step(VkCommandBuffer cmd, float dt) {
   auto ds = attrBuf_.descriptorSet;
+
+  uploadForces(dt);
 
   float subDt = dt / std::max(1, numSubsteps);
 
@@ -236,17 +238,16 @@ void SimulationEngine::step(VkCommandBuffer cmd, float dt) {
     pc.cellSize          = cfg_.cellSize();
     pc.worldMin          = 0.0f;
     pc.worldMax          = cfg_.world_size;
-    pc.gravity           = gravity;
     pc.restitution       = restitution;
     pc.friction          = friction;
     pc.particleRadius    = particleRadius;
+    pc.forceBufIdx       = forcesIdx_;
     pc.couplingForceIdx  = 0;
     pc.clothVertexCount  = cfg_.clothVertCount();
     pc.edgeCount         = (uint32_t)clothMesh_.edgeCount();
     pc.stretchCompliance = stretchCompliance;
     pc.bendCompliance    = bendCompliance;
-    pc.windX             = windX;
-    pc.windZ             = windZ;
+    pc.forceCount        = (uint32_t)forces_.size();
     pc.linearDamping     = 0.02f; // 布の従来挙動を維持（update_velocity 共用シェーダー）
 
     // ① Predict (重力 + 風力、ピン留め)

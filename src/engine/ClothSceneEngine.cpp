@@ -1,5 +1,6 @@
 #include "ClothSceneEngine.h"
 
+#include <algorithm>
 #include <cstring>
 #include <glm/glm.hpp>
 #include <iostream>
@@ -128,21 +129,20 @@ void ClothSceneEngine::initBuffers(VkCommandPool cmdPool, VkQueue queue) {
 }
 
 void ClothSceneEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, float worldSize, uint32_t gridRes) {
-  device_    = device;
-  allocator_ = allocator;
-  cmdPool_   = cmdPool;
-  queue_     = queue;
   worldSize_ = worldSize;
   gridRes_   = gridRes;
 
   if(meshes_.empty()) throw std::runtime_error("ClothSceneEngine: addCloth() before init()");
 
-  attrBuf_.init(device, allocator, descriptorPool);
+  initEngineBase(device, allocator, descriptorPool, cmdPool, queue);
   initBuffers(cmdPool, queue);
+
+  // Force (issue #30): 既定では空リスト。重力・風が必要な場合は呼び出し側が
+  // addForce(GravityForce::FromDirection(...)) 等で登録する。
+  initForces();
 
   auto load = [&](ComputePipeline& k, const std::string& name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
 
-  load(kPredict_, "predict.comp");
   load(kSdfCollision_, "sdf_collision.comp");
   load(kHashCount_, "hash_count.comp");
   load(kHashScanLocal_, "hash_scan_local.comp");
@@ -190,7 +190,7 @@ void ClothSceneEngine::cleanup() {
   kZeroCells_.cleanup();
   if(hasPinAnimated_) kMovePins_.cleanup();
   if(stagingBuf_) vmaDestroyBuffer(allocator_, stagingBuf_, stagingAlloc_);
-  attrBuf_.cleanup();
+  cleanupEngineBase();
 }
 
 // ─── バリア ────────────────────────────────────────────────────────────────
@@ -227,6 +227,8 @@ void ClothSceneEngine::step(VkCommandBuffer cmd, float dt) {
     pinnedTargetDirty_ = false;
   }
 
+  uploadForces(dt);
+
   const float subDt = dt / std::max(1, numSubsteps);
 
   for(int sub = 0; sub < numSubsteps; ++sub) {
@@ -247,17 +249,16 @@ void ClothSceneEngine::step(VkCommandBuffer cmd, float dt) {
     pc.cellSize          = cellSize();
     pc.worldMin          = 0.0f;
     pc.worldMax          = worldSize_;
-    pc.gravity           = gravity;
     pc.restitution       = restitution;
     pc.friction          = friction;
     pc.particleRadius    = cellSize() * 0.5f;
+    pc.forceBufIdx       = forcesIdx_;
     pc.couplingForceIdx  = 0;
     pc.clothVertexCount  = totalCount_;
     pc.edgeCount         = totalEdgeCount_;
     pc.stretchCompliance = stretchCompliance;
     pc.bendCompliance    = bendCompliance;
-    pc.windX             = windX;
-    pc.windZ             = windZ;
+    pc.forceCount        = (uint32_t)forces_.size();
     pc.linearDamping     = 0.02f;
     pc.pinnedTargetIdx   = pinnedTargetIdx_;
 

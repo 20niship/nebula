@@ -32,13 +32,8 @@ void MPMEngine::dispatchMPM(VkCommandBuffer cmd, ComputePipeline& k, const MPMSi
 // ── 初期化 ────────────────────────────────────────────────────────────────
 
 void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const MPMConfig& cfg) {
-  cfg_       = cfg;
-  device_    = device;
-  allocator_ = allocator;
-  cmdPool_   = cmdPool;
-  queue_     = queue;
-
-  attrBuf_.init(device, allocator, descriptorPool);
+  cfg_ = cfg;
+  initEngineBase(device, allocator, descriptorPool, cmdPool, queue);
 
   const uint32_t N  = cfg_.maxParticleCount(); // バッファ上限
   nParticles_       = cfg_.particleCount();    // ライブパーティクル数
@@ -139,6 +134,8 @@ void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool d
     up("B2", B2.data(), N * sizeof(glm::vec4));
   }
 
+  initForces();
+
   // ── シェーダーパイプライン ─────────────────────────────────────────────
   auto load = [&](ComputePipeline& k, const char* name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
   load(kMpmZeroCells_, "zero_cells.comp");
@@ -149,7 +146,6 @@ void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool d
   load(kMpmHashSort_, "mpm_hash_sort.comp");
   load(kZeroGrid_, "mpm_zero_grid.comp");
   load(kP2G_, "mpm_p2g.comp");
-  load(kGridUpdate_, "mpm_grid_update.comp");
   load(kNanoVDBBC_, "mpm_nanovdb_bc.comp");
   load(kG2P_, "mpm_g2p.comp");
 
@@ -161,7 +157,7 @@ void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool d
 
 void MPMEngine::cleanup() {
   for(auto* k : {&kMpmZeroCells_, &kMpmHashCount_, &kHashScanLocal_, &kHashScanGlobal_, &kHashAddBase_, &kMpmHashSort_, &kZeroGrid_, &kP2G_, &kGridUpdate_, &kNanoVDBBC_, &kG2P_}) k->cleanup();
-  attrBuf_.cleanup();
+  cleanupEngineBase();
 }
 
 VkBuffer MPMEngine::getPositionBuffer() const { return attrBuf_.getBuffer("P"); }
@@ -373,7 +369,7 @@ MPMSimPC MPMEngine::buildPC(float subDt) const {
   pc.cellSize         = cfg_.cellSize();
   pc.worldMin         = 0.0f;
   pc.worldMax         = cfg_.world_size;
-  pc.gravity          = gravity;
+  pc.forceBufIdx      = forcesIdx_;
   pc.mu_lame          = cfg_.mu();
   pc.lambda_lame      = cfg_.lame();
   pc.particleVolume   = cfg_.particleVolume();
@@ -396,7 +392,7 @@ MPMSimPC MPMEngine::buildPC(float subDt) const {
   pc.rho0             = cfg_.rho0;
   pc.p0_mcc           = 0.0f;
   pc.xi_hard          = 0.0f;
-  pc.maxParticlesFrac = 0.0f;
+  pc.forceCount       = (uint32_t)forces_.size();
   return pc;
 }
 
@@ -405,6 +401,8 @@ MPMSimPC MPMEngine::buildPC(float subDt) const {
 void MPMEngine::step(VkCommandBuffer cmd, float dt) {
   // Emitter (GPU upload は compute dispatch の前に完結)
   emitFromEmitters(dt);
+
+  uploadForces(dt);
 
   const uint32_t N  = nParticles_; // ライブパーティクル数
   const uint32_t NC = cfg_.totalCells();

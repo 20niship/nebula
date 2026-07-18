@@ -57,6 +57,16 @@ private:
   GraphicsPipeline fluidPipe_;
   ClothRenderer clothRenderer_;
 
+  // issue #30 デモ: addForce() で布・流体の混在バッファに Turbulence を追加できる
+  // ことを示す (affectMask 未設定=全typeFlag対象のため布・流体双方に作用する)
+  bool turbulenceEnabled_ = false;
+  std::shared_ptr<TurbulenceForce> turbulence_;
+
+  // issue #30 レビュー対応: gravity/windX/windZ は MultiPhysicsEngine の public
+  // メンバとしては廃止されたため、addForce() で登録した Force への参照を保持する。
+  std::shared_ptr<GravityForce> gravity_;
+  std::shared_ptr<ConstantWindForce> wind_;
+
   float dt_      = 1.0f / 60.0f;
   float simTime_ = 0.0f;
 
@@ -65,6 +75,11 @@ private:
     base_.createDescriptorPool();
 
     engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
+
+    gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f); // Z-up
+    wind_    = ConstantWindForce::FromDirection({0.0f, 0.0f, 0.0f}, 1.0f);
+    engine_.addForce(gravity_);
+    engine_.addForce(wind_);
 
     fluidPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/fluid_particle.vert.spv", SHADER_DIR_STR + "/fluid.frag.spv");
 
@@ -172,7 +187,21 @@ private:
     ImGui::Begin("Multi-Physics Control");
     ImGui::Text("FPS: %.1f  |  布: %u  流体: %u  経過: %.2f s", ImGui::GetIO().Framerate, engine_.config().clothCount(), engine_.config().fluidCount(), simTime_);
     ImGui::Separator();
-    sim_ui::multi_physics_params(engine_);
+    sim_ui::multi_physics_params(engine_, *gravity_, *wind_);
+    ImGui::Separator();
+    ImGui::Text("issue #30: Force API デモ");
+    if(ImGui::Checkbox("Turbulence (布+流体双方に作用) を追加", &turbulenceEnabled_)) {
+      if(turbulenceEnabled_) {
+        turbulence_            = std::make_shared<TurbulenceForce>();
+        turbulence_->strength  = 3.0f;
+        turbulence_->frequency = 0.25f;
+        engine_.addForce(turbulence_);
+      } else {
+        engine_.removeForce(turbulence_);
+        turbulence_.reset();
+      }
+    }
+    if(turbulenceEnabled_) ImGui::SliderFloat("Turbulence 強さ", &turbulence_->strength, 0.0f, 15.0f);
     ImGui::End();
 
     ImGui::Render();

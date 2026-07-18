@@ -57,6 +57,7 @@ private:
   BaseApp base_;
   MPMEngine engine_;
   GraphicsPipeline graphicsPipe_;
+  std::shared_ptr<GravityForce> gravity_;
   float dt_        = 1.0f / 60.0f;
   float simTime_   = 0.0f;
   int frameCount_  = 0;
@@ -82,7 +83,8 @@ private:
 
     engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
     engine_.numSubsteps = substeps;
-    engine_.gravity     = -9.8f;
+    gravity_ = GravityForce::FromDirection({0.0f, 1.0f, 0.0f}, 9.8f); // Y-up
+    engine_.addForce(gravity_);
     engine_.flip_ratio  = -1.0f; // APIC
 
     // 雪: Von Mises 塑性 (低密度・低降伏応力)
@@ -205,7 +207,7 @@ private:
     }
     ImGui::SliderFloat("速度 [m/s]", &boxSpeed_, 0.1f, 10.0f);
     ImGui::Separator();
-    ImGui::SliderFloat("重力", &engine_.gravity, -20.0f, 0.0f);
+    ImGui::SliderFloat("重力", &gravity_->strength, 0.0f, 20.0f);
     ImGui::SliderInt("サブステップ", &engine_.numSubsteps, 1, 50);
 
     ImGui::End();

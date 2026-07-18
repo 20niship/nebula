@@ -25,11 +25,11 @@ layout(push_constant) uniform PC {
     float cellSize;
     float worldMin;
     float worldMax;
-    // SDF
-    float gravity;
+    // SDF (gravity は issue #30 で Force システムへ移行し削除)
     float restitution;
     float friction;
     float particleRadius;
+    uint  forceBufIdx;      // Force配列 (ForceGPU×forceCount) の bindless index (0=無効)
     // Cloth / Coupling
     uint  couplingForceIdx;
     uint  clothVertexCount;
@@ -41,8 +41,8 @@ layout(push_constant) uniform PC {
     uint  boundaryStart;
     float stretchCompliance;
     float bendCompliance;
-    float windX;
-    float windZ;
+    float particleCollisionRadius; // 旧windX。SoftBodyEngine専用 (sb_particle_collision.comp)
+    uint  forceCount;              // 有効な Force 数 (旧windZ の枠を充当)
     // ── PBF 流体専用 追加パラメータ（SimPC.h と同一レイアウト）──────
     float cfmEpsilon;       // CFM 緩和 ε
     float scorrK;           // 人工圧力 k

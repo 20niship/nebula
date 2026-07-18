@@ -51,6 +51,7 @@ private:
   BaseApp base_;
   MPMEngine engine_;
   GraphicsPipeline graphicsPipe_;
+  std::shared_ptr<GravityForce> gravity_;
   float dt_      = 1.0f / 60.0f;
   float simTime_ = 0.0f;
 
@@ -73,7 +74,8 @@ private:
 
     engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
     engine_.numSubsteps = substeps;
-    engine_.gravity     = -9.8f;
+    gravity_ = GravityForce::FromDirection({0.0f, 1.0f, 0.0f}, 9.8f); // Y-up
+    engine_.addForce(gravity_);
     engine_.flip_ratio  = -1.0f; // APIC
 
     // Slot 0: 硬岩 (ELASTIC)
@@ -208,7 +210,7 @@ private:
     ImGui::Text("Slot 1 (ny/3..2ny/3): VON_MISES   弱粘土 E=10kPa  q=800Pa");
     ImGui::Text("Slot 2 (y >= 2ny/3) : DRUCKER_PR  緩土   E=30kPa  M=0.35");
     ImGui::Separator();
-    ImGui::SliderFloat("重力", &engine_.gravity, -20.0f, 0.0f);
+    ImGui::SliderFloat("重力", &gravity_->strength, 0.0f, 20.0f);
     ImGui::SliderInt("サブステップ", &engine_.numSubsteps, 1, 50);
     ImGui::Separator();
     ImGui::Text("球コライダー (横から押し当て):");

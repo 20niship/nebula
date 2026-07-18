@@ -87,8 +87,9 @@ set(SHADER_OUT_DIR ${CMAKE_BINARY_DIR}/shaders)
 file(MAKE_DIRECTORY ${SHADER_OUT_DIR})
 
 set(SHADER_SOURCES
-    ${SHADER_SRC_DIR}/predict.comp
-    ${SHADER_SRC_DIR}/predict_sdf.comp
+    # predict.comp / predict_sdf.comp / mpm_grid_update.comp は FORCE_AUTOGEN
+    # マーカーを含み、Engine 側で ForceShaderCompiler により実行時に shaderc で
+    # コンパイルされる (issue #30)。静的 glslc ビルド対象には含めない。
     ${SHADER_SRC_DIR}/sdf_collision.comp
     ${SHADER_SRC_DIR}/hash_count.comp
     ${SHADER_SRC_DIR}/hash_scan_local.comp
@@ -131,9 +132,10 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/mpm_g2p.comp
     ${SHADER_SRC_DIR}/mpm_nanovdb_bc.comp
     # ── Pyro (グリッドベース煙・火炎) シェーダー ─────────────────────────────
+    # pyro_forces.comp は FORCE_AUTOGEN マーカーを含み、PyroEngine 側で
+    # ForceShaderCompiler により実行時に shaderc でコンパイルされる (issue #30)
     ${SHADER_SRC_DIR}/pyro_emit.comp
     ${SHADER_SRC_DIR}/pyro_combustion.comp
-    ${SHADER_SRC_DIR}/pyro_forces.comp
     ${SHADER_SRC_DIR}/pyro_obstacle_bc.comp
     ${SHADER_SRC_DIR}/pyro_advect.comp
     ${SHADER_SRC_DIR}/pyro_curl.comp

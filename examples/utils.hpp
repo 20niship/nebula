@@ -6,6 +6,7 @@
 // 使い方: 各 example .cpp で #include "utils.hpp" を追加し、
 //         drawFrame() 内の ImGui::Begin()〜End() の中で呼ぶ。
 
+#include "core/Force.h"
 #include "engine/FluidEngine.h"
 #include "engine/MultiPhysicsEngine.h"
 #include "engine/SimulationEngine.h"
@@ -36,10 +37,12 @@ inline void fluid_reset_button(FluidEngine& e, float& simTime) {
 // ── 流体パラメータ (FluidEngine) ──────────────────────────────────────────────
 
 // PBF 流体の全パラメータを tooltip 付きで描画する。
-inline void fluid_params(FluidEngine& e) {
+// issue #30 レビュー対応: gravity は FluidEngine の public メンバとしては廃止された
+// ため、呼び出し側が addForce() で登録した GravityForce への参照を直接受け取る。
+inline void fluid_params(FluidEngine& e, GravityForce& gravity) {
   ImGui::Text("基本");
-  ImGui::SliderFloat("重力", &e.gravity, -20.0f, 0.0f);
-  SIM_TIP("重力加速度 [m/s²]。負の値が下方向。\n大きくすると液体が速く落下する。");
+  ImGui::SliderFloat("重力", &gravity.strength, 0.0f, 20.0f);
+  SIM_TIP("重力加速度 [m/s²]。大きくすると液体が速く落下する。");
   ImGui::SliderFloat("静止密度 rho0", &e.rho0, 100.0f, 5000.0f);
   SIM_TIP("流体の目標密度 [kg/m³]。\n初期化時に格子配置から自動計算した値が推奨。\n高すぎると過圧縮、低すぎると膨張が起きる。");
   ImGui::SliderFloat("粘性係数", &e.viscosityC, 0.0f, 0.1f, "%.4f");
@@ -66,18 +69,23 @@ inline void fluid_params(FluidEngine& e) {
 }
 
 // ── 布パラメータ (SimulationEngine) ──────────────────────────────────────────
+// issue #30 レビュー対応: gravity/windX/windZ は SimulationEngine の public
+// メンバとしては廃止されたため、呼び出し側が addForce() で登録した
+// GravityForce/ConstantWindForce への参照を直接受け取り、そのフィールドを
+// スライダーで書き換える (Engine への追加同期呼び出しは不要。EngineBase::
+// uploadForces() が毎フレーム forces_ の現在値を再アップロードする)。
 
-inline void cloth_params(SimulationEngine& sim) {
-  ImGui::SliderFloat("重力", &sim.gravity, -20.0f, 0.0f);
+inline void cloth_params(SimulationEngine& sim, GravityForce& gravity, ConstantWindForce& wind) {
+  ImGui::SliderFloat("重力", &gravity.strength, 0.0f, 20.0f);
   SIM_TIP("重力加速度 [m/s²]。");
   ImGui::SliderFloat("反発係数", &sim.restitution, 0.0f, 1.0f);
   SIM_TIP("壁・床との衝突時の反発係数。0で完全吸収（跳ねない）、1で完全弾性。");
   ImGui::SliderFloat("摩擦係数", &sim.friction, 0.0f, 1.0f);
   SIM_TIP("壁・床との衝突時の摩擦係数。0で摩擦なし、1で最大摩擦。");
   ImGui::Separator();
-  ImGui::SliderFloat("風 X", &sim.windX, -10.0f, 10.0f);
+  ImGui::SliderFloat("風 X", &wind.direction.x, -10.0f, 10.0f);
   SIM_TIP("X軸方向の風力 [N/m²]。布を横方向に押す。");
-  ImGui::SliderFloat("風 Z", &sim.windZ, -10.0f, 10.0f);
+  ImGui::SliderFloat("風 Z", &wind.direction.y, -10.0f, 10.0f);
   SIM_TIP("Z軸方向の風力 [N/m²]。");
   ImGui::Separator();
   ImGui::SliderFloat("伸び剛性", &sim.stretchCompliance, 0.0f, 1e-2f, "%.6f");
@@ -94,9 +102,12 @@ inline void cloth_params(SimulationEngine& sim) {
 
 // ── Multi-Physics 用（布・流体サブセット + 連成） ─────────────────────────────
 
-inline void multi_physics_params(MultiPhysicsEngine& e) {
+// issue #30 レビュー対応: gravity/windX/windZ は MultiPhysicsEngine の public
+// メンバとしては廃止されたため、呼び出し側が addForce() で登録した
+// GravityForce/ConstantWindForce への参照を直接受け取る。
+inline void multi_physics_params(MultiPhysicsEngine& e, GravityForce& gravity, ConstantWindForce& wind) {
   ImGui::Text("シミュレーション共通");
-  ImGui::SliderFloat("重力", &e.gravity, -20.0f, 0.0f);
+  ImGui::SliderFloat("重力", &gravity.strength, 0.0f, 20.0f);
   SIM_TIP("重力加速度 [m/s²]。");
   ImGui::SliderFloat("反発係数", &e.restitution, 0.0f, 1.0f);
   SIM_TIP("壁・床との衝突時の反発係数。0で完全吸収、1で完全弾性。");
@@ -118,9 +129,9 @@ inline void multi_physics_params(MultiPhysicsEngine& e) {
   SIM_TIP("布の伸び拘束のコンプライアンス（柔らかさ）。0で完全剛体、大きいほど伸びやすい。");
   ImGui::SliderFloat("曲げ剛性", &e.bendCompliance, 0.0f, 1e-1f, "%.6f");
   SIM_TIP("布の曲げ拘束のコンプライアンス。大きいほど曲がりやすくなる。");
-  ImGui::SliderFloat("風 X", &e.windX, -10.0f, 10.0f);
+  ImGui::SliderFloat("風 X", &wind.direction.x, -10.0f, 10.0f);
   SIM_TIP("X軸方向の風力 [N/m²]。");
-  ImGui::SliderFloat("風 Z", &e.windZ, -10.0f, 10.0f);
+  ImGui::SliderFloat("風 Z", &wind.direction.y, -10.0f, 10.0f);
   SIM_TIP("Z軸方向の風力 [N/m²]。");
 
   ImGui::Separator();

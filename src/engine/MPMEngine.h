@@ -57,6 +57,10 @@ public:
 
   void step(VkCommandBuffer cmd, float dt);
 
+  // ── [診断用] GPUパス単位プロファイリング ────────────────────────────────
+  void enableGpuProfiling(VkPhysicalDevice physicalDevice);
+  void printGpuProfile();
+
   const MPMConfig& config() const { return cfg_; }
   uint32_t liveParticleCount() const { return nParticles_; }
   VkBuffer getPositionBuffer() const;
@@ -177,4 +181,11 @@ private:
   MPMSimPC buildPC(float subDt) const;
   void dispatchMPM(VkCommandBuffer cmd, ComputePipeline& k, const MPMSimPC& pc, uint32_t count);
   void computeBarrier(VkCommandBuffer cmd);
+
+  // [診断用] プロファイリング
+  VkQueryPool profPool_ = VK_NULL_HANDLE;
+  bool profEnabled_      = false;
+  double profTsPeriodNs_ = 1.0;
+  static constexpr uint32_t kProfMaxQueries = 4096;
+  std::vector<std::string> profLabels_;
 };

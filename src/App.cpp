@@ -135,12 +135,22 @@ void BaseApp::initImGui() {
 // ── Screenshot ────────────────────────────────────────────────────────────────
 
 void BaseApp::saveScreenshot(uint32_t imageIdx, int nShots) {
-  if(screenshotDir.empty() || screenshotsTaken >= nShots) return;
-  char buf[512];
-  std::snprintf(buf, sizeof(buf), "%s/frame%04d.ppm", screenshotDir.c_str(), screenshotsTaken + 1);
-  ctx.saveScreenshotPPM(buf, imageIdx);
+  if(nShots <= 0 || screenshotsTaken >= nShots) return;
+  if(screenshotsTaken == 0) perfStartTime_ = std::chrono::steady_clock::now();
+
+  if(!screenshotDir.empty()) {
+    char buf[512];
+    std::snprintf(buf, sizeof(buf), "%s/frame%04d.ppm", screenshotDir.c_str(), screenshotsTaken + 1);
+    ctx.saveScreenshotPPM(buf, imageIdx);
+  }
+
   ++screenshotsTaken;
-  if(screenshotsTaken >= nShots) shouldExit = true;
+  if(screenshotsTaken >= nShots) {
+    shouldExit       = true;
+    double elapsed_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - perfStartTime_).count();
+    std::printf("PERF_RESULT frames=%d elapsed_s=%.6f ms_per_frame=%.6f\n", nShots, elapsed_s, elapsed_s * 1000.0 / double(nShots));
+    std::fflush(stdout);
+  }
 }
 
 // ── Cleanup ───────────────────────────────────────────────────────────────────

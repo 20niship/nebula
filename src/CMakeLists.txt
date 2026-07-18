@@ -63,6 +63,11 @@ target_compile_definitions(nebula PRIVATE
     $<$<CONFIG:Debug>:VULKAN_VALIDATION>
 )
 
+# NEBULA_GPU_PROFILING は PyroEngine.h/.cpp と pyro_*.cpp example から参照するため PUBLIC
+if(NEBULA_GPU_PROFILING)
+    target_compile_definitions(nebula PUBLIC NEBULA_GPU_PROFILING)
+endif()
+
 if(APPLE)
     target_compile_definitions(nebula PUBLIC VK_USE_PLATFORM_METAL_EXT)
     target_link_libraries(nebula PUBLIC "-framework Foundation")

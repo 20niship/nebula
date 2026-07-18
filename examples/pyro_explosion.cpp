@@ -13,6 +13,7 @@
 #include <argparse/argparse.hpp>
 #include <glm/glm.hpp>
 
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -46,6 +47,9 @@ int main(int argc, char* argv[]) {
 
     PyroEngine engine;
     engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR, cfg);
+#ifdef NEBULA_GPU_PROFILING
+    engine.enableGpuProfiling(ctx.physicalDevice);
+#endif
 
     engine.numSubsteps        = args.substeps;
     engine.numPressureIters   = args.pressure_iters;
@@ -77,7 +81,8 @@ int main(int argc, char* argv[]) {
 
     std::filesystem::create_directories(args.out_dir);
 
-    float simTime = 0.0f;
+    float simTime  = 0.0f;
+    auto perfStart = std::chrono::steady_clock::now();
     for(int frame = 0; frame < args.n_frames; frame++) {
       VkCommandBuffer cmd = ctx.beginCmd();
       engine.step(cmd, args.dt);
@@ -92,6 +97,14 @@ int main(int argc, char* argv[]) {
         std::printf("frame %4d / %4d  t=%.3fs  -> %s\n", frame, args.n_frames, simTime, path);
       }
     }
+    {
+      double elapsed_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - perfStart).count();
+      std::printf("PERF_RESULT frames=%d elapsed_s=%.6f ms_per_frame=%.6f\n", args.n_frames, elapsed_s, elapsed_s * 1000.0 / double(args.n_frames));
+      std::fflush(stdout);
+    }
+#ifdef NEBULA_GPU_PROFILING
+    engine.printGpuProfile();
+#endif
 
     engine.cleanup();
     ctx.cleanup();

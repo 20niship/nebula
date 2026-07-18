@@ -213,7 +213,7 @@ tasks:
     prompt: "sim_captures/ を削除します。よろしいですか？"
 
   perf:
-    desc: "画面キャプチャ/pvoxダンプ/vsyncを排除した純粋なシミュレーション実行時間を計測 (task captureの代替、perf_sim.py)。GPUプロファイリングON、build-perf/使用"
+    desc: "純粋なシミュレーション実行時間計測"
     deps: [build:perf]
     cmds:
       - /opt/homebrew/bin/python3 perf_sim.py --build-dir {{.PERF_BUILD_DIR}} {{.CLI_ARGS}}

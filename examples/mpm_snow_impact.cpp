@@ -85,9 +85,9 @@ private:
 
     engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
     engine_.numSubsteps = substeps;
-    gravity_ = GravityForce::FromDirection({0.0f, 1.0f, 0.0f}, 9.8f); // Y-up
+    gravity_            = GravityForce::FromDirection({0.0f, -1.0f, 0.0f}, 9.8f); // Y-up
     engine_.addForce(gravity_);
-    engine_.flip_ratio  = -1.0f; // APIC
+    engine_.flip_ratio = -1.0f; // APIC
 
     // 雪: Von Mises 塑性 (低密度・低降伏応力)
     MaterialParams snow{};

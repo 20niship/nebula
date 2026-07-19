@@ -43,6 +43,7 @@ struct FluidArgs : public argparse::Args {
   float& scorr_k              = kwarg("scorr-k", "artificial pressure k").set_default(0.0f);
   float& damping              = kwarg("damping", "linear velocity damping 1/s").set_default(0.6f);
   std::string& scenario       = kwarg("scenario", "dam-break | source-flow").set_default(std::string("dam-break"));
+  int& max_diffuse            = kwarg("max-diffuse", "max spray/foam/bubble diffuse particle count (0=disabled, issue #47)").set_default(0);
 };
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -61,6 +62,7 @@ public:
     cfg.domainSize   = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
     cfg.cellSize     = args.cell_size;
     cfg.max_boundary = (uint32_t)args.max_boundary;
+    cfg.maxDiffuseParticles = (uint32_t)args.max_diffuse;
 
     base_.initWindow("Vulkan Sim – PBF Fluid");
     initVulkan(cfg, args.boundary_obj, args.rho0);
@@ -77,7 +79,9 @@ private:
   BaseApp base_;
   FluidEngine engine_;
   GraphicsPipeline graphicsPipe_;
+  GraphicsPipeline foamGraphicsPipe_; // 泡 (spray/foam/bubble) 描画用（半透明合成; issue #47）
   std::shared_ptr<GravityForce> gravity_;
+  FluidEngine::FoamParams foamParams_;
 
   float dt_       = 1.0f / 60.0f;
   float simTime_  = 0.0f;
@@ -137,6 +141,15 @@ private:
     }
 
     graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/fluid_particle.vert.spv", SHADER_DIR_STR + "/fluid.frag.spv");
+
+    // 泡 (spray/foam/bubble) 描画パイプライン (issue #47)。maxDiffuseParticles==0 でも
+    // パイプライン自体は安価に作れるため無条件で初期化し、draw() 呼び出し側で
+    // config().maxDiffuseParticles>0 のときのみ描画する。
+    foamGraphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/foam_particle.vert.spv", SHADER_DIR_STR + "/foam.frag.spv", VK_PRIMITIVE_TOPOLOGY_POINT_LIST, /*enableBlend=*/true);
+    if(cfg.maxDiffuseParticles > 0) {
+      engine_.foamEnabled = true;
+      engine_.setFoamParams(foamParams_);
+    }
 
     base_.createFrameData();
     base_.initImGui();
@@ -204,6 +217,19 @@ private:
 
     graphicsPipe_.draw(cmd, engine_.descriptorSet, pc, engine_.nFluid());
 
+    // 泡 (spray/foam/bubble) 描画（issue #47; maxDiffuseParticles==0 のとき完全スキップ）
+    if(engine_.config().maxDiffuseParticles > 0) {
+      SimPC foamPc{};
+      foamPc.posIdx        = engine_.foamPosIdx();
+      foamPc.velIdx        = engine_.foamVelIdx();
+      foamPc.typeFlagIdx   = engine_.foamKindIdx(); // foam_particle.vert は kind==0 をクリップする
+      foamPc.particleCount = engine_.config().maxDiffuseParticles;
+      foamPc.worldMin      = glm::vec3(0.0f);
+      foamPc.worldMax      = engine_.config().domainSize;
+      foamPc.boundaryStart = 0;
+      foamGraphicsPipe_.draw(cmd, engine_.descriptorSet, foamPc, engine_.config().maxDiffuseParticles);
+    }
+
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
@@ -232,6 +258,8 @@ private:
     sim_ui::fluid_reset_button(engine_, simTime_);
     ImGui::Separator();
     sim_ui::fluid_params(engine_, *gravity_);
+    ImGui::Separator();
+    if(sim_ui::foam_params(engine_, foamParams_)) engine_.setFoamParams(foamParams_);
     ImGui::Separator();
     ImGui::Text("境界粒子 (OBJ)");
     ImGui::InputText("OBJ パス", objPath_, sizeof(objPath_));
@@ -401,6 +429,7 @@ private:
 
   void cleanup() {
     graphicsPipe_.cleanup();
+    foamGraphicsPipe_.cleanup();
     engine_.cleanup();
     base_.cleanupBase();
   }

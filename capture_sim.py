@@ -54,7 +54,7 @@ VIDEO_FPS = 60     # 出力動画 FPS
 THUMB_W   = 480    # 4列 × 480 = 1920px (ffmpeg scale と一致)
 THUMB_H   = 270    # 16:9
 GRID_COLS = 4
-GRID_ROWS = 5      # 4×5=20 セル; TC1–TC10 + TC-A,B,E,F,G,H,K,L (TC-C/D/I/J除外、18使用 + 空き2)
+GRID_ROWS = 5      # 4×5=20 セル; TC1–TC11 + TC-A,B,E,F,G,H,K,L (TC-C/D/I/J除外、19使用 + 空き1)
 
 # テストケース定義
 # exe=None のエントリは空きセル（グリッドのパディング用）
@@ -119,6 +119,12 @@ SIMS = [
         "title": "TC9: Fluid Absorb",
         "env": {}, "extra_args": [],
         "params": "N~1.4K | ellipse puddle | moving cylinder absorber",
+    },
+    {
+        "id": "tc_wave_foam", "exe": "fluid_wave_foam",
+        "title": "TC11: Wave Paddle + Bunny + Foam",
+        "env": {}, "extra_args": [],
+        "params": "N~30K | SHM paddle | 3× bunny obstacle | spray/foam/bubble (issue #47)",
     },
     {
         "id": "tc10", "exe": "xpbd_softbody",

@@ -1,0 +1,115 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "common.glsl"
+
+// 泡 (spray/foam/bubble) 二次パーティクルの寿命管理・分類・移流 (issue #47)
+// Ihmsen et al. 2012 の簡略版: diffuse粒子専用の空間ハッシュは構築せず、既存の
+// 流体+境界ハッシュ (cellCountIdx/cellOffsetIdx/sortedIdxIdx) に対して自分の
+// 位置をプローブクエリし、近傍の流体粒子数で分類する。
+//
+// kind: 0=死/未使用, 1=spray(空気中), 2=foam(表面), 3=bubble(水中)
+// FoamParams レイアウト (foamParamsIdx, 16 floats):
+//   0:kTa 1:kWc 2:taLo 3:taHi 4:wcLo 5:wcHi 6:keLo 7:keHi
+//   8:lifetimeMin 9:lifetimeMax 10:bubbleBuoyancy 11:dragCoeff
+//   12:gravityAccel 13:neighborLo 14:neighborHi 15:surfaceDensityRatio
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.maxDiffuseParticles) return;
+
+    uint kind = readUint(pc.foamKindIdx, i);
+    if (kind == 0u) return; // 死/未使用スロットは即return（墓場パターン）
+
+    vec4 posW = readVec4(pc.foamPosIdx, i);
+    vec4 velW = readVec4(pc.foamVelIdx, i);
+    vec3 pos  = posW.xyz;
+    vec3 vel  = velW.xyz;
+    float life = posW.w - pc.dt;
+
+    if (life <= 0.0) {
+        writeUint(pc.foamKindIdx, i, 0u); // 寿命切れ→墓場行き
+        return;
+    }
+
+    float dragCoeff       = readFloat(pc.foamParamsIdx, 11u);
+    float bubbleBuoyancy  = readFloat(pc.foamParamsIdx, 10u);
+    float gravityAccel    = readFloat(pc.foamParamsIdx, 12u);
+    float neighborLo      = readFloat(pc.foamParamsIdx, 13u);
+    float neighborHi      = readFloat(pc.foamParamsIdx, 14u);
+
+    // ── 既存の流体ハッシュへ自分の位置でプローブクエリ (pbf_viscosity.comp と同型) ──
+    float h  = pc.cellSize;
+    float h2 = h * h;
+
+    uint  nNeighbors = 0u;
+    vec3  sumV       = vec3(0.0);
+
+    ivec3 gi = ivec3(clamp((pos - pc.worldMin) / pc.cellSize,
+                           vec3(0.0), vec3(pc.gridRes) - vec3(1.0)));
+
+    uint mx[3], my[3], mz[3];
+    mortonAxisTriples(gi, mx, my, mz);
+
+    for (int dz = -1; dz <= 1; ++dz)
+    for (int dy = -1; dy <= 1; ++dy)
+    for (int dx = -1; dx <= 1; ++dx) {
+        ivec3 nc = gi + ivec3(dx, dy, dz);
+        if (any(lessThan(nc, ivec3(0))) ||
+            any(greaterThanEqual(nc, ivec3(pc.gridRes)))) continue;
+
+        uint cid   = mx[dx + 1] | (my[dy + 1] << 1u) | (mz[dz + 1] << 2u);
+        uint cnt   = readUint(pc.cellCountIdx, cid);
+        uint start = readUint(pc.cellOffsetIdx, cid) - cnt;
+
+        for (uint k = start; k < start + cnt; ++k) {
+            uint j  = readUint(pc.sortedIdxIdx, k);
+            uint fj = readUint(pc.typeFlagIdx, j);
+            if (fj != 1u) continue; // 流体粒子のみ（境界は分類・移流の対象外）
+
+            vec3 pj  = readVec4(pc.posIdx, j).xyz;
+            vec3 r   = pos - pj;
+            float r2 = dot(r, r);
+            if (r2 >= h2) continue;
+
+            nNeighbors += 1u;
+            sumV += readVec4(pc.velIdx, j).xyz;
+        }
+    }
+
+    vec3 avgV = (nNeighbors > 0u) ? (sumV / float(nNeighbors)) : vec3(0.0);
+
+    // ── 分類 ──────────────────────────────────────────────────────────────
+    float n = float(nNeighbors);
+    if (n < neighborLo)      kind = 1u; // spray
+    else if (n < neighborHi) kind = 2u; // foam
+    else                     kind = 3u; // bubble
+
+    // ── タイプ別移流 ──────────────────────────────────────────────────────
+    if (kind == 1u) {
+        // spray: 弾道運動（重力のみ、周囲流体には追従しない）
+        vel.z += gravityAccel * pc.dt;
+    } else if (kind == 2u) {
+        // foam: 表面に留まり周囲流体速度へ追従
+        vel = mix(vel, avgV, dragCoeff);
+    } else {
+        // bubble: 周囲流体速度へ追従しつつ浮力で上昇
+        vel = mix(vel, avgV, dragCoeff);
+        vel.z += bubbleBuoyancy * pc.dt;
+    }
+
+    pos += vel * pc.dt;
+
+    // 簡易壁クランプ（詳細SDFは使わない; MVP簡略化）
+    vec3 lo = pc.worldMin;
+    vec3 hi = pc.worldMax;
+    if (pos.x < lo.x || pos.x > hi.x) vel.x = 0.0;
+    if (pos.y < lo.y || pos.y > hi.y) vel.y = 0.0;
+    if (pos.z < lo.z || pos.z > hi.z) vel.z = 0.0;
+    pos = clamp(pos, lo, hi);
+
+    writeVec4(pc.foamPosIdx, i, vec4(pos, life));
+    writeVec4(pc.foamVelIdx, i, vec4(vel, velW.w));
+    writeUint(pc.foamKindIdx, i, kind);
+}

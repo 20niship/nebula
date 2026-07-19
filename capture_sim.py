@@ -193,7 +193,9 @@ SIMS = [
     {
         "id": "tc_cow", "exe": "pyro_cow_blast", "kind": "pyro",
         "title": "TC-K: Pyro Cow Blast",
-        "env": {}, "extra_args": ["--grid-res", "32"],
+        # issue #46フォローアップ: --grid-res(廃止) → --cell-size。domainSize default(10,10,10)
+        # のまま cellSize=10/32 として旧 grid_res=32 相当の解像度を維持する。
+        "env": {}, "extra_args": ["--cell-size", "0.3125"],
         "params": "超高密度爆風 | 低ポリ牛SDF障害物 | 流速ヒートマップ",
         "render_mode": "heatmap",
         "render_kwargs": {"threshold": 0.5, "speed_max": 8.0, "axis": "z"},
@@ -201,7 +203,10 @@ SIMS = [
     {
         "id": "tc_explosion", "exe": "pyro_explosion", "kind": "pyro",
         "title": "TC-L: Pyro Explosion (Mushroom Cloud)",
-        "env": {}, "extra_args": ["--grid-res", "32"],
+        # issue #46フォローアップ: --grid-res(廃止) → --cell-size。domainSize default
+        # (10,14,10、高さ方向に余裕を持たせた直方体) のまま cellSize=14/32 として
+        # 旧 grid_res=32,world_size=14 相当の解像度を維持する(直方体対応のデモを兼ねる)。
+        "env": {}, "extra_args": ["--cell-size", "0.4375"],
         "params": "地表爆発 | fuel燃焼+強浮力+渦度閉じ込め | smoke/fireボリューム",
         "render_mode": "volume",
         "render_kwargs": {"absorption": 3.0, "exposure": 1.2, "axis": "z"},

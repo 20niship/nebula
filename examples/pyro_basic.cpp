@@ -23,9 +23,12 @@ static const std::string SHADER_DIR_STR = SHADER_DIR;
 static const std::string ASSET_DIR_STR  = ASSET_DIR;
 
 struct PyroBasicArgs : public argparse::Args {
-  // Morton 符号化のため 2 のべき乗であること (16/32/64 など。PyroEngine::init() が検証する)
-  int& grid_res                  = kwarg("grid-res", "Pyro グリッド解像度 (2のべき乗)").set_default(32);
-  float& world_size              = kwarg("world-size", "world size [m]").set_default(10.0f);
+  // issue #46フォローアップ: ドメインは domainSize(XYZ物理サイズ)+cellSize(全軸共通セルサイズ)
+  // で指定する。Morton dispatch用の立方体解像度(2^n)は自動導出される (PyroConfig::cubeRes())。
+  float& domain_size_x = kwarg("domain-size-x", "ドメイン物理サイズ X [m]").set_default(10.0f);
+  float& domain_size_y = kwarg("domain-size-y", "ドメイン物理サイズ Y [m]").set_default(10.0f);
+  float& domain_size_z = kwarg("domain-size-z", "ドメイン物理サイズ Z [m]").set_default(10.0f);
+  float& cell_size      = kwarg("cell-size", "セルサイズ [m] (小さいほど高解像度)").set_default(10.0f / 32.0f);
   int& n_frames                  = kwarg("n-frames", "実行フレーム数").set_default(120);
   float& dt                      = kwarg("dt", "フレームタイムステップ [s]").set_default(1.0f / 60.0f);
   int& substeps                  = kwarg("substeps", "1フレームあたりのサブステップ数").set_default(1);
@@ -48,8 +51,8 @@ int main(int argc, char* argv[]) {
     ctx.init();
 
     PyroConfig cfg;
-    cfg.grid_res   = uint32_t(args.grid_res);
-    cfg.world_size = args.world_size;
+    cfg.domainSize = {args.domain_size_x, args.domain_size_y, args.domain_size_z};
+    cfg.cellSize   = args.cell_size;
 
     PyroEngine engine;
     engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR, cfg);
@@ -76,13 +79,13 @@ int main(int argc, char* argv[]) {
       std::printf("風を追加: wind=(%.2f, 0, %.2f)\n", args.wind_x, args.wind_z);
     }
 
-    const float W = cfg.world_size;
+    const glm::vec3 W = cfg.domainSize;
 
     // ── 複数 Emitter (位置違い、一部は移動) ─────────────────────────────────
     {
       auto fire1             = std::make_shared<SphereEmitter>();
-      fire1->center          = {W * 0.3f, W * 0.08f, W * 0.5f};
-      fire1->radius          = W * 0.06f;
+      fire1->center          = {W.x * 0.3f, W.y * 0.08f, W.z * 0.5f};
+      fire1->radius          = W.x * 0.06f;
       fire1->inflowVelocity  = {0.0f, 2.0f, 0.0f};
       fire1->densityRate     = 0.5f;
       fire1->temperatureRate = 3.0f;
@@ -91,8 +94,8 @@ int main(int argc, char* argv[]) {
       engine.addEmitter(fire1);
 
       auto fire2             = std::make_shared<SphereEmitter>();
-      fire2->center          = {W * 0.7f, W * 0.08f, W * 0.5f};
-      fire2->radius          = W * 0.05f;
+      fire2->center          = {W.x * 0.7f, W.y * 0.08f, W.z * 0.5f};
+      fire2->radius          = W.x * 0.05f;
       fire2->center_vel      = {0.0f, 0.0f, 0.3f}; // Z方向へゆっくり移動
       fire2->inflowVelocity  = {0.0f, 1.8f, 0.0f};
       fire2->densityRate     = 0.4f;
@@ -102,10 +105,10 @@ int main(int argc, char* argv[]) {
       engine.addEmitter(fire2);
 
       auto smoke3             = std::make_shared<EllipseEmitter>();
-      smoke3->center          = {W * 0.5f, W * 0.15f, W * 0.25f};
-      smoke3->semiA           = W * 0.08f;
-      smoke3->halfHeightY     = W * 0.03f;
-      smoke3->semiB           = W * 0.08f;
+      smoke3->center          = {W.x * 0.5f, W.y * 0.15f, W.z * 0.25f};
+      smoke3->semiA           = W.x * 0.08f;
+      smoke3->halfHeightY     = W.y * 0.03f;
+      smoke3->semiB           = W.z * 0.08f;
       smoke3->center_vel      = {0.15f, 0.0f, 0.0f}; // X方向へ移動 (燃料なし、煙のみ)
       smoke3->inflowVelocity  = {0.0f, 1.0f, 0.0f};
       smoke3->densityRate     = 0.6f;
@@ -125,10 +128,10 @@ int main(int argc, char* argv[]) {
     float simTime = 0.0f;
     for(int frame = 0; frame < args.n_frames; frame++) {
       if(args.obstacle_rebuild_interval > 0 && frame % args.obstacle_rebuild_interval == 0) {
-        glm::vec3 translation(W * 0.5f, W * 0.35f + 0.15f * W * std::sin(simTime * 0.8f), W * 0.5f);
+        glm::vec3 translation(W.x * 0.5f, W.y * 0.35f + 0.15f * W.y * std::sin(simTime * 0.8f), W.z * 0.5f);
         glm::quat rotation = glm::angleAxis(simTime * 0.5f, glm::vec3(0, 1, 0));
         auto moved         = transformTriangles(baseTris, translation, rotation);
-        engine.setColliderSDF(buildMeshSDF(moved, cfg.grid_res, cfg.world_size, /*verbose=*/false));
+        engine.setColliderSDF(buildMeshSDF(moved, cfg.gridRes(), cfg.totalCells(), cfg.cellSize, /*verbose=*/false));
       }
 
       VkCommandBuffer cmd = ctx.beginCmd();

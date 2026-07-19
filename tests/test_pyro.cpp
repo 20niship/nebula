@@ -22,8 +22,8 @@ TEST_CASE("Pyro GPU - 1-1: Buoyancy drives net upward velocity") {
   ctx.init();
 
   PyroConfig cfg;
-  cfg.grid_res   = 16;
-  cfg.world_size = 10.0f;
+  cfg.domainSize = glm::vec3(10.0f);
+  cfg.cellSize   = 10.0f / 16.0f;
   PyroEngine engine;
   engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
   engine.buoyancyAlpha  = 2.0f;
@@ -68,8 +68,8 @@ TEST_CASE("Pyro GPU - 2-1: Pressure projection keeps interior divergence small")
   ctx.init();
 
   PyroConfig cfg;
-  cfg.grid_res   = 16;
-  cfg.world_size = 10.0f;
+  cfg.domainSize = glm::vec3(10.0f);
+  cfg.cellSize   = 10.0f / 16.0f;
   PyroEngine engine;
   engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
   engine.buoyancyAlpha  = 3.0f;
@@ -89,7 +89,7 @@ TEST_CASE("Pyro GPU - 2-1: Pressure projection keeps interior divergence small")
     ctx.submitCmd(cmd);
   }
 
-  const uint32_t G  = cfg.grid_res;
+  const uint32_t G  = cfg.gridRes().x;
   const uint32_t NC = cfg.totalCells();
   std::vector<glm::vec4> velMorton(NC);
   ctx.readBuffer(engine.getVelocityBuffer(), 0, velMorton.data(), NC * sizeof(glm::vec4));
@@ -101,7 +101,7 @@ TEST_CASE("Pyro GPU - 2-1: Pressure projection keeps interior divergence small")
     return glm::vec3(velMorton[meshSdfMortonEncode(uint32_t(x), uint32_t(y), uint32_t(z))]);
   };
 
-  const float h = cfg.cellSize();
+  const float h = cfg.cellSize;
   float maxDiv  = 0.0f;
   // 境界・source近傍を避けた内部領域のみチェック
   for(int x = 4; x < 12; x++)
@@ -126,14 +126,14 @@ TEST_CASE("Pyro GPU - 3-1: Obstacle SDF zeroes velocity inside solid") {
   ctx.init();
 
   PyroConfig cfg;
-  cfg.grid_res   = 16;
-  cfg.world_size = 10.0f;
+  cfg.domainSize = glm::vec3(10.0f);
+  cfg.cellSize   = 10.0f / 16.0f;
   PyroEngine engine;
   engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
   engine.buoyancyAlpha = 3.0f;
 
-  const uint32_t G       = cfg.grid_res;
-  const float h          = cfg.cellSize();
+  const uint32_t G       = cfg.gridRes().x;
+  const float h          = cfg.cellSize;
   const glm::vec3 center = {5.0f, 5.0f, 5.0f};
   const float radius     = 2.0f;
 
@@ -179,8 +179,8 @@ TEST_CASE("Pyro GPU - 4-1: Emitter emission increases density only near emitter"
   ctx.init();
 
   PyroConfig cfg;
-  cfg.grid_res   = 16;
-  cfg.world_size = 10.0f;
+  cfg.domainSize = glm::vec3(10.0f);
+  cfg.cellSize   = 10.0f / 16.0f;
   PyroEngine engine;
   engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
   engine.buoyancyAlpha = 0.0f;
@@ -217,8 +217,8 @@ TEST_CASE("Pyro GPU - 5-1: Combustion consumes fuel, raises temperature, emits f
   ctx.init();
 
   PyroConfig cfg;
-  cfg.grid_res   = 16;
-  cfg.world_size = 10.0f;
+  cfg.domainSize = glm::vec3(10.0f);
+  cfg.cellSize   = 10.0f / 16.0f;
   PyroEngine engine;
   engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
   engine.buoyancyAlpha      = 0.0f;
@@ -240,7 +240,7 @@ TEST_CASE("Pyro GPU - 5-1: Combustion consumes fuel, raises temperature, emits f
   src->step_count      = 3; // 3フレームだけ放出、その後は燃焼のみ進行
   engine.addEmitter(src);
 
-  const uint32_t G    = cfg.grid_res;
+  const uint32_t G    = cfg.gridRes().x;
   const uint32_t code = meshSdfMortonEncode(G / 2, G / 2, G / 2);
   const float dt      = 1.0f / 60.0f;
 
@@ -266,6 +266,71 @@ TEST_CASE("Pyro GPU - 5-1: Combustion consumes fuel, raises temperature, emits f
   CHECK(fuelLater < fuelAfterEmit);
   CHECK(temp > engine.ignitionTemp);
   CHECK(flame > 0.0f);
+
+  engine.cleanup();
+  ctx.cleanup();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 6: 直方体(非立方体)ドメイン — 解像度導出とGPUシミュレーションの安定性
+// ═══════════════════════════════════════════════════════════════════════════
+TEST_CASE("Pyro CPU - 6-1: Non-cubic domain derives per-axis gridRes and cubeRes correctly") {
+  PyroConfig cfg;
+  cfg.domainSize = {20.0f, 4.0f, 20.0f};
+  cfg.cellSize   = 20.0f / 32.0f; // = 0.625
+
+  const glm::uvec3 res = cfg.gridRes();
+  CHECK(res.x == 32);
+  CHECK(res.y == 7); // ceil(4/0.625) = ceil(6.4) = 7
+  CHECK(res.z == 32);
+  CHECK(cfg.cubeRes() == 32); // 最大軸(32)が既に2^nなのでそのまま
+  CHECK(cfg.totalCells() == 32u * 32u * 32u);
+}
+
+TEST_CASE("Pyro GPU - 6-2: Non-cubic domain simulation stays finite inside the real cell bounds") {
+  HeadlessCtx ctx;
+  ctx.init();
+
+  PyroConfig cfg;
+  cfg.domainSize = {20.0f, 4.0f, 20.0f}; // 薄いY軸ドメイン
+  cfg.cellSize   = 20.0f / 32.0f;
+  PyroEngine engine;
+  engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
+  engine.buoyancyAlpha    = 2.0f;
+  engine.numPressureIters = 20;
+
+  auto heat             = std::make_shared<SphereEmitter>();
+  heat->center          = {10.0f, 2.0f, 10.0f};
+  heat->radius          = 1.0f;
+  heat->temperatureRate = 8.0f;
+  heat->step_count      = 0;
+  engine.addEmitter(heat);
+
+  const float dt = 1.0f / 60.0f;
+  for(int i = 0; i < 20; i++) {
+    VkCommandBuffer cmd = ctx.beginCmd();
+    engine.step(cmd, dt);
+    ctx.submitCmd(cmd);
+  }
+
+  const glm::uvec3 realRes = cfg.gridRes();
+  const uint32_t NC        = cfg.totalCells();
+  std::vector<glm::vec4> vel(NC);
+  ctx.readBuffer(engine.getVelocityBuffer(), 0, vel.data(), NC * sizeof(glm::vec4));
+
+  // 実セル範囲内(パディング領域を除く)のみ検証: CLAMP_CELL の per-axis 化により、
+  // 短い Y 軸の境界(y=realRes.y-1)付近でもパディング領域の未定義値が混入しないはず。
+  bool allFinite = true;
+  float maxAbsV  = 0.0f;
+  for(uint32_t z = 0; z < realRes.z; z++)
+    for(uint32_t y = 0; y < realRes.y; y++)
+      for(uint32_t x = 0; x < realRes.x; x++) {
+        glm::vec4 v = vel[meshSdfMortonEncode(x, y, z)];
+        if(!std::isfinite(v.x) || !std::isfinite(v.y) || !std::isfinite(v.z)) allFinite = false;
+        maxAbsV = std::max({maxAbsV, std::abs(v.x), std::abs(v.y), std::abs(v.z)});
+      }
+  CHECK(allFinite);
+  CHECK(maxAbsV < 1000.0f);
 
   engine.cleanup();
   ctx.cleanup();

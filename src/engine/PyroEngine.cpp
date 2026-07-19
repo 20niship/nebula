@@ -27,7 +27,10 @@ void PyroEngine::dispatchPyro(VkCommandBuffer cmd, ComputePipeline& k, const Pyr
 // ── 初期化 ────────────────────────────────────────────────────────────────
 
 void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const PyroConfig& cfg) {
-  if(cfg.grid_res == 0 || (cfg.grid_res & (cfg.grid_res - 1)) != 0) throw std::runtime_error("PyroConfig.grid_res must be a power of two (Morton encoding requirement): " + std::to_string(cfg.grid_res));
+  // Morton符号化は10bit幅(軸あたり最大1024)のため、domainSize/cellSizeから導出される
+  // cubeRes がこれを超える場合のみ例外を投げる(2^nへの丸め自体はdomain::mortonCubeRes()が
+  // 自動的に行うため、ユーザーが明示的に2^nを指定する必要はない)。
+  if(cfg.cubeRes() > 1024) throw std::runtime_error("PyroConfig: domainSize/cellSize から導出される Morton cube 解像度が上限を超えています (cubeRes=" + std::to_string(cfg.cubeRes()) + " > 1024)");
 
   cfg_ = cfg;
   initEngineBase(device, allocator, descriptorPool, cmdPool, queue);
@@ -93,6 +96,8 @@ void PyroEngine::cleanup() {
 // ── 障害物 SDF ────────────────────────────────────────────────────────────
 
 void PyroEngine::setColliderSDF(const std::vector<float>& mortonSDF) {
+  if(mortonSDF.size() != cfg_.totalCells())
+    throw std::runtime_error("PyroEngine::setColliderSDF: mortonSDF size (" + std::to_string(mortonSDF.size()) + ") must equal cfg().totalCells() (" + std::to_string(cfg_.totalCells()) + ")");
   if(colliderSDFIdx_ == 0) {
     colliderSDFIdx_ = attrBuf_.addAttribute("colliderSDF", sizeof(float), cfg_.totalCells());
   }
@@ -164,12 +169,13 @@ PyroSimPC PyroEngine::buildPC(float dt) const {
   // emittersIdx/emitterCount は updateEmitters() 後に step() 側で設定する (0=無効)
   pc.emittersIdx  = 0;
   pc.emitterCount = 0;
-  pc.gridRes      = cfg_.grid_res;
+  pc.hashCells    = cfg_.totalCells();
+  pc.gridRes      = cfg_.gridRes();
 
   pc.dt       = dt;
-  pc.cellSize = cfg_.cellSize();
-  pc.worldMin = 0.0f;
-  pc.worldMax = cfg_.world_size;
+  pc.cellSize = cfg_.cellSize;
+  pc.worldMin = glm::vec3(0.0f);
+  pc.worldMax = cfg_.domainSize;
 
   pc.buoyancyAlpha = buoyancyAlpha;
   pc.buoyancyBeta  = buoyancyBeta;
@@ -331,15 +337,16 @@ uint32_t mortonCompact(uint32_t v) {
 }
 glm::ivec3 mortonDecode(uint32_t code) { return {int(mortonCompact(code)), int(mortonCompact(code >> 1u)), int(mortonCompact(code >> 2u))}; }
 
-// Morton 順の配列を線形 (x + y*nx + z*nx*ny) 順に並べ替えて channelsOut へ追記する。
+// Morton 順(cubeCells要素、パディング含む)の配列から実セル範囲(realRes)内のみを取り出し、
+// 線形 (x + y*nx + z*nx*ny) 順に並べ替えて channelsOut へ追記する(パディングセルは除外)。
 // components=1: float スカラー。components=3: vec4 の xyz のみ (w は捨てる)。
-void appendChannelLinear(const std::vector<uint8_t>& mortonRaw, uint32_t gridRes, uint32_t components, std::vector<float>& out) {
-  const uint32_t NC = gridRes * gridRes * gridRes;
-  out.resize(size_t(NC) * components);
+void appendChannelLinear(const std::vector<uint8_t>& mortonRaw, const glm::uvec3& realRes, uint32_t cubeCells, uint32_t components, std::vector<float>& out) {
+  out.resize(size_t(realRes.x) * realRes.y * realRes.z * components);
   const float* src = reinterpret_cast<const float*>(mortonRaw.data());
-  for(uint32_t code = 0; code < NC; ++code) {
+  for(uint32_t code = 0; code < cubeCells; ++code) {
     glm::ivec3 c = mortonDecode(code);
-    size_t lin   = size_t(c.x) + size_t(c.y) * gridRes + size_t(c.z) * gridRes * gridRes;
+    if(uint32_t(c.x) >= realRes.x || uint32_t(c.y) >= realRes.y || uint32_t(c.z) >= realRes.z) continue; // パディングセルをスキップ
+    size_t lin = size_t(c.x) + size_t(c.y) * realRes.x + size_t(c.z) * realRes.x * realRes.y;
     for(uint32_t k = 0; k < components; ++k) out[lin * components + k] = src[size_t(code) * (components == 1 ? 1u : 4u) + k];
   }
 }
@@ -347,8 +354,9 @@ void appendChannelLinear(const std::vector<uint8_t>& mortonRaw, uint32_t gridRes
 } // namespace
 
 void PyroEngine::dumpFrame(const std::string& path, float simTime) const {
-  const uint32_t gridRes = cfg_.grid_res;
-  const uint32_t NC      = cfg_.totalCells();
+  const glm::uvec3 realRes   = cfg_.gridRes();
+  const uint32_t cubeCells   = cfg_.totalCells();
+  const uint32_t realCellCnt = realRes.x * realRes.y * realRes.z;
 
   // sdf は障害物未設定 (hasCollider()==false) だと GPU バッファが存在しないため、
   // その場合のみ GPU 読み戻しをスキップし全セル背景値 (1e6 = 障害物なし) を書く。
@@ -367,24 +375,24 @@ void PyroEngine::dumpFrame(const std::string& path, float simTime) const {
   for(size_t i = 0; i < std::size(channels); ++i) {
     const auto& ch = channels[i];
     if(!ch.present) {
-      linearData[i].assign(size_t(NC), 1e6f);
+      linearData[i].assign(size_t(realCellCnt), 1e6f);
       continue;
     }
     const VkDeviceSize elemBytes = ch.components == 1 ? sizeof(float) : sizeof(glm::vec4);
-    std::vector<uint8_t> raw(size_t(NC) * elemBytes);
+    std::vector<uint8_t> raw(size_t(cubeCells) * elemBytes);
     readBufferToCPU(ch.buf, raw.data(), raw.size());
-    appendChannelLinear(raw, gridRes, ch.components, linearData[i]);
+    appendChannelLinear(raw, realRes, cubeCells, ch.components, linearData[i]);
   }
 
   std::ofstream f(path, std::ios::binary);
   if(!f) throw std::runtime_error("dumpFrame: failed to open " + path);
 
   f.write("PVX1", 4);
-  f.write(reinterpret_cast<const char*>(&gridRes), sizeof(uint32_t));
-  f.write(reinterpret_cast<const char*>(&gridRes), sizeof(uint32_t));
-  f.write(reinterpret_cast<const char*>(&gridRes), sizeof(uint32_t));
-  float worldSize = cfg_.world_size;
-  f.write(reinterpret_cast<const char*>(&worldSize), sizeof(float));
+  f.write(reinterpret_cast<const char*>(&realRes.x), sizeof(uint32_t));
+  f.write(reinterpret_cast<const char*>(&realRes.y), sizeof(uint32_t));
+  f.write(reinterpret_cast<const char*>(&realRes.z), sizeof(uint32_t));
+  float cellSize = cfg_.cellSize; // 旧 worldSize(単一float)。直方体対応につき意味を cellSize に変更 (バイト数不変)
+  f.write(reinterpret_cast<const char*>(&cellSize), sizeof(float));
   f.write(reinterpret_cast<const char*>(&simTime), sizeof(float));
   uint32_t numChannels = uint32_t(std::size(channels));
   f.write(reinterpret_cast<const char*>(&numChannels), sizeof(uint32_t));

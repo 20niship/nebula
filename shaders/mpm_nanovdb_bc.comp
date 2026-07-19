@@ -16,7 +16,7 @@ layout(local_size_x = 256) in;
 // ix, iy, iz がグリッド外なら背景値 (大正値) を返す
 #define SAMPLE_SDF(ix_, iy_, iz_) \
     ( ((ix_) < 0 || (iy_) < 0 || (iz_) < 0 || \
-       (ix_) >= int(pc.gridRes) || (iy_) >= int(pc.gridRes) || (iz_) >= int(pc.gridRes)) \
+       (ix_) >= int(pc.gridRes.x) || (iy_) >= int(pc.gridRes.y) || (iz_) >= int(pc.gridRes.z)) \
       ? 1e6 \
       : readFloat(pc.nanoVDBIdx, mortonEncodeI(ivec3((ix_), (iy_), (iz_)))) )
 
@@ -24,7 +24,7 @@ void main() {
     if (pc.nanoVDBIdx == 0u) return;
 
     uint gid = gl_GlobalInvocationID.x;
-    if (gid >= pc.gridRes * pc.gridRes * pc.gridRes) return;
+    if (gid >= pc.hashCells) return;
 
     float mass = readFloat(pc.gridMassIdx, gid);
     if (mass < 1e-10) return;

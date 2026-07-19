@@ -20,8 +20,10 @@ static const std::string SHADER_DIR_STR = SHADER_DIR;
 
 struct ClothArgs : public argparse::Args {
   int& cloth_n                = kwarg("n,cloth-n", "cloth grid size NxN").set_default(128);
-  float& world_size           = kwarg("world-size", "simulation world size").set_default(10.0f);
-  int& grid_res               = kwarg("grid-res", "hash grid resolution").set_default(64);
+  float& domain_size_x        = kwarg("domain-size-x", "domain physical size X [m]").set_default(10.0f);
+  float& domain_size_y        = kwarg("domain-size-y", "domain physical size Y [m]").set_default(10.0f);
+  float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(10.0f);
+  float& cell_size            = kwarg("cell-size", "hash grid cell size [m]").set_default(10.0f / 64.0f);
   float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 60.0f);
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
@@ -37,8 +39,8 @@ public:
 
     ClothConfig cfg;
     cfg.cloth_grid_n = (uint32_t)args.cloth_n;
-    cfg.world_size   = args.world_size;
-    cfg.grid_res     = (uint32_t)args.grid_res;
+    cfg.domainSize   = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
+    cfg.cellSize     = args.cell_size;
 
     base_.initWindow("Vulkan Sim – Cloth 3D");
     initVulkan(cfg);
@@ -145,8 +147,8 @@ private:
     pc.posIdx           = sim_.posIdx;
     pc.velIdx           = sim_.velIdx;
     pc.particleCount    = clothN;
-    pc.worldMin         = 0.0f;
-    pc.worldMax         = sim_.config().world_size;
+    pc.worldMin         = glm::vec3(0.0f);
+    pc.worldMax         = sim_.config().domainSize;
     pc.couplingForceIdx = 0;
     pc.clothVertexCount = clothN;
 
@@ -204,7 +206,7 @@ private:
         zClamp_.reset();
       }
     }
-    if(zClampEnabled_) ImGui::SliderFloat("固定z座標", &zClamp_->zValue, 0.0f, sim_.config().world_size);
+    if(zClampEnabled_) ImGui::SliderFloat("固定z座標", &zClamp_->zValue, 0.0f, sim_.config().domainSize.z);
     ImGui::End();
 
     ImGui::Render();

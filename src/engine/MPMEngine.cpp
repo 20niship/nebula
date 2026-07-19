@@ -86,12 +86,14 @@ void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool d
   {
     const uint32_t Nlive  = nParticles_;
     const float blockFrac = 0.40f;
-    const float sp        = cfg_.world_size * blockFrac / float(std::max({cfg_.nx, cfg_.ny, cfg_.nz}));
+    // 最短軸を基準に spacing を決め、非立方体ドメインでもブロックが短辺からはみ出さないようにする
+    const float minDomain = std::min({cfg_.domainSize.x, cfg_.domainSize.y, cfg_.domainSize.z});
+    const float sp        = minDomain * blockFrac / float(std::max({cfg_.nx, cfg_.ny, cfg_.nz}));
     const float Vp        = sp * sp * sp;
 
-    const float cx = cfg_.world_size * 0.5f;
-    const float cz = cfg_.world_size * 0.5f;
-    const float cy = cfg_.world_size * 0.70f;
+    const float cx = cfg_.domainSize.x * 0.5f;
+    const float cz = cfg_.domainSize.z * 0.5f;
+    const float cy = cfg_.domainSize.y * 0.70f;
 
     const float halfX = sp * float(cfg_.nx - 1) / 2.0f;
     const float halfY = sp * float(cfg_.ny - 1) / 2.0f;
@@ -176,14 +178,14 @@ static uint32_t mortonExpand(uint32_t v) {
 static uint32_t mortonEncode(uint32_t x, uint32_t y, uint32_t z) { return mortonExpand(x) | (mortonExpand(y) << 1u) | (mortonExpand(z) << 2u); }
 
 void MPMEngine::setColliderSphere(float radius, float cx, float cy, float cz) {
-  const uint32_t GR = cfg_.grid_res;
-  const float h     = cfg_.cellSize();
-  const uint32_t NC = GR * GR * GR;
+  const glm::uvec3 GR = cfg_.gridRes();
+  const float h        = cfg_.cellSize;
+  const uint32_t NC     = cfg_.totalCells();
 
   std::vector<float> sdf(NC);
-  for(uint32_t iz = 0; iz < GR; iz++)
-    for(uint32_t iy = 0; iy < GR; iy++)
-      for(uint32_t ix = 0; ix < GR; ix++) {
+  for(uint32_t iz = 0; iz < GR.z; iz++)
+    for(uint32_t iy = 0; iy < GR.y; iy++)
+      for(uint32_t ix = 0; ix < GR.x; ix++) {
         float wx                      = (ix + 0.5f) * h;
         float wy                      = (iy + 0.5f) * h;
         float wz                      = (iz + 0.5f) * h;
@@ -362,13 +364,14 @@ MPMSimPC MPMEngine::buildPC(float subDt) const {
   pc.cellOffsetIdx    = cellOffsetIdx_;
   pc.sortedIdxIdx     = sortedIdxIdx_;
   pc.particleCount    = nParticles_; // ライブパーティクル数
-  pc.gridRes          = cfg_.grid_res;
+  pc.hashCells        = cfg_.totalCells();
   pc.F2Idx            = F2Idx_;
   pc.materialsIdx     = materialsIdx_; // マテリアルテーブル SSBO
   pc.dt               = subDt;
-  pc.cellSize         = cfg_.cellSize();
-  pc.worldMin         = 0.0f;
-  pc.worldMax         = cfg_.world_size;
+  pc.cellSize         = cfg_.cellSize;
+  pc.gridRes          = cfg_.gridRes();
+  pc.worldMin         = glm::vec3(0.0f);
+  pc.worldMax         = cfg_.domainSize;
   pc.forceBufIdx      = forcesIdx_;
   pc.mu_lame          = cfg_.mu();
   pc.lambda_lame      = cfg_.lame();

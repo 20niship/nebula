@@ -13,6 +13,7 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 
+#include <algorithm>
 #include <array>
 #include <stdexcept>
 #include <string>
@@ -25,8 +26,10 @@ static const std::string SHADER_DIR_STR = SHADER_DIR;
 struct SceneArgs : public argparse::Args {
   int& scene                  = kwarg("scene", "5=two cloths, 7=4-corner twist").set_default(5);
   int& cloth_n                = kwarg("n,cloth-n", "cloth grid size NxN").set_default(48);
-  float& world_size           = kwarg("world-size", "simulation world size").set_default(10.0f);
-  int& grid_res               = kwarg("grid-res", "hash grid resolution").set_default(64);
+  float& domain_size_x        = kwarg("domain-size-x", "domain physical size X [m]").set_default(10.0f);
+  float& domain_size_y        = kwarg("domain-size-y", "domain physical size Y [m]").set_default(10.0f);
+  float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(10.0f);
+  float& cell_size            = kwarg("cell-size", "hash grid cell size [m]").set_default(10.0f / 64.0f);
   float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 60.0f);
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
@@ -52,8 +55,8 @@ public:
     scene_              = args.scene;
     dt_                 = args.dt;
     clothN_             = (uint32_t)args.cloth_n;
-    worldSize_          = args.world_size;
-    gridRes_            = (uint32_t)args.grid_res;
+    domainSize_         = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
+    cellSize_           = args.cell_size;
     base_.screenshotDir = args.screenshot_dir;
 
     base_.initWindow("Vulkan Sim – Cloth Scene");
@@ -72,8 +75,8 @@ private:
   float dt_         = 1.0f / 60.0f;
   float simTime_    = 0.0f;
   uint32_t clothN_  = 48;
-  float worldSize_  = 10.0f;
-  uint32_t gridRes_ = 64;
+  glm::vec3 domainSize_{10.0f, 10.0f, 10.0f};
+  float cellSize_ = 10.0f / 64.0f;
 
   // issue #30: gravity/windX/windZ は Engine の public メンバとしては廃止された
   // ため、addForce() で登録した Force への参照を自前で保持する。
@@ -87,13 +90,13 @@ private:
   std::vector<std::vector<uint32_t>> meshTriIndices_;
 
   void buildScene5() {
-    float sp = worldSize_ / float(clothN_ + 1) * 0.85f;
-    float cx = worldSize_ * 0.5f;
-    float cy = worldSize_ * 0.5f;
+    float sp = std::min(domainSize_.x, domainSize_.y) / float(clothN_ + 1) * 0.85f;
+    float cx = domainSize_.x * 0.5f;
+    float cy = domainSize_.y * 0.5f;
 
     ClothMesh m1, m2;
-    m1.build((int)clothN_, sp, cx, cy, worldSize_ * 0.80f);
-    m2.build((int)clothN_, sp, cx, cy, worldSize_ * 0.55f);
+    m1.build((int)clothN_, sp, cx, cy, domainSize_.z * 0.80f);
+    m2.build((int)clothN_, sp, cx, cy, domainSize_.z * 0.55f);
 
     uint32_t off1 = engine_.addCloth(m1);
     uint32_t off2 = engine_.addCloth(m2);
@@ -108,10 +111,10 @@ private:
   }
 
   void buildScene7() {
-    float sp = worldSize_ / float(clothN_ + 1) * 0.85f;
-    float cx = worldSize_ * 0.5f;
-    float cy = worldSize_ * 0.5f;
-    float cz = worldSize_ * 0.5f; // 中央高さ: 回転時に上下の境界を超えないよう
+    float sp = std::min(domainSize_.x, domainSize_.y) / float(clothN_ + 1) * 0.85f;
+    float cx = domainSize_.x * 0.5f;
+    float cy = domainSize_.y * 0.5f;
+    float cz = domainSize_.z * 0.5f; // 中央高さ: 回転時に上下の境界を超えないよう
 
     ClothMesh m;
     m.build((int)clothN_, sp, cx, cy, cz);
@@ -145,7 +148,7 @@ private:
       throw std::runtime_error("Unknown scene: " + std::to_string(scene_));
 
     // ② エンジン初期化 → descriptorSetLayout が確定する
-    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, worldSize_, gridRes_);
+    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, domainSize_, cellSize_);
 
     gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f); // Z-up
     wind_    = ConstantWindForce::FromDirection({0.0f, 0.0f, 0.0f}, 1.0f);
@@ -177,8 +180,8 @@ private:
     // 300フレーム×(1/60s) = 5秒で 7回転
     const float angVel = glm::two_pi<float>() * 7.0f / 5.0f;
     float angle        = simTime_ * angVel;
-    float cx           = worldSize_ * 0.5f;
-    float cz           = worldSize_ * 0.5f;
+    float cx           = domainSize_.x * 0.5f;
+    float cz           = domainSize_.z * 0.5f;
     for(int k = 0; k < 4; ++k) {
       glm::vec3 pivot(cx, corners_[k].y, cz);
       engine_.updateConstraint(k, rotateAroundY(corners_[k], pivot, angle));
@@ -238,8 +241,8 @@ private:
     pc.posIdx           = engine_.posIdx;
     pc.velIdx           = engine_.velIdx;
     pc.particleCount    = engine_.totalParticleCount();
-    pc.worldMin         = 0.0f;
-    pc.worldMax         = worldSize_;
+    pc.worldMin         = glm::vec3(0.0f);
+    pc.worldMax         = domainSize_;
     pc.clothVertexCount = engine_.totalParticleCount();
     pc.couplingForceIdx = 0;
 

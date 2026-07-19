@@ -18,8 +18,10 @@ static const std::string SHADER_DIR_STR = SHADER_DIR;
 // ── CLI ───────────────────────────────────────────────────────────────────
 
 struct MpmGeoLayerArgs : public argparse::Args {
-  float& world_size           = kwarg("world-size", "world size [m]").set_default(10.0f);
-  int& grid_res               = kwarg("grid-res", "MPM grid resolution").set_default(64);
+  float& domain_size_x        = kwarg("domain-size-x", "domain physical size X [m]").set_default(10.0f);
+  float& domain_size_y        = kwarg("domain-size-y", "domain physical size Y [m]").set_default(10.0f);
+  float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(10.0f);
+  float& cell_size            = kwarg("cell-size", "MPM grid cell size [m]").set_default(10.0f / 64.0f);
   float& dt                   = kwarg("dt", "frame timestep [s]").set_default(1.0f / 60.0f);
   int& substeps               = kwarg("substeps", "substeps per frame").set_default(25);
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
@@ -38,8 +40,8 @@ public:
     cfg.nx         = 8;
     cfg.ny         = 30;
     cfg.nz         = 8;
-    cfg.world_size = args.world_size;
-    cfg.grid_res   = uint32_t(args.grid_res);
+    cfg.domainSize = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
+    cfg.cellSize   = args.cell_size;
 
     base_.initWindow("MPM Geo-Layer – 地層崩壊シミュレーション");
     initVulkan(cfg, args.substeps);
@@ -171,8 +173,8 @@ private:
     renderPc.posIdx        = engine_.posIdx;
     renderPc.velIdx        = engine_.velIdx;
     renderPc.particleCount = engine_.liveParticleCount();
-    renderPc.worldMin      = 0.0f;
-    renderPc.worldMax      = engine_.config().world_size;
+    renderPc.worldMin      = glm::vec3(0.0f);
+    renderPc.worldMax      = engine_.config().domainSize;
 
     graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.liveParticleCount());
 
@@ -204,7 +206,8 @@ private:
 
     const auto& cfg = engine_.config();
     ImGui::Text("FPS: %.1f | N=%u | t=%.2f s", ImGui::GetIO().Framerate, engine_.liveParticleCount(), simTime_);
-    ImGui::Text("Grid: %u x %u x %u | gridRes=%u", cfg.nx, cfg.ny, cfg.nz, cfg.grid_res);
+    const glm::uvec3 gr = cfg.gridRes();
+    ImGui::Text("Grid: %u x %u x %u | gridRes=%u,%u,%u", cfg.nx, cfg.ny, cfg.nz, gr.x, gr.y, gr.z);
     ImGui::Separator();
     ImGui::Text("Slot 0 (y < ny/3)   : ELASTIC     硬岩   E=400kPa rho=2500");
     ImGui::Text("Slot 1 (ny/3..2ny/3): VON_MISES   弱粘土 E=10kPa  q=800Pa");
@@ -215,9 +218,9 @@ private:
     ImGui::Separator();
     ImGui::Text("球コライダー (横から押し当て):");
     bool changed = false;
-    changed |= ImGui::SliderFloat("X", &sphere_cx_, 0.5f, cfg.world_size - 0.5f);
-    changed |= ImGui::SliderFloat("Y", &sphere_cy_, 0.5f, cfg.world_size * 0.95f);
-    changed |= ImGui::SliderFloat("Z", &sphere_cz_, 0.5f, cfg.world_size - 0.5f);
+    changed |= ImGui::SliderFloat("X", &sphere_cx_, 0.5f, cfg.domainSize.x - 0.5f);
+    changed |= ImGui::SliderFloat("Y", &sphere_cy_, 0.5f, cfg.domainSize.y * 0.95f);
+    changed |= ImGui::SliderFloat("Z", &sphere_cz_, 0.5f, cfg.domainSize.z - 0.5f);
     changed |= ImGui::SliderFloat("半径", &sphere_r_, 0.2f, 3.0f);
     changed |= ImGui::Checkbox("球コライダー有効", &sphereEnabled_);
     if(changed) rebuildColliders();

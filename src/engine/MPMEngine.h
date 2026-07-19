@@ -6,6 +6,7 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
+#include "../core/Domain.h"
 #include "../core/Emitter.h"
 #include "Collider.h"
 #include "ComputePipeline.h"
@@ -16,13 +17,17 @@
 #include <memory>
 #include <random>
 
+// issue #46: ドメインは domainSize(vec3, 物理サイズ[m]) + cellSize(float, 全軸共通の
+// セルサイズ[m]) で指定する。各軸の実セル数は gridRes() (= domain::gridRes()) から導出。
 struct MPMConfig {
-  // パーティクル配置: nx × ny × nz の格子
-  uint32_t nx       = 32;
-  uint32_t ny       = 32;
-  uint32_t nz       = 32;
-  float world_size  = 10.0f;
-  uint32_t grid_res = 64;
+  // パーティクル配置: nx × ny × nz の格子 (issue #46 の対象外、シミュレーション空間の
+  // ドメイン解像度とは無関係)
+  uint32_t nx = 32;
+  uint32_t ny = 32;
+  uint32_t nz = 32;
+
+  glm::vec3 domainSize{10.0f, 10.0f, 10.0f}; // ドメイン物理サイズ [m] (旧 world_size)
+  float cellSize = 10.0f / 64.0f;            // 全軸共通のセルサイズ [m] (旧 grid_res の逆算値)
 
   // バッファ上限（0 = nx*ny*nz と同じ）
   // Phase 4 のソースエミッタで動的追加する場合に設定
@@ -35,17 +40,18 @@ struct MPMConfig {
 
   uint32_t particleCount() const { return nx * ny * nz; }
   uint32_t maxParticleCount() const { return maxParticles > 0 ? maxParticles : particleCount(); }
-  uint32_t totalCells() const { return grid_res * grid_res * grid_res; }
-  float cellSize() const { return world_size / float(grid_res); }
-  float spacing() const { return world_size / float(nx); }
+  glm::uvec3 gridRes() const { return domain::gridRes(domainSize, cellSize); }
+  // 空間ハッシュ/MPMグリッドバッファの実要素数 (= cubeRes^3。gridRes.x*y*zではない点に注意)
+  uint32_t totalCells() const { return domain::hashCells(gridRes()); }
+  glm::vec3 spacing() const { return domainSize / glm::vec3(nx, ny, nz); }
   float particleVolume() const {
-    float s = spacing();
-    return s * s * s;
+    glm::vec3 s = spacing();
+    return s.x * s.y * s.z;
   }
   float mu() const { return E / (2.0f * (1.0f + nu)); }
   float lame() const { return E * nu / ((1.0f + nu) * (1.0f - 2.0f * nu)); }
 
-  uint32_t nGroups() const { return (totalCells() + 255u) / 256u; }
+  uint32_t nGroups() const { return domain::nGroups(totalCells()); }
 };
 
 // 重力は addForce() で GravityForce を登録すること (issue #30 レビュー対応:
@@ -74,7 +80,7 @@ public:
   float flip_ratio = 0.0f;
 
   // NanoVDB SDF コライダー設定
-  // radius, cx, cy, cz は世界座標 (worldMin=0, worldMax=world_size)
+  // radius, cx, cy, cz は世界座標 (worldMin=0, worldMax=domainSize)
   void setColliderSphere(float radius, float cx, float cy, float cz);
   void clearCollider();
 

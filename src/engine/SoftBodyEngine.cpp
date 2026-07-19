@@ -29,9 +29,9 @@ uint32_t SoftBodyEngine::addInstance(const SoftBodyInstance& inst) {
   return instances_.back().particleOffset;
 }
 
-void SoftBodyEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, float worldSize, uint32_t gridRes) {
-  worldSize_ = worldSize;
-  gridRes_   = gridRes;
+void SoftBodyEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, glm::vec3 domainSize, float cellSize) {
+  domainSize_ = domainSize;
+  cellSize_   = cellSize;
 
   buildCombinedBuffers();
 
@@ -84,9 +84,9 @@ void SoftBodyEngine::step(VkCommandBuffer cmd, float dt) {
     pc.typeFlagIdx    = typeFlagIdx_;
     pc.particleCount  = totalCount_;
     pc.dt             = subDt;
-    pc.cellSize       = worldSize_ / float(gridRes_);
-    pc.worldMin       = 0.0f;
-    pc.worldMax       = worldSize_;
+    pc.cellSize       = cellSize_;
+    pc.worldMin       = glm::vec3(0.0f);
+    pc.worldMax       = domainSize_;
     pc.restitution    = restitution;
     pc.friction       = friction;
     pc.particleRadius = particleRadius;

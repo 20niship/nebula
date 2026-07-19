@@ -11,7 +11,7 @@ layout(local_size_x = 256) in;
 void main() {
     uint grp        = gl_WorkGroupID.x;
     uint lid        = gl_LocalInvocationID.x;
-    uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    uint totalCells = pc.hashCells;
     uint c          = grp * 256u + lid;
 
     if (c >= totalCells) return;

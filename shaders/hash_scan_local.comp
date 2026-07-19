@@ -14,7 +14,7 @@ void main() {
     uint gid  = gl_GlobalInvocationID.x;
     uint grp  = gl_WorkGroupID.x;
 
-    uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    uint totalCells = pc.hashCells;
     uint val = 0u;
     if (gid < totalCells)
         val = buffers[pc.cellCountIdx].data[gid];

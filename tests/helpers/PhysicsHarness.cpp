@@ -139,13 +139,14 @@ void PhysicsHarness::recordSubstep(VkCommandBuffer cmd, float subDt) {
   pc.cellOffsetIdx     = cellOffIdx_;
   pc.sortedIdxIdx      = sortedIdx_;
   pc.particleCount     = N;
-  pc.gridRes           = cfg_.gridRes;
+  pc.hashCells         = nCells_;
   pc.stretchEdgesIdx   = edgesIdx_;
   pc.lambdasIdx        = lambdaIdx_;
   pc.dt                = subDt;
   pc.cellSize          = (cfg_.worldMax - cfg_.worldMin) / float(cfg_.gridRes);
-  pc.worldMin          = cfg_.worldMin;
-  pc.worldMax          = cfg_.worldMax;
+  pc.gridRes           = glm::uvec3(cfg_.gridRes);
+  pc.worldMin          = glm::vec3(cfg_.worldMin);
+  pc.worldMax          = glm::vec3(cfg_.worldMax);
   pc.restitution       = cfg_.restitution;
   pc.friction          = cfg_.friction;
   pc.particleRadius    = cfg_.radius;

@@ -24,6 +24,7 @@ add_executable(vulkan_tests
     test_mpm.cpp
     test_pyro.cpp
     test_attribute_buffer.cpp
+    test_domain.cpp
 )
 
 add_dependencies(vulkan_tests shaders)

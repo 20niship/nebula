@@ -13,7 +13,7 @@ shared uint sgrp[1024];
 
 void main() {
     uint lid        = gl_LocalInvocationID.x;
-    uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    uint totalCells = pc.hashCells;
     uint nGroups    = (totalCells + 255u) / 256u;
 
     uint gsum = (lid < nGroups) ? buffers[pc.cellOffsetIdx].data[totalCells + lid] : 0u;

@@ -27,6 +27,10 @@ struct FluidConfig {
   float cellSize = 20.0f / 64.0f;            // 全軸共通のセルサイズ [m] (旧 grid_res の逆算値)
   uint32_t max_boundary = 50000;
 
+  // 泡 (spray/foam/bubble) 二次パーティクルの固定容量 (issue #47)。
+  // 0 = 無効（バッファ確保・パイプラインdispatchとも完全スキップ、既存挙動に影響なし）
+  uint32_t maxDiffuseParticles = 0;
+
   uint32_t fluidCount() const { return fluid_nx * fluid_ny * fluid_nz; }
   glm::uvec3 gridRes() const { return domain::gridRes(domainSize, cellSize); }
   // 空間ハッシュバッファの実要素数 (= cubeRes^3。gridRes.x*y*zではない点に注意)
@@ -135,6 +139,38 @@ public:
   // 吸収形状を登録（毎フレーム step() の前に呼ぶ; absorbers が空なら吸収パスをスキップ）
   void setAbsorbers(const std::vector<AbsorberDesc>& absorbers);
 
+  // ── 泡 (spray/foam/bubble) 二次パーティクル (issue #47) ───────────────────
+  // Ihmsen et al. 2012 "Unified Spray, Foam, and Bubbles" のポテンシャル関数を
+  // 簡略化して用いる。生成数 n = dt*(kTa*Ψ(Ita,taLo,taHi) + kWc*Ψ(Iwc,wcLo,wcHi))
+  //                              * Ψ(Ike,keLo,keHi)   (Ψ = クランプ付き線形正規化)
+  struct FoamParams {
+    float kTa = 4000.0f, kWc = 4000.0f;                // 生成係数 (trapped-air / wave-crest)
+    float taLo = 5.0f, taHi = 20.0f;                    // trapped-air 正規化範囲
+    float wcLo = 1.0f, wcHi = 5.0f;                     // wave-crest 正規化範囲
+    float keLo = 5.0f, keHi = 50.0f;                    // kinetic-energy ゲート範囲
+    float lifetimeMin = 1.0f, lifetimeMax = 3.0f;       // 寿命 [s]
+    float bubbleBuoyancy = 4.0f;                        // bubble の浮力加速度 [m/s²]
+    float dragCoeff      = 0.4f;                        // foam/bubble が周囲流体速度へ追従する割合 [0,1]
+    float gravityAccel   = -9.8f;                       // spray に適用する重力加速度 (Z-up, 負値)
+    float neighborLo = 6.0f, neighborHi = 20.0f;        // 近傍数による分類閾値: spray<Lo<=foam<Hi<=bubble
+    float surfaceDensityRatio = 0.95f;                  // 生成ゲート: rho_i/rho0 がこれ未満の粒子のみ対象
+  };
+  static constexpr uint32_t MAX_DIFFUSE_PARTICLES_HARD_CAP = 2'000'000u; // 暴走設定に対する安全上限
+
+  // 泡パラメータを登録（毎フレーム呼ぶ必要はない。setAbsorbers と同様 upload のみ）
+  void setFoamParams(const FoamParams& params);
+  // ランタイムON/OFF。false のとき kFoamGenerate_/kFoamAdvect_ は完全にdispatchされない
+  // (maxDiffuseParticles==0 の場合と異なりバッファは確保済みのまま保持される)
+  bool foamEnabled = false;
+
+  uint32_t foamPosIdx() const { return foamPosIdx_; }   // 描画側から参照 (vec4: xyz=pos, w=残り寿命)
+  uint32_t foamVelIdx() const { return foamVelIdx_; }   // vec4: xyz=vel, w=初期寿命
+  uint32_t foamKindIdx() const { return foamKindIdx_; } // uint: 0=死/未使用,1=spray,2=foam,3=bubble
+
+  // テスト/デバッグ用: kFoamGenerate_ を経由せず特定スロットへ直接書き込む
+  // (advect パス単体テスト等で使用; issue #47)
+  void debugSetFoamSlot(uint32_t slot, glm::vec4 pos, glm::vec4 vel, uint32_t kind);
+
   VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
   VkDescriptorSet descriptorSet             = VK_NULL_HANDLE;
   uint32_t posIdx                           = 0;
@@ -145,6 +181,10 @@ public:
   uint32_t typeFlagIdx = 0;
 
   VkBuffer getPositionBuffer() const;
+  // 泡バッファの直接読み戻し用 (テスト/デバッグ; issue #47)
+  VkBuffer getFoamPositionBuffer() const;
+  VkBuffer getFoamVelocityBuffer() const;
+  VkBuffer getFoamKindBuffer() const;
 
   // ── TC8: 運動学的境界粒子 (回転スクリュー等) の per-frame GPU 更新 ────────────
   // maxBoundaryCount: 毎フレーム更新する境界粒子の最大数
@@ -177,6 +217,12 @@ private:
   uint32_t absorberBufIdx_ = 0; // absorbers バッファの bindless index
   uint32_t absorberCount_  = 0; // 現フレームの有効吸収形状数
 
+  // 泡 (spray/foam/bubble) 二次パーティクル用プライベートメンバー (issue #47)
+  uint32_t foamPosIdx_    = 0;
+  uint32_t foamVelIdx_    = 0;
+  uint32_t foamKindIdx_   = 0; // 末尾1要素は生成カーソル (atomicAdd)
+  uint32_t foamParamsIdx_ = 0;
+
   ComputePipeline kPredictSdf_;
   ComputePipeline kSdfCollision_;
   ComputePipeline kHashCount_;
@@ -192,6 +238,8 @@ private:
   ComputePipeline kVorticityOmega_;
   ComputePipeline kVorticityForce_;
   ComputePipeline kAbsorb_; // 吸収パス（fluid_absorb.comp; absorberCount_>0 のときのみ使用）
+  ComputePipeline kFoamGenerate_; // 泡生成パス（pbf_foam_generate.comp; foamEnabled かつ maxDiffuseParticles>0 のときのみ使用）
+  ComputePipeline kFoamAdvect_;   // 泡移流・分類パス（pbf_foam_advect.comp; 同上）
 
   // ── kinematic staging (TC8) ──────────────────────────────────────────────
   static constexpr uint32_t MAX_CONCURRENT_FRAMES       = 2;

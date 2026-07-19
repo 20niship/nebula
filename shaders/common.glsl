@@ -62,6 +62,12 @@ layout(push_constant) uniform PC {
     // 流体パーティクル領域の開始オフセット (= FluidEngine の cfg_.max_boundary)。
     // 既定値0=オフセットなしのため、設定しない他エンジンのシェーダーは影響を受けない。
     uint  fluidStart;
+    // 泡 (foam/spray/bubble) 二次パーティクル (pbf_foam_generate/pbf_foam_advect 専用; issue #47)
+    uint  foamPosIdx;
+    uint  foamVelIdx;
+    uint  foamKindIdx;
+    uint  foamParamsIdx;
+    uint  maxDiffuseParticles;
 } pc;
 
 // ── vec4 読み書き（FP32, MoltenVK 関数化バグ回避のためマクロ）────

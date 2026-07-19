@@ -88,6 +88,12 @@ tasks:
     cmds:
       - cmake --build {{.BUILD_DIR}} --target fluid_pbf -j{{.JOBS}}
 
+  build:wave-foam:
+    desc: "fluid_wave_foam (波発生パドル + Bunny + 泡, issue #47) をビルド"
+    deps: [configure]
+    cmds:
+      - cmake --build {{.BUILD_DIR}} --target fluid_wave_foam -j{{.JOBS}}
+
   build:multi:
     desc: "multi_physics (Phase 6) をビルド"
     deps: [configure]
@@ -200,7 +206,7 @@ tasks:
 
   capture:
     desc: "テストケース別シミュレーションを実行してグリッド動画を生成 (sim_captures/simulation_results.mp4)"
-    deps: [build:fluid, build:cloth, build:smoke, build:cloth-scene, build:absorb, build:softbody]
+    deps: [build:fluid, build:cloth, build:smoke, build:cloth-scene, build:absorb, build:softbody, build:wave-foam]
     cmds:
       - /opt/homebrew/bin/python3 capture_sim.py
     env:

@@ -4,7 +4,10 @@
 // ── Bindless バッファ配列 ──────────────────────────────────────────────────
 layout(set = 0, binding = 0) buffer StorageBuffers { uint data[]; } buffers[];
 
-// ── PyroSimPC Push Constants (128 bytes) ───────────────────────────────────
+// ── PyroSimPC Push Constants (164 bytes) ───────────────────────────────────
+// issue #46フォローアップ: 直方体ドメイン対応。worldMin/worldMax を vec3 化し、各軸独立の
+// gridRes(uvec3) を追加した。旧 gridRes(スカラー、Morton dispatch用の立方体解像度) は
+// hashCells に改名 (mpm_common.glsl と同一の命名・用法。値は cubeRes^3)。
 layout(push_constant) uniform PC {
     uint  velIdxA;         // 0   vec4×CELLS (xyz=速度)
     uint  velIdxB;         // 4
@@ -20,26 +23,27 @@ layout(push_constant) uniform PC {
     uint  divergenceIdx;   // 44  float×CELLS
     uint  colliderSDFIdx;  // 48  float×CELLS (Morton SDF, 0=無効)
     uint  emittersIdx;     // 52  EmitterGPU×emitterCount (0=無効)
-    uint  gridRes;         // 56
+    uint  hashCells;       // 56  Morton dispatch用の稠密グリッド総セル数 (= cubeRes^3)
     uint  emitterCount;    // 60
-    float dt;              // 64
-    float cellSize;        // 68
-    float worldMin;        // 72
-    float worldMax;        // 76
-    float buoyancyAlpha;   // 80
-    float buoyancyBeta;    // 84
-    float ambientTemp;     // 88
-    float vorticityEps;    // 92
-    float densityDissipation; // 96
-    float tempDissipation;    // 100
-    float ignitionTemp;       // 104
-    float burnRate;           // 108
-    float heatRelease;        // 112
-    float smokeYieldPerFuel;  // 116
-    float flameBrightness;    // 120
-    uint  curlIdx;            // 124 vec4×CELLS 渦度スクラッチ
-    uint  forceBufIdx;        // 128 Force配列(ForceGPU×forceCount)のbindless index (issue #30)
-    uint  forceCount;         // 132 有効なForce数
+    uvec3 gridRes;         // 64  各軸の実セル数 (nx,ny,nz)
+    float dt;              // 76
+    vec3  worldMin;        // 80  ドメイン下限座標 [m]
+    float cellSize;        // 92
+    vec3  worldMax;        // 96  ドメイン上限座標 [m]
+    float buoyancyAlpha;   // 108
+    float buoyancyBeta;    // 112
+    float ambientTemp;     // 116
+    float vorticityEps;    // 120
+    float densityDissipation; // 124
+    float tempDissipation;    // 128
+    float ignitionTemp;       // 132
+    float burnRate;           // 136
+    float heatRelease;        // 140
+    float smokeYieldPerFuel;  // 144
+    float flameBrightness;    // 148
+    uint  curlIdx;            // 152 vec4×CELLS 渦度スクラッチ
+    uint  forceBufIdx;        // 156 Force配列(ForceGPU×forceCount)のbindless index (issue #30)
+    uint  forceCount;         // 160 有効なForce数
 } pc;
 
 // ── Buffer read/write マクロ (MoltenVK: buffers[] は main() でのみ展開) ────
@@ -93,11 +97,13 @@ ivec3 pyroMortonDecodeI(uint code) {
 }
 
 // セル中心グリッド座標 (ix,iy,iz) の境界クランプ付き読み取り
-// グリッド外は最近傍セルへクランプ (Neumann/clamp-to-edge 境界)
+// グリッド外は最近傍セルへクランプ (Neumann/clamp-to-edge 境界)。
+// 各軸独立の pc.gridRes(実セル数) でクランプすることで、直方体ドメインの短い軸が
+// Morton cube のパディング領域 (未定義値) へ漏れ出さないようにする。
 #define CLAMP_CELL(ix_, iy_, iz_) ivec3( \
-    clamp((ix_), 0, int(pc.gridRes) - 1), \
-    clamp((iy_), 0, int(pc.gridRes) - 1), \
-    clamp((iz_), 0, int(pc.gridRes) - 1))
+    clamp((ix_), 0, int(pc.gridRes.x) - 1), \
+    clamp((iy_), 0, int(pc.gridRes.y) - 1), \
+    clamp((iz_), 0, int(pc.gridRes.z) - 1))
 
 #define SAMPLE_FLOAT_CLAMPED(bufIdx, ix_, iy_, iz_) \
     readFloat((bufIdx), pyroMortonEncodeI(CLAMP_CELL((ix_), (iy_), (iz_))))

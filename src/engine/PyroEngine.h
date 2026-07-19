@@ -6,23 +6,27 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
+#include "../core/Domain.h"
 #include "../core/Emitter.h"
 #include "../core/PyroSimPC.h"
 #include "ComputePipeline.h"
 #include "EngineBase.h"
 
+// issue #46フォローアップ: ドメインは domainSize(vec3, 物理サイズ[m]) + cellSize(float,
+// 全軸共通のセルサイズ[m]) で指定する (FluidConfig/MPMConfig と同じ規約)。Pyro は
+// 「スレッドID=Morton符号」の稠密グリッド設計のため、実際の GPU dispatch/バッファ確保は
+// 各軸の実セル数(nx,ny,nz)を包含する最小の 2 のべき乗立方体(cubeRes)単位で行う。
+// cubeRes への丸めは domain::mortonCubeRes() が自動的に行うため、ユーザーが 2 のべき乗を
+// 意識する必要はない。
 struct PyroConfig {
-  // Morton (Z-order) 符号化を使うため 2 のべき乗であること (例: 16, 32, 64)。
-  // べき乗以外を指定すると PyroEngine::init() が例外を投げる
-  // (べき乗でない場合 decode(gid) が gridRes 範囲外の (ix,iy,iz) を生成し、
-  //  GPU バッファ境界外アクセスを起こすため)。
-  uint32_t grid_res    = 64;
-  float world_size     = 10.0f;
-  uint32_t maxEmitters = 32; // 同時に登録できる Emitter の上限 (SSBO 固定容量)
+  glm::vec3 domainSize{10.0f, 10.0f, 10.0f}; // ドメイン物理サイズ [m] (旧 world_size)
+  float cellSize        = 10.0f / 64.0f;     // 全軸共通のセルサイズ [m] (旧 grid_res の逆算値)
+  uint32_t maxEmitters  = 32;                // 同時に登録できる Emitter の上限 (SSBO 固定容量)
 
-  uint32_t totalCells() const { return grid_res * grid_res * grid_res; }
-  float cellSize() const { return world_size / float(grid_res); }
-  uint32_t nGroups() const { return (totalCells() + 255u) / 256u; }
+  glm::uvec3 gridRes() const { return domain::gridRes(domainSize, cellSize); } // 各軸の実セル数 (nx,ny,nz)。2^n不要
+  uint32_t cubeRes() const { return domain::mortonCubeRes(gridRes()); }        // Morton dispatch用の立方体解像度 (自動的に2^n、CPU限定)
+  uint32_t totalCells() const { return domain::hashCells(gridRes()); }         // = cubeRes()^3。GPUバッファ確保数/dispatch数
+  uint32_t nGroups() const { return domain::nGroups(totalCells()); }
 };
 
 // Houdini Pyro 的なグリッド(オイラー)ソルバー。MPMEngine と異なりパーティクルを

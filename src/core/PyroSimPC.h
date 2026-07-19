@@ -1,13 +1,23 @@
 #pragma once
 #include <cstdint>
+#include <glm/glm.hpp>
 
 // Pyro (グリッドベース煙・火炎) 専用 Push Constants
-// (issue #30: 末尾に forceBufIdx/forceCount を追加し 128→136 bytes に拡張。
-//  ComputePipeline の push constant range は sizeof(SimPC)=172 bytes で
-//  全エンジン共通のため、128超でも既存レイアウトの範囲内で安全)
+// (issue #30: 末尾に forceBufIdx/forceCount を追加。
+//  issue #46フォローアップ: 直方体ドメイン対応。worldMin/worldMax を vec3 化し、各軸独立の
+//  gridRes(uvec3) を追加した。旧 gridRes(スカラー、Morton dispatch 用の立方体解像度)は
+//  hashCells に改名した (MPMSimPC/mpm_p2g.comp/mpm_g2p.comp と同一の命名・用法。値は
+//  domain::hashCells(gridRes()) = cubeRes^3)。
+//  ComputePipeline の push constant range は sizeof(SimPC)=200 bytes で全エンジン共通
+//  (src/core/ComputePipeline.h の static_assert(sizeof(PyroSimPC) <= sizeof(SimPC)) 参照)。
 // MPMSimPC と同様、Bindless バッファインデックス + グリッド定数 + 物理パラメータを
 // 固定サイズ構造体に詰める。velocity/density/temperature/fuel は front/back の
 // ダブルバッファ (A/B) を持ち、CPU側 (PyroEngine::step) が毎フレーム役割を入れ替える。
+//
+// glm::vec3/uvec3 は GLSL push_constant ブロックの vec3 が要求する 16byte アライメントに
+// 合わせるため、各 vec3/uvec3 直後にスカラーフィールドを1個「詰め物」として配置している
+// (MPMSimPC.h の gridRes(64)+lambda_lame(76), worldMin(80)+particleVolume(92),
+//  worldMax(96)+M_friction(108) と同一のテクニック)。
 struct PyroSimPC {
   // ── フィールド バッファ (A/B ダブルバッファ) (16 bytes) ───────────────
   uint32_t velIdxA;     // 0   vec4×CELLS (xyz=速度)
@@ -30,35 +40,41 @@ struct PyroSimPC {
   // ── コライダー / エミッタ / グリッド定数 (16 bytes) ────────────────────
   uint32_t colliderSDFIdx; // 48  float×CELLS (Morton SDF, 0=無効)
   uint32_t emittersIdx;    // 52  EmitterGPU×emitterCount (0=無効)
-  uint32_t gridRes;        // 56
+  uint32_t hashCells;      // 56  Morton dispatch用の稠密グリッド総セル数 (= cubeRes^3)
   uint32_t emitterCount;   // 60
 
-  // ── World / time (16 bytes) ────────────────────────────────────────────
-  float dt;       // 64
-  float cellSize; // 68
-  float worldMin; // 72
-  float worldMax; // 76
+  // ── グリッド解像度 / World (32 bytes) ────────────────────────────────
+  glm::uvec3 gridRes; // 64  各軸の実セル数 (nx,ny,nz) = domain::gridRes(domainSize, cellSize)
+  float dt;           // 76
+
+  glm::vec3 worldMin; // 80  ドメイン下限座標 [m] (通常は原点 (0,0,0))
+  float cellSize;     // 92  全軸共通のセルサイズ [m]
+
+  glm::vec3 worldMax; // 96  ドメイン上限座標 [m] (= worldMin + domainSize)
+  float buoyancyAlpha; // 108 温度浮力係数
 
   // ── 浮力 / 渦度 (16 bytes) ─────────────────────────────────────────────
-  float buoyancyAlpha; // 80  温度浮力係数
-  float buoyancyBeta;  // 84  密度による重さ (下向き) 係数
-  float ambientTemp;   // 88  環境温度
-  float vorticityEps;  // 92  渦度閉じ込め強度 (0=無効)
+  float buoyancyBeta;      // 112 密度による重さ (下向き) 係数
+  float ambientTemp;       // 116 環境温度
+  float vorticityEps;      // 120 渦度閉じ込め強度 (0=無効)
+  float densityDissipation; // 124 密度減衰係数 [1/s]
 
   // ── 減衰 / 燃焼しきい値 (16 bytes) ─────────────────────────────────────
-  float densityDissipation; // 96  密度減衰係数 [1/s]
-  float tempDissipation;    // 100 温度減衰係数 [1/s] (環境温度への復帰)
-  float ignitionTemp;       // 104 発火温度
-  float burnRate;           // 108 燃料消費速度 [1/s]
+  float tempDissipation; // 128 温度減衰係数 [1/s] (環境温度への復帰)
+  float ignitionTemp;    // 132 発火温度
+  float burnRate;        // 136 燃料消費速度 [1/s]
+  float heatRelease;     // 140 燃焼による温度上昇量 (burn量あたり)
 
-  // ── 燃焼生成物 (16 bytes) ──────────────────────────────────────────────
-  float heatRelease;       // 112 燃焼による温度上昇量 (burn量あたり)
-  float smokeYieldPerFuel; // 116 燃焼による密度生成量 (burn量あたり)
-  float flameBrightness;   // 120 燃焼による発光量 (burn量あたり)
-  uint32_t curlIdx;        // 124 vec4×CELLS 渦度 (curl) スクラッチ (渦度閉じ込め用)
+  // ── 燃焼生成物 / Force (16 bytes) ──────────────────────────────────────
+  float smokeYieldPerFuel; // 144 燃焼による密度生成量 (burn量あたり)
+  float flameBrightness;   // 148 燃焼による発光量 (burn量あたり)
+  uint32_t curlIdx;        // 152 vec4×CELLS 渦度 (curl) スクラッチ (渦度閉じ込め用)
+  uint32_t forceBufIdx;    // 156 Force配列(ForceGPU×forceCount)のbindless index (0=無効)
 
-  // ── Force (issue #30; 8 bytes) ─────────────────────────────────────────
-  uint32_t forceBufIdx; // 128 Force配列(ForceGPU×forceCount)のbindless index (0=無効)
-  uint32_t forceCount;  // 132 有効なForce数
+  // ── Force (issue #30; 4 bytes) ─────────────────────────────────────────
+  uint32_t forceCount; // 160 有効なForce数
 };
-static_assert(sizeof(PyroSimPC) == 136, "PyroSimPC must be 136 bytes");
+static_assert(sizeof(PyroSimPC) == 164, "PyroSimPC must be 164 bytes");
+static_assert(offsetof(PyroSimPC, gridRes) == 64, "vec3 alignment offset");
+static_assert(offsetof(PyroSimPC, worldMin) == 80, "vec3 alignment offset");
+static_assert(offsetof(PyroSimPC, worldMax) == 96, "vec3 alignment offset");

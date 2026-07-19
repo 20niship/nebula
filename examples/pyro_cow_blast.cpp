@@ -24,9 +24,11 @@ static const std::string SHADER_DIR_STR = SHADER_DIR;
 static const std::string ASSET_DIR_STR  = ASSET_DIR;
 
 struct CowBlastArgs : public argparse::Args {
-  // Morton 符号化のため 2 のべき乗であること (PyroEngine::init() が検証する)
-  int& grid_res        = kwarg("grid-res", "Pyro グリッド解像度 (2のべき乗)").set_default(64);
-  float& world_size    = kwarg("world-size", "world size [m]").set_default(10.0f);
+  // issue #46フォローアップ: ドメインは domainSize(XYZ物理サイズ)+cellSize で指定する
+  float& domain_size_x = kwarg("domain-size-x", "ドメイン物理サイズ X [m]").set_default(10.0f);
+  float& domain_size_y = kwarg("domain-size-y", "ドメイン物理サイズ Y [m]").set_default(10.0f);
+  float& domain_size_z = kwarg("domain-size-z", "ドメイン物理サイズ Z [m]").set_default(10.0f);
+  float& cell_size      = kwarg("cell-size", "セルサイズ [m] (小さいほど高解像度)").set_default(10.0f / 64.0f);
   int& n_frames        = kwarg("n-frames", "実行フレーム数").set_default(180);
   float& dt            = kwarg("dt", "フレームタイムステップ [s]").set_default(1.0f / 60.0f);
   int& substeps        = kwarg("substeps", "1フレームあたりのサブステップ数").set_default(1);
@@ -48,8 +50,8 @@ int main(int argc, char* argv[]) {
     ctx.init();
 
     PyroConfig cfg;
-    cfg.grid_res   = uint32_t(args.grid_res);
-    cfg.world_size = args.world_size;
+    cfg.domainSize = {args.domain_size_x, args.domain_size_y, args.domain_size_z};
+    cfg.cellSize   = args.cell_size;
 
     PyroEngine engine;
     engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR, cfg);
@@ -65,20 +67,20 @@ int main(int argc, char* argv[]) {
     engine.densityDissipation = 0.01f;
     engine.tempDissipation    = 0.2f;
 
-    const float W = cfg.world_size;
+    const glm::vec3 W = cfg.domainSize;
 
     // ── 静的な牛障害物 (毎フレーム再構築せず一度だけ SDF 化) ────────────────
     std::printf("牛 STL 読み込み: %s\n", args.cow_stl.c_str());
     auto cowTris = loadBinarySTL(args.cow_stl);
     std::printf("  三角形数: %zu\n", cowTris.size());
-    engine.setColliderSDF(buildMeshSDF(cowTris, cfg.grid_res, cfg.world_size));
+    engine.setColliderSDF(buildMeshSDF(cowTris, cfg.gridRes(), cfg.totalCells(), cfg.cellSize));
 
     // ── 超高密度・高速の爆風バースト (-X 側から牛へ向けて) ──────────────────
     // AABBEmitter::size は全辺長 (pack() が内部で半分にする) のため、旧
     // PyroSource(AABB) の半辺長 (W*0.05, W*0.15, W*0.15) を2倍して指定する。
     auto blast             = std::make_shared<AABBEmitter>();
-    blast->center          = {W * 0.08f, W * 0.20f, W * 0.5f};
-    blast->size            = glm::vec3(W * 0.10f, W * 0.30f, W * 0.30f);
+    blast->center          = {W.x * 0.08f, W.y * 0.20f, W.z * 0.5f};
+    blast->size            = glm::vec3(W.x * 0.10f, W.y * 0.30f, W.z * 0.30f);
     blast->inflowVelocity  = {args.blast_speed, 0.0f, 0.0f};
     blast->densityRate     = args.blast_density;
     blast->temperatureRate = 0.0f;              // fire なし

@@ -121,6 +121,10 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/zero_lambdas.comp
     ${SHADER_SRC_DIR}/move_pins.comp
     ${SHADER_SRC_DIR}/fluid_absorb.comp
+    ${SHADER_SRC_DIR}/pbf_foam_generate.comp
+    ${SHADER_SRC_DIR}/pbf_foam_advect.comp
+    ${SHADER_SRC_DIR}/foam_particle.vert
+    ${SHADER_SRC_DIR}/foam.frag
     # ── XPBD Soft Body シェーダー ────────────────────────────────────────
     ${SHADER_SRC_DIR}/sb_solve_volume.comp
     ${SHADER_SRC_DIR}/sb_zero_vol_lambdas.comp
@@ -233,6 +237,9 @@ add_sim_example(smoke examples/smoke.cpp)
 # ── screw_fluid: TC8 回転スクリュー in PBF 流体 ──────────────────────────────
 add_sim_example(screw_fluid examples/screw_fluid.cpp)
 
+# ── fluid_wave_foam: 波発生パドル + Bunny 障害物 + 泡 (issue #47) ────────────
+add_sim_example(fluid_wave_foam examples/fluid_wave_foam.cpp)
+
 # ── cloth_scene: TC5 布2枚 / TC7 4隅ねじれ ──────────────────────────────────
 add_sim_example(cloth_scene examples/cloth_scene.cpp)
 
@@ -291,6 +298,6 @@ add_pyro_example(pyro_explosion   examples/pyro_explosion.cpp)
 # ── capture_all: capture_sim.py が使う実行ファイルを一括ビルドするための集約ターゲット ──
 add_custom_target(capture_all DEPENDS
     fluid_pbf cloth_3d cloth_scene smoke fluid_absorb xpbd_softbody
-    screw_fluid mpm_elastic mpm_avalanche mpm_multimaterial
+    screw_fluid fluid_wave_foam mpm_elastic mpm_avalanche mpm_multimaterial
     mpm_snow_impact mpm_geolayer pyro_cow_blast pyro_explosion
 )

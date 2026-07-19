@@ -3,7 +3,7 @@
 
 // Pyro (グリッドベース煙・火炎) 専用 Push Constants
 // (issue #30: 末尾に forceBufIdx/forceCount を追加し 128→136 bytes に拡張。
-//  ComputePipeline の push constant range は sizeof(SimPC)=172 bytes で
+//  ComputePipeline の push constant range は sizeof(SimPC)=192 bytes で
 //  全エンジン共通のため、128超でも既存レイアウトの範囲内で安全)
 // MPMSimPC と同様、Bindless バッファインデックス + グリッド定数 + 物理パラメータを
 // 固定サイズ構造体に詰める。velocity/density/temperature/fuel は front/back の

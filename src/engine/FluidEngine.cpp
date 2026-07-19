@@ -51,6 +51,19 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   omegaIdx_       = attrBuf_.addAttribute("omega", sizeof(glm::vec4), totalCap);
   absorberBufIdx_ = attrBuf_.addAttribute("absorbers", sizeof(float), MAX_ABSORBERS * 8u);
 
+  // 泡 (spray/foam/bubble) 二次パーティクル (issue #47)。foamParams は小さいため
+  // maxDiffuseParticles==0 でも常に確保し、setFoamParams() をいつでも安全に呼べるようにする。
+  foamParamsIdx_ = attrBuf_.addAttribute("foamParams", sizeof(float), 16u);
+  if(cfg_.maxDiffuseParticles > 0) {
+    foamPosIdx_  = attrBuf_.addAttribute("foamPos", sizeof(glm::vec4), cfg_.maxDiffuseParticles);
+    foamVelIdx_  = attrBuf_.addAttribute("foamVel", sizeof(glm::vec4), cfg_.maxDiffuseParticles);
+    foamKindIdx_ = attrBuf_.addAttribute("foamKind", sizeof(uint32_t), cfg_.maxDiffuseParticles + 1u); // 末尾1要素=生成カーソル
+
+    // 全スロットを 死(kind=0) + 生成カーソル=0 で zero-init する。
+    std::vector<uint32_t> zeroKind(cfg_.maxDiffuseParticles + 1u, 0u);
+    attrBuf_.upload("foamKind", zeroKind.data(), sizeof(uint32_t) * zeroKind.size(), cmdPool, queue);
+  }
+
   // 境界パーティクル用固定領域 [0, max_boundary) を zero-init する。
   // hash_count/hash_sort は常にこの領域全体をディスパッチ対象に含むため、
   // 境界未ロード時のスロットも typeFlag=6=TYPE_FLAG_UNUSED（近傍探索の全フィルタで除外される）
@@ -87,12 +100,17 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   load(kVorticityOmega_, "pbf_vorticity_omega.comp");
   load(kVorticityForce_, "pbf_vorticity_force.comp");
   load(kAbsorb_, "fluid_absorb.comp");
+  load(kFoamGenerate_, "pbf_foam_generate.comp");
+  load(kFoamAdvect_, "pbf_foam_advect.comp");
 
   descriptorSetLayout = attrBuf_.descriptorSetLayout;
   descriptorSet       = attrBuf_.descriptorSet;
 }
 
 VkBuffer FluidEngine::getPositionBuffer() const { return attrBuf_.getBuffer("P"); }
+VkBuffer FluidEngine::getFoamPositionBuffer() const { return attrBuf_.getBuffer("foamPos"); }
+VkBuffer FluidEngine::getFoamVelocityBuffer() const { return attrBuf_.getBuffer("foamVel"); }
+VkBuffer FluidEngine::getFoamKindBuffer() const { return attrBuf_.getBuffer("foamKind"); }
 
 // ── 境界粒子ロード ────────────────────────────────────────────────────────────
 
@@ -186,6 +204,19 @@ void FluidEngine::setAbsorbers(const std::vector<AbsorberDesc>& absorbers) {
   if(n == 0) return;
   static_assert(sizeof(AbsorberDesc) == 8 * sizeof(float), "AbsorberDesc must be 8 floats");
   attrBuf_.upload("absorbers", absorbers.data(), n * sizeof(AbsorberDesc), cmdPool_, queue_);
+}
+
+// ── 泡パラメータ登録 (issue #47) ───────────────────────────────────────────────
+
+void FluidEngine::setFoamParams(const FoamParams& params) {
+  static_assert(sizeof(FoamParams) == 16 * sizeof(float), "FoamParams must be 16 floats");
+  attrBuf_.upload("foamParams", &params, sizeof(FoamParams), cmdPool_, queue_);
+}
+
+void FluidEngine::debugSetFoamSlot(uint32_t slot, glm::vec4 pos, glm::vec4 vel, uint32_t kind) {
+  attrBuf_.uploadAt("foamPos", &pos, sizeof(glm::vec4), slot * sizeof(glm::vec4), cmdPool_, queue_);
+  attrBuf_.uploadAt("foamVel", &vel, sizeof(glm::vec4), slot * sizeof(glm::vec4), cmdPool_, queue_);
+  attrBuf_.uploadAt("foamKind", &kind, sizeof(uint32_t), slot * sizeof(uint32_t), cmdPool_, queue_);
 }
 
 // ── Emitter 管理 ─────────────────────────────────────────────────────────────
@@ -294,6 +325,8 @@ void FluidEngine::cleanup() {
   kVorticityOmega_.cleanup();
   kVorticityForce_.cleanup();
   kAbsorb_.cleanup();
+  kFoamGenerate_.cleanup();
+  kFoamAdvect_.cleanup();
   cleanupEngineBase();
 }
 
@@ -431,6 +464,12 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     // 吸収ポート（absorberCount_==0 の場合は kAbsorb_ をディスパッチしない）
     pc.absorberBufIdx = absorberBufIdx_;
     pc.absorberCount  = absorberCount_;
+    // 泡 (spray/foam/bubble) 二次パーティクル（foamEnabled==false の場合はディスパッチしない）
+    pc.foamPosIdx          = foamPosIdx_;
+    pc.foamVelIdx          = foamVelIdx_;
+    pc.foamKindIdx         = foamKindIdx_;
+    pc.foamParamsIdx       = foamParamsIdx_;
+    pc.maxDiffuseParticles = cfg_.maxDiffuseParticles;
     // pc.powderFriction → SimPC では pinnedTargetIdx に転用。FluidEngine では未使用 (0のまま)。
 
     // ① Predict + SDF 壁衝突 (merged: 1 dispatch instead of 2)
@@ -502,6 +541,15 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     if(absorberCount_ > 0) {
       computeBarrier(cmd);
       kAbsorb_.dispatch(cmd, ds, pc, nFluid_);
+    }
+
+    // ⑩ 泡 (spray/foam/bubble) 二次パーティクル（issue #47; foamEnabled==false または
+    //    maxDiffuseParticles==0 のとき完全スキップ）
+    if(foamEnabled && cfg_.maxDiffuseParticles > 0) {
+      computeBarrier(cmd); // kFoamGenerate_ が直前の viscosity/absorb 更新後の pos/vel/density を読む
+      kFoamGenerate_.dispatch(cmd, ds, pc, nFluid_);
+      computeBarrier(cmd); // kFoamAdvect_ が kFoamGenerate_ の書き込んだ foam スロットを読む
+      kFoamAdvect_.dispatch(cmd, ds, pc, cfg_.maxDiffuseParticles);
     }
 
     // 次の substep がある場合のみバリアが必要（次の kPredictSdf_ が vel/pos を読む）

@@ -6,7 +6,9 @@
 
 class GraphicsPipeline {
 public:
-  void init(VkDevice device, VkRenderPass renderPass, VkDescriptorSetLayout bindlessLayout, const std::string& vertPath, const std::string& fragPath, VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST);
+  // enableBlend: true の場合、標準 alpha over ブレンド (srcAlpha, oneMinusSrcAlpha) を有効化する
+  // (泡の半透明描画用; issue #47)。既定 false は既存呼び出し元と同一の不透明描画。
+  void init(VkDevice device, VkRenderPass renderPass, VkDescriptorSetLayout bindlessLayout, const std::string& vertPath, const std::string& fragPath, VkPrimitiveTopology topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST, bool enableBlend = false);
   void cleanup();
 
   void draw(VkCommandBuffer cmd, VkDescriptorSet bindlessSet, const SimPC& pc, uint32_t particleCount);

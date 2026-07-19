@@ -68,6 +68,31 @@ inline void fluid_params(FluidEngine& e, GravityForce& gravity) {
   }
 }
 
+// ── 泡 (spray/foam/bubble) パラメータ (issue #47) ─────────────────────────────
+// setFoamParams() は GPU 同期を伴う重い呼び出しのため毎フレームは呼ばない。
+// 戻り値 true のときだけ呼び出し側で e.setFoamParams(p) を呼ぶこと。
+inline bool foam_params(FluidEngine& e, FluidEngine::FoamParams& p) {
+  ImGui::Checkbox("泡を有効化 (spray/foam/bubble)", &e.foamEnabled);
+  SIM_TIP("水しぶき(spray)/泡(foam)/気泡(bubble)の二次パーティクル生成を有効化。\n--max-diffuse=0 で起動した場合は容量が無くバッファが確保されないため無効のまま。");
+  if(!e.foamEnabled) return false;
+
+  bool changed = false;
+  changed |= ImGui::SliderFloat("生成係数 (trapped-air)", &p.kTa, 0.0f, 20000.0f, "%.0f");
+  SIM_TIP("空気を巻き込む勢いに応じた泡の生成量係数 (Ihmsen et al. 2012 式2)。大きいほど激しい飛沫が発生する。");
+  changed |= ImGui::SliderFloat("生成係数 (wave-crest)", &p.kWc, 0.0f, 20000.0f, "%.0f");
+  SIM_TIP("波頭・表面から飛び出す勢いに応じた泡の生成量係数。");
+  changed |= ImGui::SliderFloat("寿命 最小 [s]", &p.lifetimeMin, 0.1f, 10.0f);
+  changed |= ImGui::SliderFloat("寿命 最大 [s]", &p.lifetimeMax, 0.1f, 10.0f);
+  SIM_TIP("泡パーティクルの生存時間の範囲 [s]。切れると消滅する。");
+  changed |= ImGui::SliderFloat("気泡浮力", &p.bubbleBuoyancy, 0.0f, 20.0f);
+  SIM_TIP("水中に沈んだ気泡(bubble)が浮上する加速度 [m/s²]。");
+  changed |= ImGui::SliderFloat("流体追従係数", &p.dragCoeff, 0.0f, 1.0f);
+  SIM_TIP("foam/bubble が周囲流体の速度へ追従する割合。1で完全追従、0で追従しない。");
+  changed |= ImGui::SliderFloat("表面密度比しきい値", &p.surfaceDensityRatio, 0.5f, 1.0f);
+  SIM_TIP("この比率(rho_i/rho0)未満の低密度(表面)粒子のみ泡生成の対象にする。");
+  return changed;
+}
+
 // ── 布パラメータ (SimulationEngine) ──────────────────────────────────────────
 // issue #30 レビュー対応: gravity/windX/windZ は SimulationEngine の public
 // メンバとしては廃止されたため、呼び出し側が addForce() で登録した

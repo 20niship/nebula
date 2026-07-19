@@ -18,8 +18,10 @@ static const std::string SHADER_DIR_STR = SHADER_DIR;
 
 struct MpmMultiArgs : public argparse::Args {
   int& n                      = kwarg("n", "particle grid N (N×N×N)").set_default(16);
-  float& world_size           = kwarg("world-size", "world size [m]").set_default(10.0f);
-  int& grid_res               = kwarg("grid-res", "MPM grid resolution").set_default(64);
+  float& domain_size_x        = kwarg("domain-size-x", "domain physical size X [m]").set_default(10.0f);
+  float& domain_size_y        = kwarg("domain-size-y", "domain physical size Y [m]").set_default(10.0f);
+  float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(10.0f);
+  float& cell_size            = kwarg("cell-size", "MPM grid cell size [m]").set_default(10.0f / 64.0f);
   float& dt                   = kwarg("dt", "frame timestep [s]").set_default(1.0f / 60.0f);
   int& substeps               = kwarg("substeps", "substeps per frame").set_default(25);
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
@@ -38,8 +40,8 @@ public:
     cfg.nx         = uint32_t(args.n);
     cfg.ny         = uint32_t(args.n);
     cfg.nz         = uint32_t(args.n);
-    cfg.world_size = args.world_size;
-    cfg.grid_res   = uint32_t(args.grid_res);
+    cfg.domainSize = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
+    cfg.cellSize   = args.cell_size;
 
     base_.initWindow("MPM Multi-Material – 弾性体 + 砂");
     initVulkan(cfg, args.substeps);
@@ -140,8 +142,8 @@ private:
     renderPc.posIdx        = engine_.posIdx;
     renderPc.velIdx        = engine_.velIdx;
     renderPc.particleCount = engine_.liveParticleCount();
-    renderPc.worldMin      = 0.0f;
-    renderPc.worldMax      = engine_.config().world_size;
+    renderPc.worldMin      = glm::vec3(0.0f);
+    renderPc.worldMax      = engine_.config().domainSize;
 
     graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.liveParticleCount());
 
@@ -171,7 +173,8 @@ private:
     ImGui::SetNextWindowSize({310, 0}, ImGuiCond_Once);
     ImGui::Begin("MPM Multi-Material");
     const auto& cfg = engine_.config();
-    ImGui::Text("FPS: %.1f | N=%u | gridRes=%u", ImGui::GetIO().Framerate, engine_.liveParticleCount(), cfg.grid_res);
+    const glm::uvec3 gr = cfg.gridRes();
+    ImGui::Text("FPS: %.1f | N=%u | gridRes=%u,%u,%u", ImGui::GetIO().Framerate, engine_.liveParticleCount(), gr.x, gr.y, gr.z);
     ImGui::Text("t=%.2f s | %u^3 particles", simTime_, cfg.nx);
     ImGui::Text("[下半分] slot 0: Hencky 弾性体 (E=10kPa, nu=0.4)");
     ImGui::Text("[上半分] slot 1: Drucker-Prager 砂 (E=50kPa, M=0.577)");

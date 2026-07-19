@@ -22,8 +22,10 @@ struct FluidSphereArgs : public argparse::Args {
   int& fluid_nx               = kwarg("nx", "fluid grid X").set_default(192);
   int& fluid_ny               = kwarg("ny", "fluid grid Y").set_default(3);
   int& fluid_nz               = kwarg("nz", "fluid grid Z").set_default(192);
-  float& world_size           = kwarg("world-size", "simulation world size").set_default(20.0f);
-  int& grid_res               = kwarg("grid-res", "hash grid resolution").set_default(64);
+  float& domain_size_x        = kwarg("domain-size-x", "domain physical size X [m]").set_default(20.0f);
+  float& domain_size_y        = kwarg("domain-size-y", "domain physical size Y [m]").set_default(20.0f);
+  float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(20.0f);
+  float& cell_size            = kwarg("cell-size", "hash grid cell size [m]").set_default(20.0f / 64.0f);
   int& max_boundary           = kwarg("max-boundary", "max boundary particle count").set_default(50000);
   float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 60.0f);
   std::string& sphere_obj     = kwarg("sphere-obj", "sphere OBJ path").set_default(std::string(""));
@@ -44,8 +46,8 @@ public:
     cfg.fluid_nx     = (uint32_t)args.fluid_nx;
     cfg.fluid_ny     = (uint32_t)args.fluid_ny;
     cfg.fluid_nz     = (uint32_t)args.fluid_nz;
-    cfg.world_size   = args.world_size;
-    cfg.grid_res     = (uint32_t)args.grid_res;
+    cfg.domainSize   = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
+    cfg.cellSize     = args.cell_size;
     cfg.max_boundary = (uint32_t)args.max_boundary;
 
     std::string spherePath = args.sphere_obj.empty() ? (ASSET_DIR_STR + "/sphere.obj") : args.sphere_obj;
@@ -138,8 +140,8 @@ private:
     SimPC pc{};
     pc.posIdx   = engine_.posIdx;
     pc.velIdx   = engine_.velIdx;
-    pc.worldMin = 0.0f;
-    pc.worldMax = engine_.config().world_size;
+    pc.worldMin = glm::vec3(0.0f);
+    pc.worldMax = engine_.config().domainSize;
 
     // 境界: buffer index 0 から
     pc.boundaryStart = 0;

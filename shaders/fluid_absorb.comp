@@ -65,11 +65,11 @@ void main() {
         }
 
         // 粒子を「墓場」へ移動（graveyard pattern）
-        float gr = pc.worldMin + pc.particleRadius;
+        vec3 gr = pc.worldMin + vec3(pc.particleRadius);
         writeUint(pc.typeFlagIdx,  idx, 0u);
         writeVec4(pc.invMassIdx,   idx, vec4(0.0));
-        writeVec4(pc.posIdx,       idx, vec4(gr, gr, gr, 0.0));
-        writeVec4(pc.predPIdx,     idx, vec4(gr, gr, gr, 0.0));
+        writeVec4(pc.posIdx,       idx, vec4(gr, 0.0));
+        writeVec4(pc.predPIdx,     idx, vec4(gr, 0.0));
         writeVec4(pc.velIdx,       idx, vec4(0.0));
         return;
     }

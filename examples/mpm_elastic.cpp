@@ -18,8 +18,10 @@ struct MpmElasticArgs : public argparse::Args {
   int& nx                     = kwarg("nx", "particle grid X").set_default(20);
   int& ny                     = kwarg("ny", "particle grid Y").set_default(20);
   int& nz                     = kwarg("nz", "particle grid Z").set_default(20);
-  float& world_size           = kwarg("world-size", "world size").set_default(10.0f);
-  int& grid_res               = kwarg("grid-res", "MPM grid resolution").set_default(64);
+  float& domain_size_x        = kwarg("domain-size-x", "domain physical size X [m]").set_default(10.0f);
+  float& domain_size_y        = kwarg("domain-size-y", "domain physical size Y [m]").set_default(10.0f);
+  float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(10.0f);
+  float& cell_size            = kwarg("cell-size", "MPM grid cell size [m]").set_default(10.0f / 64.0f);
   float& E                    = kwarg("E", "Young modulus [Pa]").set_default(1e4f);
   float& nu                   = kwarg("nu", "Poisson ratio").set_default(0.3f);
   float& rho0                 = kwarg("rho0", "density [kg/m^3]").set_default(1000.0f);
@@ -42,8 +44,8 @@ public:
     cfg.nx         = uint32_t(args.nx);
     cfg.ny         = uint32_t(args.ny);
     cfg.nz         = uint32_t(args.nz);
-    cfg.world_size = args.world_size;
-    cfg.grid_res   = uint32_t(args.grid_res);
+    cfg.domainSize = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
+    cfg.cellSize   = args.cell_size;
     cfg.E          = args.E;
     cfg.nu         = args.nu;
     cfg.rho0       = args.rho0;
@@ -140,8 +142,8 @@ private:
     renderPc.posIdx        = engine_.posIdx;
     renderPc.velIdx        = engine_.velIdx;
     renderPc.particleCount = engine_.liveParticleCount();
-    renderPc.worldMin      = 0.0f;
-    renderPc.worldMax      = engine_.config().world_size;
+    renderPc.worldMin      = glm::vec3(0.0f);
+    renderPc.worldMax      = engine_.config().domainSize;
 
     graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.liveParticleCount());
 
@@ -172,7 +174,8 @@ private:
     ImGui::SetNextWindowSize({300, 0}, ImGuiCond_Once);
     ImGui::Begin("MPM Elastic");
     const auto& cfg = engine_.config();
-    ImGui::Text("FPS: %.1f | N=%u | gridRes=%u", ImGui::GetIO().Framerate, engine_.liveParticleCount(), cfg.grid_res);
+    const glm::uvec3 gr = cfg.gridRes();
+    ImGui::Text("FPS: %.1f | N=%u | gridRes=%u,%u,%u", ImGui::GetIO().Framerate, engine_.liveParticleCount(), gr.x, gr.y, gr.z);
     ImGui::Text("E=%.0f Pa, nu=%.2f, rho0=%.0f", cfg.E, cfg.nu, cfg.rho0);
     ImGui::Text("dt_sub=%.4f s | t=%.2f s", dt_ / float(engine_.numSubsteps), simTime_);
     ImGui::Separator();
@@ -214,9 +217,9 @@ private:
     static float col_r = 1.5f, col_x = 5.0f, col_y = 3.0f, col_z = 5.0f;
     ImGui::Text("NanoVDB 球コライダー");
     ImGui::SliderFloat("半径", &col_r, 0.5f, 4.0f);
-    ImGui::SliderFloat("X", &col_x, 1.0f, cfg.world_size - 1.0f);
-    ImGui::SliderFloat("Y", &col_y, 1.0f, cfg.world_size - 1.0f);
-    ImGui::SliderFloat("Z", &col_z, 1.0f, cfg.world_size - 1.0f);
+    ImGui::SliderFloat("X", &col_x, 1.0f, cfg.domainSize.x - 1.0f);
+    ImGui::SliderFloat("Y", &col_y, 1.0f, cfg.domainSize.y - 1.0f);
+    ImGui::SliderFloat("Z", &col_z, 1.0f, cfg.domainSize.z - 1.0f);
     if(ImGui::Button("コライダー設定")) {
       engine_.setColliderSphere(col_r, col_x, col_y, col_z);
     }

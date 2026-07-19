@@ -117,13 +117,14 @@ void PBFHarness::recordSubstep(VkCommandBuffer cmd, float subDt) {
   pc.cellOffsetIdx     = cellOffIdx_;
   pc.sortedIdxIdx      = sortedIdx_;
   pc.particleCount     = totalN;
-  pc.gridRes           = cfg_.gridRes;
+  pc.hashCells         = nCells_;
   pc.stretchEdgesIdx   = 0;
   pc.lambdasIdx        = 0;
   pc.dt                = subDt;
   pc.cellSize          = h;
-  pc.worldMin          = cfg_.worldMin;
-  pc.worldMax          = cfg_.worldMax;
+  pc.gridRes           = glm::uvec3(cfg_.gridRes);
+  pc.worldMin          = glm::vec3(cfg_.worldMin);
+  pc.worldMax          = glm::vec3(cfg_.worldMax);
   pc.restitution       = cfg_.restitution;
   pc.friction          = 0.05f;
   pc.particleRadius    = h * 0.5f;

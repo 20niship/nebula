@@ -9,31 +9,35 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
+#include "../core/Domain.h"
 #include "../core/Emitter.h"
 #include "ComputePipeline.h"
 #include "EngineBase.h"
 #include "SimPC.h"
 
-// h = cellSize = world_size/grid_res, 粒子間隔 d = world_size/fluid_nx
-// 推奨: h >= 2d → grid_res <= world_size / (2 * world_size/fluid_nx) = fluid_nx/2
+// issue #46: ドメインは domainSize(vec3, 物理サイズ[m]) + cellSize(float, 全軸共通の
+// セルサイズ[m]) で指定する。h = cellSize, 粒子間隔 d = domainSize.x/fluid_nx
+// 推奨: h >= 2d → cellSize >= 2 * domainSize.x/fluid_nx
 struct FluidConfig {
-  uint32_t fluid_nx     = 192;
-  uint32_t fluid_ny     = 3;
-  uint32_t fluid_nz     = 192;
-  float world_size      = 20.0f;
-  uint32_t grid_res     = 64;
+  uint32_t fluid_nx = 192;
+  uint32_t fluid_ny = 3;
+  uint32_t fluid_nz = 192;
+
+  glm::vec3 domainSize{20.0f, 20.0f, 20.0f}; // ドメイン物理サイズ [m] (旧 world_size)
+  float cellSize = 20.0f / 64.0f;            // 全軸共通のセルサイズ [m] (旧 grid_res の逆算値)
   uint32_t max_boundary = 50000;
 
   uint32_t fluidCount() const { return fluid_nx * fluid_ny * fluid_nz; }
-  uint32_t totalCells() const { return grid_res * grid_res * grid_res; }
-  float cellSize() const { return world_size / float(grid_res); }
-  float particleSpacing() const { return world_size / float(fluid_nx); }
+  glm::uvec3 gridRes() const { return domain::gridRes(domainSize, cellSize); }
+  // 空間ハッシュバッファの実要素数 (= cubeRes^3。gridRes.x*y*zではない点に注意)
+  uint32_t totalCells() const { return domain::hashCells(gridRes()); }
+  float particleSpacing() const { return domainSize.x / float(fluid_nx); }
   uint32_t nTotalMax() const { return fluidCount() + max_boundary; }
 
   // 粒子間距離 d と平滑化長 h から静止密度 ρ₀ を数値計算
   // 均一格子上での Poly6 カーネル和 = シェーダー側の pbf_density と一致する値
   float computeRestDensity() const {
-    const float h     = cellSize();
+    const float h     = cellSize;
     const float d     = particleSpacing();
     const float h2    = h * h;
     const float h9    = h2 * h2 * h2 * h2 * h;

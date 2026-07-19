@@ -16,7 +16,7 @@ layout(local_size_x = 256) in;
 
 void main() {
     uint gid = gl_GlobalInvocationID.x;
-    uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    uint totalCells = pc.hashCells;
     if (gid >= totalCells) return;
 
     float mass = readFloat(pc.gridMassIdx, gid);
@@ -51,13 +51,13 @@ void main() {
     // FORCE_AUTOGEN_END
 
     // ② 軸平行壁 BC (B-spline support = 1.5h → 境界 2 ノード以内を不透過)
-    int N = int(pc.gridRes) - 1;
-    if (ijk.x <= 1   && v.x < 0.0) v.x = 0.0;
-    if (ijk.x >= N-1 && v.x > 0.0) v.x = 0.0;
-    if (ijk.y <= 1   && v.y < 0.0) v.y = 0.0;
-    if (ijk.y >= N-1 && v.y > 0.0) v.y = 0.0;
-    if (ijk.z <= 1   && v.z < 0.0) v.z = 0.0;
-    if (ijk.z >= N-1 && v.z > 0.0) v.z = 0.0;
+    ivec3 N = ivec3(pc.gridRes) - ivec3(1);
+    if (ijk.x <= 1     && v.x < 0.0) v.x = 0.0;
+    if (ijk.x >= N.x-1 && v.x > 0.0) v.x = 0.0;
+    if (ijk.y <= 1     && v.y < 0.0) v.y = 0.0;
+    if (ijk.y >= N.y-1 && v.y > 0.0) v.y = 0.0;
+    if (ijk.z <= 1     && v.z < 0.0) v.z = 0.0;
+    if (ijk.z >= N.z-1 && v.z > 0.0) v.z = 0.0;
 
     // ③ 解析コライダー BC
     // MoltenVK: buffers[] は main() でのみアクセス可（関数内不可）

@@ -25,10 +25,12 @@ static const std::string ASSET_DIR_STR  = ASSET_DIR;
 
 struct FluidArgs : public argparse::Args {
   int& fluid_nx               = kwarg("nx", "fluid grid X").set_default(192);
-  int& fluid_ny               = kwarg("ny", "fluid grid Y").set_default(3);
-  int& fluid_nz               = kwarg("nz", "fluid grid Z").set_default(192);
-  float& world_size           = kwarg("world-size", "simulation world size").set_default(20.0f);
-  int& grid_res               = kwarg("grid-res", "hash grid resolution").set_default(64);
+  int& fluid_ny                = kwarg("ny", "fluid grid Y").set_default(3);
+  int& fluid_nz                = kwarg("nz", "fluid grid Z").set_default(192);
+  float& domain_size_x         = kwarg("domain-size-x", "domain physical size X [m]").set_default(20.0f);
+  float& domain_size_y         = kwarg("domain-size-y", "domain physical size Y [m]").set_default(20.0f);
+  float& domain_size_z         = kwarg("domain-size-z", "domain physical size Z [m]").set_default(20.0f);
+  float& cell_size             = kwarg("cell-size", "hash grid cell size [m]").set_default(20.0f / 64.0f);
   int& max_boundary           = kwarg("max-boundary", "max boundary particle count").set_default(50000);
   float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 60.0f);
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
@@ -56,8 +58,8 @@ public:
     cfg.fluid_nx     = (uint32_t)args.fluid_nx;
     cfg.fluid_ny     = (uint32_t)args.fluid_ny;
     cfg.fluid_nz     = (uint32_t)args.fluid_nz;
-    cfg.world_size   = args.world_size;
-    cfg.grid_res     = (uint32_t)args.grid_res;
+    cfg.domainSize   = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
+    cfg.cellSize     = args.cell_size;
     cfg.max_boundary = (uint32_t)args.max_boundary;
 
     base_.initWindow("Vulkan Sim – PBF Fluid");
@@ -88,25 +90,25 @@ private:
   static constexpr float DIAG_INTERVAL = 1.0f;
 
   void setupScenario(const std::string& scenario, const FluidConfig& cfg) {
-    const float w = cfg.world_size;
-    const float m = cfg.cellSize() * 0.5f; // margin
+    const glm::vec3 w = cfg.domainSize;
+    const float m      = cfg.cellSize * 0.5f; // margin
 
     if(scenario == "source-flow") {
       // TC2: 左端から右方向へ移動するボックスソース
-      // X が広いワールド (world_size=40 を推奨) で左から右へ流体が噴出
+      // X が広いドメイン (domain-size-x=40 を推奨) で左から右へ流体が噴出
       auto src                = std::make_shared<AABBEmitter>();
-      src->center             = glm::vec3(w * 0.05f, w * 0.5f, w * 0.5f);
-      src->size               = glm::vec3(w * 0.07f, w * 0.35f, w * 0.35f);
-      src->center_vel         = glm::vec3(w * 0.10f, 0.0f, 0.0f); // 10% world/s で右移動
-      src->vel                = glm::vec3(w * 0.08f, 0.0f, 0.0f); // 放出粒子に右向き初速
+      src->center             = glm::vec3(w.x * 0.05f, w.y * 0.5f, w.z * 0.5f);
+      src->size               = glm::vec3(w.x * 0.07f, w.y * 0.35f, w.z * 0.35f);
+      src->center_vel         = glm::vec3(w.x * 0.10f, 0.0f, 0.0f); // 10% domain/s で右移動
+      src->vel                = glm::vec3(w.x * 0.08f, 0.0f, 0.0f); // 放出粒子に右向き初速
       src->particles_per_step = std::max(1u, cfg.fluidCount() / 400u);
       src->step_count         = 0; // 無限
       engine_.addEmitter(src);
     } else {
       // dam-break (デフォルト): 左半分上部 (X: 左半分, Z: 上半分) を一気に充填
       auto src                = std::make_shared<AABBEmitter>();
-      src->center             = glm::vec3(w * 0.25f, w * 0.5f, w * 0.75f);
-      src->size               = glm::vec3(w * 0.5f - 2.0f * m, w - 2.0f * m, w * 0.5f - 2.0f * m);
+      src->center             = glm::vec3(w.x * 0.25f, w.y * 0.5f, w.z * 0.75f);
+      src->size               = glm::vec3(w.x * 0.5f - 2.0f * m, w.y - 2.0f * m, w.z * 0.5f - 2.0f * m);
       src->vel                = glm::vec3(0.0f);
       src->particles_per_step = cfg.fluidCount(); // 全粒子を一気に
       src->step_count         = -1;               // 1回のみ
@@ -196,8 +198,8 @@ private:
     pc.posIdx        = engine_.posIdx;
     pc.velIdx        = engine_.velIdx;
     pc.particleCount = engine_.nFluid();
-    pc.worldMin      = 0.0f;
-    pc.worldMax      = engine_.config().world_size;
+    pc.worldMin      = glm::vec3(0.0f);
+    pc.worldMax      = engine_.config().domainSize;
     pc.boundaryStart = engine_.config().max_boundary; // 流体パーティクル領域の開始オフセット
 
     graphicsPipe_.draw(cmd, engine_.descriptorSet, pc, engine_.nFluid());

@@ -29,8 +29,8 @@ static const std::string ASSET_DIR_STR  = ASSET_DIR;
 
 // run()/initVulkan() の両方から参照する定数 (旧: 同名のローカル変数が
 // それぞれの関数内で重複定義されていた)。
-constexpr float HALF_Y           = 3.0f;  // 流体薄層の奥行き半幅 [m]
-constexpr float Y_MARGIN         = 1.0f;  // パドル/水面がドメインY境界にちょうど触れないようにする余白 [m]
+constexpr float HALF_Y   = 3.0f; // 流体薄層の奥行き半幅 [m]
+constexpr float Y_MARGIN = 1.0f; // パドル/水面がドメインY境界にちょうど触れないようにする余白 [m]
 // パドル境界パーティクルの配置間隔は、流体粒子間隔 d=particleSpacing() に対する比率で決める
 // (固定値0.15mだと d=0.12m(nx=200時) より粗く、境界の方が疎になってしまう)。
 // PBFの境界拘束は密度制約(rho=Σ poly6(r))に基づく「柔らかい」拘束で、境界パーティクルが
@@ -43,7 +43,7 @@ constexpr float BOUNDARY_SPACING_RATIO = 0.75f;
 // ── CLI ───────────────────────────────────────────────────────────────────────
 
 struct WaveFoamArgs : public argparse::Args {
-  float& world_size           = kwarg("world-size", "simulation domain size [m] (X/Z)").set_default(24.0f);
+  float& world_size = kwarg("world-size", "simulation domain size [m] (X/Z)").set_default(24.0f);
   // h=cellSize は d=particleSpacing()=world_size/nx の2倍を推奨値とする
   // (FluidEngine.h の h>=2d 推奨に合わせる: nx=200 なら grid_res=nx/2=100)。
   // grid_res=64 (h/d≈3.1) だと1セルあたりの粒子数が (h/d)^3≈30 に膨らみ、
@@ -54,11 +54,12 @@ struct WaveFoamArgs : public argparse::Args {
   // 粒子数 ~10万 (nx=200,nz=24 で海の体積から逆算) を優先する設定。
   // grid_res は h=2d 推奨 (nx/2=100) を維持。~14fps程度になることを確認済み
   // (issue #47 検証, Apple M2 Pro)。フレームレートより粒子解像度を優先する。
-  int& grid_res               = kwarg("grid-res", "spatial hash grid resolution (nx/2 recommended: h=2d)").set_default(100);
-  int& fluid_nx               = kwarg("nx", "fluid particle grid X (密度基準)").set_default(200);
-  // 粒子数は particles ∝ fluid_nz (水深) にほぼ比例するため、nz を1/10相当に
-  // 下げて全体の粒子数を約1/10(~19.7万→~2万)にする。
-  int& fluid_nz               = kwarg("nz", "fluid particle grid Z / 水深基準").set_default(2);
+  // 粒子間距離 d=world_size/nx (=粒子半径相当) を旧値の1.5倍にするため、nx を
+  // 旧200から1/1.5倍の134に変更 (d: 0.12m→0.179m、約1.49倍)。grid_res は
+  // h=2d 推奨を維持するため nx/2=67 に連動して下げている。
+  int& grid_res               = kwarg("grid-res", "spatial hash grid resolution").set_default(67);
+  int& fluid_nx               = kwarg("nx", "fluid particle grid X (密度基準)").set_default(134);
+  int& fluid_nz               = kwarg("nz", "fluid particle grid Z / 水深基準").set_default(4);
   float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 60.0f);
   float& paddle_amp           = kwarg("paddle-amp", "波発生パドル SHM 振幅 [m]").set_default(3.0f);
   float& paddle_omega         = kwarg("paddle-omega", "波発生パドル SHM 角振動数 [rad/s]").set_default(1.2f);
@@ -133,18 +134,8 @@ public:
     dt_                 = args.dt;
     base_.screenshotDir = args.screenshot_dir;
 
-    // ドメイン Y (奥行き) は流体薄層の厚み (HALF_Y*2) + 余白に合わせた直方体にする。
-    // issue #46 で直方体ドメインに対応済みだが、本シーンは以前 domainSize =
-    // vec3(world_size) と立方体のまま使っていたため、水は奥行き HALF_Y*2 = 6m
-    // しか使わないのに Y だけ world_size(24m) 分の空間ハッシュセルを毎ステップ
-    // クリア/構築しており、これが fluid_pbf に比べて著しく遅い主因だった
-    // (hashCells = mortonCubeRes(全軸中の最大解像度)^3 で決まるため、Yを
-    // 大きいままにするとX/Zの解像度がそのまま効いてしまう点に注意)。
-    // paddle幅・domain幅(Y方向)は HALF_Y/Y_MARGIN (ファイル先頭の定数) から算出する。
-    // paddleHalfExtents.y=domainSizeY*0.5 と oceanSize.y=HALF_Y*2 は両方とも
-    // このドメインサイズに連動する。
     const float domainSizeY = HALF_Y * 2.0f + Y_MARGIN * 2.0f;
-    const float domainSizeZ = args.world_size / 3.0f; // Z方向の高さは world_size の1/3で十分
+    const float domainSizeZ = args.world_size / 6.0f; // Z方向の高さは world_size の1/6 (旧1/3から半減)
 
     FluidConfig cfg;
     cfg.fluid_nx            = uint32_t(args.fluid_nx);
@@ -186,30 +177,12 @@ private:
     engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
 
     engine_.rho0             = cfg.computeRestDensity();
-    engine_.viscosityC       = 0.02f;
-    engine_.linearDamping    = 0.1f; // 既定 0.02 よりやや強めに減衰させ、パドル往復による
-                                      // エネルギー蓄積 (GPU タイムアウトを誘発する発散) を抑える
+    engine_.viscosityC       = 0.002f;
+    engine_.linearDamping    = 0.003f;
     engine_.vorticityEnabled = false;
     engine_.vorticityEpsilon = 0.15f;
-    // 非圧縮性の総収束回数 (numSubsteps×pbfIterations) は波の伝播品質のため
-    // 12 (旧 numSubsteps=3,pbfIterations=4 と同じ深さ) を維持しつつ、
-    // numSubsteps はコストの軽い pbfIterations 側に寄せて screw_fluid と同じ
-    // 2 に抑える。MoltenVK (macOS の Vulkan-on-Metal 層) は vkCmdPipelineBarrier
-    // のたびにコンピュートエンコーダを切り替えるコストが大きく
-    // (FluidEngine.cpp 内の「MoltenVK encoder switch」コメント参照)、
-    // substep を1つ増やすと density/deltaP 以外の一式 (predict/hash 再構築/
-    // SDF/velocity/viscosity) も丸ごと繰り返されてバリア数が跳ね上がる。
-    // numSubsteps=3,pbfIterations=4 (バリア数≈45/frame) は screw_fluid の
-    // numSubsteps=2,pbfIterations=2 (≈22/frame) の倍近いバリア数になっており、
-    // 海の粒子数を約3倍に増やしたことと合わさって「粒子数は少ないのに
-    // screw_fluidより大幅に遅い」原因になっていた。
-    // 実測 (Apple M2 Pro, issue #47 検証): numSubsteps=1,pbfIterations=2
-    // (バリア数≈11/frame) + nx=40,grid-res=20,nz=10 で ~30fps。粒子数を
-    // 大きく下げても各substepの固定処理(predict/hash再構築/SDF/velocity/
-    // viscosity一式)は変わらず、そちらがボトルネックになるフェーズに入った
-    // ため、substep自体を1に削減して固定コストを最小化した。
-    engine_.pbfIterations = 2;
-    engine_.numSubsteps   = 1;
+    engine_.pbfIterations    = 2;
+    engine_.numSubsteps      = 2;
 
     gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f); // Z-up
 
@@ -229,8 +202,8 @@ private:
     const float boundarySpacing = d * BOUNDARY_SPACING_RATIO; // 流体より密な境界パーティクル間隔
     const float paddleRestX     = paddle_.amplitude + 1.2f;   // 左壁からの最小マージンを確保
     const float paddleZMargin   = 2.0f * boundarySpacing;     // ドメイン下端よりわずかに下へ潜らせる
-    const float paddleZMin    = -paddleZMargin;
-    const float paddleZMax    = cfg.domainSize.z * 0.85f; // フレーム中央〜上寄りに収まる高さ (ドメインZ高さ基準)
+    const float paddleZMin      = -paddleZMargin;
+    const float paddleZMax      = cfg.domainSize.z * 0.85f; // フレーム中央〜上寄りに収まる高さ (ドメインZ高さ基準)
     // パドルは前後2枚のシェル(x=center.x±paddleHalfThicknessX)で近似しているため、
     // 2枚の間隔(=paddleHalfThicknessX*2)が近傍探索の半径 h=cfg.cellSize より大きいと、
     // 2枚のどちらのカーネル範囲にも入らない「死角」がシェル内部にでき、そこを

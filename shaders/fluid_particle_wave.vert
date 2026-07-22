@@ -58,5 +58,5 @@ void main() {
     float ndc_z = ((far + near) * vz - 2.0 * far * near) / ((far - near) * vz);
 
     gl_Position  = vec4(f * vx / (aspect * vz), -f * vy / vz, ndc_z, 1.0);
-    gl_PointSize = 6.0;
+    gl_PointSize = 3.0;
 }

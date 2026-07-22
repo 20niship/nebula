@@ -39,7 +39,7 @@ void main() {
             any(greaterThanEqual(nc, ivec3(pc.gridRes)))) continue;
 
         // Morton符号で cid を計算（common.glsl の cellId / hash_count.comp と一致させる必要がある）
-        uint cid   = mx[dx + 1] | (my[dy + 1] << 1u) | (mz[dz + 1] << 2u);
+        uint cid   = mx[dx + 1] | my[dy + 1] | mz[dz + 1];
         uint cnt   = readUint(pc.cellCountIdx,  cid);
         uint start = readUint(pc.cellOffsetIdx, cid) - cnt;
 

@@ -45,7 +45,7 @@ void main() {
         // 修正: 以前は自前の線形インデックスでcidを計算しており、hash_count/hash_sort
         // (common.glsl の cellId(), Morton符号) と一致せず布-流体連成の近傍探索が
         // ほぼ機能していなかった（PR26 (c4707ab) と同種のバグ。このファイルは対象外だった）。
-        uint cid   = mx[dx + 1] | (my[dy + 1] << 1u) | (mz[dz + 1] << 2u);
+        uint cid   = mx[dx + 1] | my[dy + 1] | mz[dz + 1];
         uint cnt   = readUint(pc.cellCountIdx, cid);
         uint start = readUint(pc.cellOffsetIdx, cid) - cnt;
 

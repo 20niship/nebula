@@ -1,4 +1,5 @@
 #include "MultiPhysicsEngine.h"
+#include "../core/DefineShaderCompiler.h"
 
 #include <algorithm>
 #include <glm/glm.hpp>
@@ -97,17 +98,33 @@ void MultiPhysicsEngine::init(VkDevice device, VmaAllocator allocator, VkDescrip
 
   auto load = [&](ComputePipeline& k, const char* name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
   load(kSdfCollision_, "sdf_collision.comp");
-  load(kHashCount_, "hash_count.comp");
   load(kHashScanLocal_, "hash_scan_local.comp");
   load(kHashScanGlobal_, "hash_scan_global.comp");
   load(kHashAddBase_, "hash_add_base.comp");
-  load(kHashSort_, "hash_sort.comp");
-  load(kPbfDensity_, "pbf_density.comp");
-  load(kPbfDeltaP_, "pbf_delta_p.comp");
-  load(kCouplingCloth_, "coupling_cloth.comp");
   load(kSolveStretch_, "solve_stretch.comp");
-  load(kPbfViscosity_, "pbf_viscosity.comp");
   load(kUpdateVelocity_, "update_velocity.comp");
+
+  // 空間ハッシュ近傍探索シェーダー (cellId()/mortonAxisTriples() 使用) はアダプティブ
+  // (直方体)Morton定数をドメイン形状から算出し#defineで注入する必要があるため、
+  // 実行時コンパイルする (FluidEngine::init() と同じ理由・同じパターン)。
+  const domain::AdaptiveMortonParams morton = domain::computeAdaptiveMortonParams(cfg_.gridRes());
+  const std::vector<std::pair<std::string, std::string>> mortonDefines = {
+      {"ADAPTIVE_MASK", std::to_string(morton.mask) + "u"},
+      {"ADAPTIVE_COMMON_BITS", std::to_string(morton.commonBits) + "u"},
+      {"ADAPTIVE_SHIFT_X", std::to_string(morton.shiftX) + "u"},
+      {"ADAPTIVE_SHIFT_Y", std::to_string(morton.shiftY) + "u"},
+      {"ADAPTIVE_SHIFT_Z", std::to_string(morton.shiftZ) + "u"},
+  };
+  auto loadAdaptive = [&](ComputePipeline& k, const std::string& name) {
+    std::vector<uint32_t> spirv = DefineShaderCompiler::compile(name, mortonDefines);
+    k.initFromSpirv(device, attrBuf_.descriptorSetLayout, spirv);
+  };
+  loadAdaptive(kHashCount_, "hash_count.comp");
+  loadAdaptive(kHashSort_, "hash_sort.comp");
+  loadAdaptive(kPbfDensity_, "pbf_density.comp");
+  loadAdaptive(kPbfDeltaP_, "pbf_delta_p.comp");
+  loadAdaptive(kCouplingCloth_, "coupling_cloth.comp");
+  loadAdaptive(kPbfViscosity_, "pbf_viscosity.comp");
 
   descriptorSetLayout = attrBuf_.descriptorSetLayout;
   descriptorSet       = attrBuf_.descriptorSet;

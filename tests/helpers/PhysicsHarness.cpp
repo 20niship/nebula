@@ -1,4 +1,6 @@
 #include "PhysicsHarness.h"
+#include "DefineShaderCompiler.h"
+#include "Domain.h"
 #include "ForceShaderCompiler.h"
 #include <algorithm>
 #include <cstring>
@@ -113,14 +115,31 @@ void PhysicsHarness::init(const HeadlessCtx& ctx, const Config& cfg, const std::
     kPredict_.initFromSpirv(ctx.device, attrBuf_.descriptorSetLayout, spirv);
   }
   load(kSdf_, "sdf_collision.comp.spv");
-  load(kHashCnt_, "hash_count.comp.spv");
   load(kScanLoc_, "hash_scan_local.comp.spv");
   load(kScanGlob_, "hash_scan_global.comp.spv");
   load(kAddBase_, "hash_add_base.comp.spv");
-  load(kSort_, "hash_sort.comp.spv");
-  load(kSolveDen_, "solve_density.comp.spv");
   load(kSolveSt_, "solve_stretch.comp.spv");
   load(kUpdateVel_, "update_velocity.comp.spv");
+
+  // 空間ハッシュ近傍探索シェーダー (cellId()/mortonAxisTriples() 使用) はアダプティブ
+  // (直方体)Morton定数をドメイン形状から算出し#defineで注入する必要があるため、
+  // 実行時コンパイルする (FluidEngine::init() 等と同じ理由・同じパターン)。
+  // このハーネスは常に立方体ドメイン (gridRes 一律) を想定している。
+  const domain::AdaptiveMortonParams morton = domain::computeAdaptiveMortonParams(glm::uvec3(cfg.gridRes));
+  const std::vector<std::pair<std::string, std::string>> mortonDefines = {
+      {"ADAPTIVE_MASK", std::to_string(morton.mask) + "u"},
+      {"ADAPTIVE_COMMON_BITS", std::to_string(morton.commonBits) + "u"},
+      {"ADAPTIVE_SHIFT_X", std::to_string(morton.shiftX) + "u"},
+      {"ADAPTIVE_SHIFT_Y", std::to_string(morton.shiftY) + "u"},
+      {"ADAPTIVE_SHIFT_Z", std::to_string(morton.shiftZ) + "u"},
+  };
+  auto loadAdaptive = [&](ComputePipeline& k, const std::string& name) {
+    std::vector<uint32_t> spirv = DefineShaderCompiler::compile(name, mortonDefines);
+    k.initFromSpirv(ctx.device, attrBuf_.descriptorSetLayout, spirv);
+  };
+  loadAdaptive(kHashCnt_, "hash_count.comp");
+  loadAdaptive(kSort_, "hash_sort.comp");
+  loadAdaptive(kSolveDen_, "solve_density.comp");
 }
 
 // ── recordSubstep ─────────────────────────────────────────────────────────────

@@ -31,7 +31,14 @@ static const std::string ASSET_DIR_STR  = ASSET_DIR;
 // それぞれの関数内で重複定義されていた)。
 constexpr float HALF_Y           = 3.0f;  // 流体薄層の奥行き半幅 [m]
 constexpr float Y_MARGIN         = 1.0f;  // パドル/水面がドメインY境界にちょうど触れないようにする余白 [m]
-constexpr float BOUNDARY_SPACING = 0.15f; // パドル境界パーティクルの配置間隔 [m]
+// パドル境界パーティクルの配置間隔は、流体粒子間隔 d=particleSpacing() に対する比率で決める
+// (固定値0.15mだと d=0.12m(nx=200時) より粗く、境界の方が疎になってしまう)。
+// PBFの境界拘束は密度制約(rho=Σ poly6(r))に基づく「柔らかい」拘束で、境界パーティクルが
+// 疎だと同じ体積でも計算される密度が低く出て C=rho/rho0-1 が小さいまま→λが弱く
+// →deltaPによる押し返しが弱く、パドルの往復のたびに背後へ回り込んだ流体がほぼ無抵抗で
+// 貫通してしまう不具合を実測 (--n-shots で AABB/貫通粒子数をprintして確認) で確認した。
+// 境界を流体より密に (d比0.75) 敷き詰めることで、壁際の計算密度を底上げし拘束を強化する。
+constexpr float BOUNDARY_SPACING_RATIO = 0.75f;
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
 
@@ -49,13 +56,12 @@ struct WaveFoamArgs : public argparse::Args {
   // (issue #47 検証, Apple M2 Pro)。フレームレートより粒子解像度を優先する。
   int& grid_res               = kwarg("grid-res", "spatial hash grid resolution (nx/2 recommended: h=2d)").set_default(100);
   int& fluid_nx               = kwarg("nx", "fluid particle grid X (密度基準)").set_default(200);
-  int& fluid_nz               = kwarg("nz", "fluid particle grid Z / 水深基準").set_default(24);
+  // 粒子数は particles ∝ fluid_nz (水深) にほぼ比例するため、nz を1/10相当に
+  // 下げて全体の粒子数を約1/10(~19.7万→~2万)にする。
+  int& fluid_nz               = kwarg("nz", "fluid particle grid Z / 水深基準").set_default(2);
   float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 60.0f);
-  // 振幅・周期をそれぞれ旧デフォルト(0.8m/2.5s)の2倍にした上で、ピーク速度
-  // (amplitude×omega) をさらに旧デフォルト比で2倍 (振幅分と合わせて計4倍) に
-  // なるよう omega 側にも追加の速度係数をかける (下の paddle_.omega 計算参照)。
-  float& paddle_amp           = kwarg("paddle-amp", "波発生パドル SHM 振幅 [m]").set_default(1.6f);
-  float& paddle_period        = kwarg("paddle-period", "波発生パドル SHM 周期 [s]").set_default(5.0f);
+  float& paddle_amp           = kwarg("paddle-amp", "波発生パドル SHM 振幅 [m]").set_default(3.0f);
+  float& paddle_omega         = kwarg("paddle-omega", "波発生パドル SHM 角振動数 [rad/s]").set_default(1.2f);
   int& max_diffuse            = kwarg("max-diffuse", "泡(spray/foam/bubble)の最大パーティクル数").set_default(0);
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
@@ -149,16 +155,8 @@ public:
     cfg.max_boundary        = 20000;
     cfg.maxDiffuseParticles = uint32_t(args.max_diffuse);
 
-    // ピーク速度 v=amplitude*omega を旧デフォルト比で計4倍 (振幅2倍 × 速度追加2倍)
-    // にする。周期も2倍にしたため、素直な omega=2π/period だと
-    // (amp×2)×(omega/2)=amp×omega で速度は不変になってしまう。それを打ち消して
-    // さらに2倍にするには、新周期基準の omega に対して4倍の係数が必要
-    // (導出: v_new = 4*v_old, A_new = 2*A_old, T_new = 2*T_old
-    //  → omega_new = v_new/A_new = (4*A_old*2π/T_old)/(2*A_old) = 2*(2π/T_old)
-    //             = 2*(2π/(T_new/2)) = 4*(2π/T_new))。
-    constexpr float kExtraSpeedMultiplier = 4.0f;
-    paddle_.amplitude                     = args.paddle_amp;
-    paddle_.omega                         = kExtraSpeedMultiplier * 2.0f * 3.14159265f / std::max(0.1f, args.paddle_period);
+    paddle_.amplitude = args.paddle_amp;
+    paddle_.omega     = args.paddle_omega;
 
     base_.initWindow("Vulkan Sim - Wave Paddle + Bunny + Foam (issue #47)");
     initVulkan(cfg);
@@ -228,13 +226,19 @@ private:
     //    上端はドメイン上端を超えないようにする (超えるとハッシュセル範囲外の
     //    境界パーティクルが生じ、近傍探索が破綻し得る)。
     // Y: ドメインYのAABBを全てカバーする (centerY ± domainSizeY/2)。
-    const float paddleRestX  = paddle_.amplitude + 1.2f; // 左壁からの最小マージンを確保
-    const float paddleZMargin = 2.0f * BOUNDARY_SPACING; // ドメイン下端よりわずかに下へ潜らせる
+    const float boundarySpacing = d * BOUNDARY_SPACING_RATIO; // 流体より密な境界パーティクル間隔
+    const float paddleRestX     = paddle_.amplitude + 1.2f;   // 左壁からの最小マージンを確保
+    const float paddleZMargin   = 2.0f * boundarySpacing;     // ドメイン下端よりわずかに下へ潜らせる
     const float paddleZMin    = -paddleZMargin;
     const float paddleZMax    = cfg.domainSize.z * 0.85f; // フレーム中央〜上寄りに収まる高さ (ドメインZ高さ基準)
+    // パドルは前後2枚のシェル(x=center.x±paddleHalfThicknessX)で近似しているため、
+    // 2枚の間隔(=paddleHalfThicknessX*2)が近傍探索の半径 h=cfg.cellSize より大きいと、
+    // 2枚のどちらのカーネル範囲にも入らない「死角」がシェル内部にでき、そこを
+    // 流体粒子が貫通できてしまう。h より確実に小さくして死角を無くす。
+    const float paddleHalfThicknessX = cfg.cellSize * 0.4f;
     const glm::vec3 paddleCenter(paddleRestX, centerY, (paddleZMin + paddleZMax) * 0.5f);
-    const glm::vec3 paddleHalfExtents(0.25f, domainSizeY * 0.5f, (paddleZMax - paddleZMin) * 0.5f);
-    paddle_.restPositions = generatePaddleShell(paddleCenter, paddleHalfExtents, BOUNDARY_SPACING);
+    const glm::vec3 paddleHalfExtents(paddleHalfThicknessX, domainSizeY * 0.5f, (paddleZMax - paddleZMin) * 0.5f);
+    paddle_.restPositions = generatePaddleShell(paddleCenter, paddleHalfExtents, boundarySpacing);
     paddle_.count         = uint32_t(std::min(paddle_.restPositions.size(), size_t(cfg.max_boundary)));
     paddle_.gpuOffset     = 0;
     paddleNewPos_.resize(paddle_.count);

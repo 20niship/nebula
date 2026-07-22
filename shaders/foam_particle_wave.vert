@@ -33,7 +33,7 @@ void main() {
 
     float horizDist = maxSpan * 1.0;
     float vertDist   = maxSpan * 0.6;
-    float azimuth    = radians(40.0);
+    float azimuth    = radians(130.0); // 追加のZ軸まわり回転角 (40°からさらに90°回転)
     vec3 camPos  = vec3(mid.x + sin(azimuth) * horizDist,
                          mid.y - cos(azimuth) * horizDist,
                          mid.z + vertDist);

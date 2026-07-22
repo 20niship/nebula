@@ -59,7 +59,13 @@ struct WaveFoamArgs : public argparse::Args {
   // h=2d 推奨を維持するため nx/2=67 に連動して下げている。
   int& grid_res               = kwarg("grid-res", "spatial hash grid resolution").set_default(67);
   int& fluid_nx               = kwarg("nx", "fluid particle grid X (密度基準)").set_default(134);
-  int& fluid_nz               = kwarg("nz", "fluid particle grid Z / 水深基準").set_default(4);
+  // nz は水深方向の層数にほぼ等しい (waterDepth = fluid_nz * d より layers=waterDepth/d=fluid_nz)。
+  // 層数を10程度にするため旧4から10へ変更 (副次的に粒子数も約2.5倍になる)。
+  // 一時的に40まで上げたが、waterDepth(=nz*d)が domainSizeZ(world_size/6=4m) を
+  // 超過し(7.16m)、境界付近で粒子が異常密集して性能が10倍以上悪化する不具合が
+  // 判明したため10に戻す。粒子数の追加調整は kExtraParticleMultiplier
+  // (下記 particles_per_step 算出箇所) で行い、水深とは切り離す。
+  int& fluid_nz               = kwarg("nz", "fluid particle grid Z / 水深基準").set_default(10);
   float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 60.0f);
   float& paddle_amp           = kwarg("paddle-amp", "波発生パドル SHM 振幅 [m]").set_default(3.0f);
   float& paddle_omega         = kwarg("paddle-omega", "波発生パドル SHM 角振動数 [rad/s]").set_default(1.2f);

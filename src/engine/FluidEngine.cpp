@@ -1,5 +1,6 @@
 #include "FluidEngine.h"
 #include "BoundaryParticles.h"
+#include "../core/DefineShaderCompiler.h"
 
 #include <algorithm>
 #include <cmath>
@@ -87,21 +88,39 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
 
   auto load = [&](ComputePipeline& k, const char* name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
   load(kSdfCollision_, "sdf_collision.comp");
-  load(kHashCount_, "hash_count.comp");
   load(kHashScanLocal_, "hash_scan_local.comp");
   load(kHashScanGlobal_, "hash_scan_global.comp");
   load(kHashAddBase_, "hash_add_base.comp");
-  load(kHashSort_, "hash_sort.comp");
-  load(kPbfDensity_, "pbf_density.comp");
-  load(kPbfDeltaP_, "pbf_delta_p.comp");
-  load(kPbfViscosity_, "pbf_viscosity.comp");
   load(kUpdateVelocity_, "update_velocity.comp");
   load(kZeroCells_, "zero_cells.comp");
-  load(kVorticityOmega_, "pbf_vorticity_omega.comp");
-  load(kVorticityForce_, "pbf_vorticity_force.comp");
   load(kAbsorb_, "fluid_absorb.comp");
-  load(kFoamGenerate_, "pbf_foam_generate.comp");
-  load(kFoamAdvect_, "pbf_foam_advect.comp");
+
+  // 空間ハッシュ近傍探索を使うシェーダー (cellId()/mortonAxisTriples() を common.glsl
+  // から呼ぶもの) は、アダプティブ(直方体)Morton定数をドメイン形状(gridRes)から
+  // 一度だけ算出し、#define として実行時コンパイルで注入する (静的.spvロードでは
+  // ドメインごとに異なるこれらの定数を焼き込めないため)。src/core/Domain.h の
+  // AdaptiveMortonParams / shaders/common.glsl の ADAPTIVE_* フォールバック定義と対。
+  const domain::AdaptiveMortonParams morton = domain::computeAdaptiveMortonParams(cfg_.gridRes());
+  const std::vector<std::pair<std::string, std::string>> mortonDefines = {
+      {"ADAPTIVE_MASK", std::to_string(morton.mask) + "u"},
+      {"ADAPTIVE_COMMON_BITS", std::to_string(morton.commonBits) + "u"},
+      {"ADAPTIVE_SHIFT_X", std::to_string(morton.shiftX) + "u"},
+      {"ADAPTIVE_SHIFT_Y", std::to_string(morton.shiftY) + "u"},
+      {"ADAPTIVE_SHIFT_Z", std::to_string(morton.shiftZ) + "u"},
+  };
+  auto loadAdaptive = [&](ComputePipeline& k, const std::string& name) {
+    std::vector<uint32_t> spirv = DefineShaderCompiler::compile(name, mortonDefines);
+    k.initFromSpirv(device, attrBuf_.descriptorSetLayout, spirv);
+  };
+  loadAdaptive(kHashCount_, "hash_count.comp");
+  loadAdaptive(kHashSort_, "hash_sort.comp");
+  loadAdaptive(kPbfDensity_, "pbf_density.comp");
+  loadAdaptive(kPbfDeltaP_, "pbf_delta_p.comp");
+  loadAdaptive(kPbfViscosity_, "pbf_viscosity.comp");
+  loadAdaptive(kVorticityOmega_, "pbf_vorticity_omega.comp");
+  loadAdaptive(kVorticityForce_, "pbf_vorticity_force.comp");
+  loadAdaptive(kFoamGenerate_, "pbf_foam_generate.comp");
+  loadAdaptive(kFoamAdvect_, "pbf_foam_advect.comp");
 
   descriptorSetLayout = attrBuf_.descriptorSetLayout;
   descriptorSet       = attrBuf_.descriptorSet;

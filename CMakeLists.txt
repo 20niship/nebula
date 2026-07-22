@@ -94,20 +94,22 @@ set(SHADER_SOURCES
     # predict.comp / predict_sdf.comp / mpm_grid_update.comp は FORCE_AUTOGEN
     # マーカーを含み、Engine 側で ForceShaderCompiler により実行時に shaderc で
     # コンパイルされる (issue #30)。静的 glslc ビルド対象には含めない。
+    #
+    # hash_count.comp / hash_sort.comp / pbf_density.comp / pbf_delta_p.comp /
+    # pbf_viscosity.comp / pbf_vorticity_omega.comp / pbf_vorticity_force.comp /
+    # pbf_foam_generate.comp / pbf_foam_advect.comp / solve_density.comp /
+    # coupling_cloth.comp は common.glsl の cellId()/mortonAxisTriples() 経由で
+    # アダプティブ(直方体)Morton定数(ADAPTIVE_MASK等)を必要とし、ドメイン形状
+    # (gridRes)ごとに値が変わるため、各Engine(FluidEngine/ClothSceneEngine/
+    # SimulationEngine/MultiPhysicsEngine)のinit()内でDefineShaderCompilerに
+    # より実行時コンパイルされる。静的 glslc ビルド対象には含めない
+    # (MPM専用の mpm_hash_count.comp/mpm_hash_sort.comp は対象外、従来通り静的コンパイル)。
     ${SHADER_SRC_DIR}/sdf_collision.comp
-    ${SHADER_SRC_DIR}/hash_count.comp
     ${SHADER_SRC_DIR}/hash_scan_local.comp
     ${SHADER_SRC_DIR}/hash_scan_global.comp
     ${SHADER_SRC_DIR}/hash_add_base.comp
-    ${SHADER_SRC_DIR}/hash_sort.comp
-    ${SHADER_SRC_DIR}/solve_density.comp
     ${SHADER_SRC_DIR}/solve_stretch.comp
     ${SHADER_SRC_DIR}/update_velocity.comp
-    ${SHADER_SRC_DIR}/pbf_density.comp
-    ${SHADER_SRC_DIR}/pbf_delta_p.comp
-    ${SHADER_SRC_DIR}/pbf_viscosity.comp
-    ${SHADER_SRC_DIR}/pbf_vorticity_omega.comp
-    ${SHADER_SRC_DIR}/pbf_vorticity_force.comp
     ${SHADER_SRC_DIR}/particle.vert
     ${SHADER_SRC_DIR}/particle.frag
     ${SHADER_SRC_DIR}/cloth.vert
@@ -116,13 +118,10 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/string2d.frag
     ${SHADER_SRC_DIR}/fluid_particle.vert
     ${SHADER_SRC_DIR}/fluid.frag
-    ${SHADER_SRC_DIR}/coupling_cloth.comp
     ${SHADER_SRC_DIR}/zero_cells.comp
     ${SHADER_SRC_DIR}/zero_lambdas.comp
     ${SHADER_SRC_DIR}/move_pins.comp
     ${SHADER_SRC_DIR}/fluid_absorb.comp
-    ${SHADER_SRC_DIR}/pbf_foam_generate.comp
-    ${SHADER_SRC_DIR}/pbf_foam_advect.comp
     ${SHADER_SRC_DIR}/foam_particle.vert
     ${SHADER_SRC_DIR}/foam.frag
     ${SHADER_SRC_DIR}/fluid_particle_wave.vert

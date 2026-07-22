@@ -92,9 +92,34 @@ layout(push_constant) uniform PC {
 #define readFloat(bufIdx, i)     uintBitsToFloat(buffers[(bufIdx)].data[(i)])
 #define writeFloat(bufIdx, i, v) buffers[(bufIdx)].data[(i)] = floatBitsToUint(v)
 
-// ── Morton符号（Z-orderカーブ）でセルIDを計算 ────────────────────
-// 標準10bit展開（gridRes=64の6bitでも正しく動作）
-// メモリ局所性が向上し pbf_density / pbf_delta_p のキャッシュ効率が改善する
+// ── アダプティブ(直方体)Morton符号 ────────────────────────────────
+// 通常のMorton(Z-order)符号化は3軸を常に固定3ビット周期でinterleaveするため、
+// 異方性ドメイン(軸ごとの実セル数の差が大きい)では最大軸のビット幅で全軸を
+// 揃えた立方体を確保する必要があり大きな無駄が生じる。アダプティブ版は
+// 「全軸が共通して持つ下位ビット(commonBits=min(bx,by,bz))」だけ従来通り
+// 3軸interleaveし、残りは軸ごとに連結するだけに留める。局所性(27近傍探索
+// でのメモリ距離)は数値実験で通常Mortonと完全に同一と確認済みだが、セル数は
+// bx+by+bz ビット分 (=2^bx*2^by*2^bz) まで縮小できる。
+//
+// ADAPTIVE_MASK/ADAPTIVE_COMMON_BITS/ADAPTIVE_SHIFT_X,Y,Z はシェーダー内で
+// 計算せず、ドメイン形状(gridRes)から一度だけ C++側(src/core/Domain.h の
+// AdaptiveMortonParams/computeAdaptiveMortonParams()) で算出した値を、各
+// エンジンの実行時コンパイル(DefineShaderCompiler)で #define として注入する。
+// このファイルはビルド時に静的コンパイルされるシェーダーにも #include される
+// ため、未定義でもコンパイルが通るようフォールバック値を用意しておく
+// (実際に cellId()/mortonAxisTriples() を呼ぶシェーダーは必ず実行時コンパイル
+// 側で正しい値を注入すること。フォールバックの0のままだと mask=0 となり
+// 近傍探索が壊れるため、フォールバックはあくまで「未使用シェーダーの保険」)。
+#ifndef ADAPTIVE_MASK
+#define ADAPTIVE_MASK 0u
+#define ADAPTIVE_COMMON_BITS 0u
+#define ADAPTIVE_SHIFT_X 0u
+#define ADAPTIVE_SHIFT_Y 0u
+#define ADAPTIVE_SHIFT_Z 0u
+#endif
+
+// 下位 commonBits ビットの3軸interleave部分に使う標準Morton展開
+// (標準10bit展開、gridRes=64の6bitでも正しく動作)。
 uint mortonExpand(uint v) {
     v = (v | (v << 16u)) & 0x030000FFu;
     v = (v | (v <<  8u)) & 0x0300F00Fu;
@@ -107,20 +132,29 @@ uint cellId(vec3 p) {
     vec3 local = clamp((p - pc.worldMin) / pc.cellSize,
                        vec3(0.0), vec3(pc.gridRes) - vec3(1.0));
     uvec3 g = uvec3(local);
-    return mortonExpand(g.x) | (mortonExpand(g.y) << 1u) | (mortonExpand(g.z) << 2u);
+    uint cx = mortonExpand(g.x & ADAPTIVE_MASK) | ((g.x >> ADAPTIVE_COMMON_BITS) << ADAPTIVE_SHIFT_X);
+    uint cy = (mortonExpand(g.y & ADAPTIVE_MASK) << 1u) | ((g.y >> ADAPTIVE_COMMON_BITS) << ADAPTIVE_SHIFT_Y);
+    uint cz = (mortonExpand(g.z & ADAPTIVE_MASK) << 2u) | ((g.z >> ADAPTIVE_COMMON_BITS) << ADAPTIVE_SHIFT_Z);
+    return cx | cy | cz;
 }
 
-// ── 27近傍セル走査用: 軸ごとのMorton成分を事前計算 ──────────────────
-// dx,dy,dz∈{-1,0,1}の27通りを毎回 mortonExpand()×3 で計算すると、同じ軸値
+// ── 27近傍セル走査用: 軸ごとのアダプティブMorton成分を事前計算 ──────────
+// dx,dy,dz∈{-1,0,1}の27通りを毎回 cellId() 相当で計算すると、同じ軸値
 // (gi.x-1, gi.x, gi.x+1 等) に対する重複計算が26/27発生する。
-// 軸ごとに3値だけ計算しておき、ループ内では mx[dx+1]|(my[dy+1]<<1)|(mz[dz+1]<<2)
-// で組み合わせることで mortonExpand の呼び出し回数を 81 回→9 回に削減する。
+// 軸ごとに3値だけ計算しておき、ループ内では mx[dx+1]|my[dy+1]|mz[dz+1] で
+// 組み合わせる(interleave部の<<1u/<<2uと上位連結部のシフトは各軸の値自体に
+// 焼き込み済みのため、呼び出し側で追加シフトは不要)。
 // 範囲外座標 (gi±1 が [0,gridRes) の外) の要素は呼び出し側の境界チェックで
 // 使用されないため、値自体は計算しても捨てられるだけで安全。
 void mortonAxisTriples(ivec3 gi, out uint mx[3], out uint my[3], out uint mz[3]) {
-    mx[0] = mortonExpand(uint(gi.x - 1)); mx[1] = mortonExpand(uint(gi.x)); mx[2] = mortonExpand(uint(gi.x + 1));
-    my[0] = mortonExpand(uint(gi.y - 1)); my[1] = mortonExpand(uint(gi.y)); my[2] = mortonExpand(uint(gi.y + 1));
-    mz[0] = mortonExpand(uint(gi.z - 1)); mz[1] = mortonExpand(uint(gi.z)); mz[2] = mortonExpand(uint(gi.z + 1));
+    for(int k = 0; k < 3; ++k) {
+        uint vx = uint(gi.x - 1 + k);
+        uint vy = uint(gi.y - 1 + k);
+        uint vz = uint(gi.z - 1 + k);
+        mx[k] = mortonExpand(vx & ADAPTIVE_MASK) | ((vx >> ADAPTIVE_COMMON_BITS) << ADAPTIVE_SHIFT_X);
+        my[k] = (mortonExpand(vy & ADAPTIVE_MASK) << 1u) | ((vy >> ADAPTIVE_COMMON_BITS) << ADAPTIVE_SHIFT_Y);
+        mz[k] = (mortonExpand(vz & ADAPTIVE_MASK) << 2u) | ((vz >> ADAPTIVE_COMMON_BITS) << ADAPTIVE_SHIFT_Z);
+    }
 }
 
 #endif // COMMON_GLSL

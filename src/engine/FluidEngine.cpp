@@ -229,7 +229,9 @@ void FluidEngine::emitFromEmitters(float dt) {
     std::vector<glm::vec4> pos(nNew);
     for(int j = 0; j < nNew; ++j) pos[j] = glm::vec4(emitter.sample(emitterRng_), 1.0f);
 
-    std::vector<glm::vec4> vel(nNew, glm::vec4(emitter.vel, 0.0f));
+    // 初速はサンプル位置ごとに求める(emitAlongNormal/velocityRandomness対応)。既定はemitter.vel。
+    std::vector<glm::vec4> vel(nNew);
+    for(int j = 0; j < nNew; ++j) vel[j] = glm::vec4(emitter.sample_velocity(glm::vec3(pos[j]), emitterRng_), 0.0f);
     std::vector<glm::vec4> invM(nNew, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
     std::vector<uint32_t> flags(nNew, emitter.particleType);
 

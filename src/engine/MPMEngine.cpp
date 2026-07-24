@@ -325,7 +325,7 @@ void MPMEngine::emitFromEmitters(float dt) {
 
     // 速度 (vel.w = material id)、F = I、B = 0、stress = 0
     for(int j = 0; j < nNew; j++) {
-      vel[j] = glm::vec4(emitter.vel, matIdF);
+      vel[j] = glm::vec4(emitter.sample_velocity(glm::vec3(pos[j]), emitterRng_), matIdF);
       F0v[j] = glm::vec4(1, 0, 0, 0);
       F1v[j] = glm::vec4(0, 1, 0, 0);
       F2v[j] = glm::vec4(0, 0, 1, 0);

@@ -1,0 +1,34 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "common.glsl"
+
+layout(local_size_x = 256) in;
+
+// 流体粒子の寿命を減算し、寿命切れを「墓場」へ送る(fluid_absorb.comp と同一パターン)。
+// 残り寿命バッファのindexは pc.pinnedTargetIdx を流用(SimPC 200B固定のため; FluidEngine::step 参照)。
+void main() {
+  uint i = gl_GlobalInvocationID.x;
+  if(i >= pc.particleCount) return;
+  uint idx = i + pc.fluidStart;
+
+  // fluid領域の生存粒子(流体/煙/粉体=type1,4,5)を対象。既に墓場送り済み(type0)はスキップ
+  if(readUint(pc.typeFlagIdx, idx) == 0u) return;
+
+  uint lifeIdx = pc.pinnedTargetIdx;
+  float life   = readFloat(lifeIdx, idx);
+  if(life < 0.0) return; // 負 = 無限寿命(死なない)
+
+  life -= pc.dt;
+  if(life <= 0.0) {
+    // 墓場送り: typeFlag=0(死), invMass=0(不動), 位置をドメイン隅へ退避
+    vec3 gr = pc.worldMin + vec3(pc.particleRadius);
+    writeUint(pc.typeFlagIdx, idx, 0u);
+    writeVec4(pc.invMassIdx, idx, vec4(0.0));
+    writeVec4(pc.posIdx, idx, vec4(gr, 0.0));
+    writeVec4(pc.predPIdx, idx, vec4(gr, 0.0));
+    writeVec4(pc.velIdx, idx, vec4(0.0));
+    writeFloat(lifeIdx, idx, -1.0); // 以後は無限扱い=スキップ(二重処理防止)
+  } else {
+    writeFloat(lifeIdx, idx, life);
+  }
+}

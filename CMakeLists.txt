@@ -121,6 +121,7 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/zero_lambdas.comp
     ${SHADER_SRC_DIR}/move_pins.comp
     ${SHADER_SRC_DIR}/fluid_absorb.comp
+    ${SHADER_SRC_DIR}/fluid_lifetime.comp
     # ── XPBD Soft Body シェーダー ────────────────────────────────────────
     ${SHADER_SRC_DIR}/sb_solve_volume.comp
     ${SHADER_SRC_DIR}/sb_zero_vol_lambdas.comp

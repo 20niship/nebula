@@ -170,6 +170,69 @@ void AttributeBuffer::uploadAt(const std::string& name, const void* data, VkDevi
   vmaDestroyBuffer(allocator_, stageBuf, stageAlloc);
 }
 
+void AttributeBuffer::uploadScattered(const std::string& name, const void* packedData, VkDeviceSize elemSize, const std::vector<uint32_t>& dstIndices, VkCommandPool cmdPool, VkQueue queue) {
+  auto it = attributes_.find(name);
+  if(it == attributes_.end()) throw std::runtime_error("Attribute not found: " + name);
+  const uint32_t n = static_cast<uint32_t>(dstIndices.size());
+  if(n == 0) return;
+
+  VkDeviceSize total = elemSize * n;
+  VkBufferCreateInfo stageBufInfo{};
+  stageBufInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  stageBufInfo.size  = total;
+  stageBufInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+  VmaAllocationCreateInfo stageAllocInfo{};
+  stageAllocInfo.usage = VMA_MEMORY_USAGE_CPU_ONLY;
+  VkBuffer stageBuf;
+  VmaAllocation stageAlloc;
+  vmaCreateBuffer(allocator_, &stageBufInfo, &stageAllocInfo, &stageBuf, &stageAlloc, nullptr);
+
+  void* mapped;
+  vmaMapMemory(allocator_, stageAlloc, &mapped);
+  memcpy(mapped, packedData, total);
+  vmaUnmapMemory(allocator_, stageAlloc);
+
+  VkCommandBufferAllocateInfo ai{};
+  ai.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  ai.commandPool        = cmdPool;
+  ai.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  ai.commandBufferCount = 1;
+  VkCommandBuffer cmd;
+  vkAllocateCommandBuffers(device_, &ai, &cmd);
+
+  VkCommandBufferBeginInfo bi{};
+  bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+  bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+  vkBeginCommandBuffer(cmd, &bi);
+
+  // 宛先が連続する範囲はまとめて1リージョンにする(リージョン数削減; srcは密なのでsrcも連続)。
+  std::vector<VkBufferCopy> regions;
+  regions.reserve(n);
+  uint32_t runStart = 0;
+  for(uint32_t j = 1; j <= n; ++j) {
+    bool contiguous = (j < n) && (dstIndices[j] == dstIndices[j - 1] + 1);
+    if(!contiguous) {
+      VkBufferCopy r{};
+      r.srcOffset = elemSize * runStart;
+      r.dstOffset = elemSize * dstIndices[runStart];
+      r.size      = elemSize * (j - runStart);
+      regions.push_back(r);
+      runStart = j;
+    }
+  }
+  vkCmdCopyBuffer(cmd, stageBuf, it->second.buffer, static_cast<uint32_t>(regions.size()), regions.data());
+  vkEndCommandBuffer(cmd);
+
+  VkSubmitInfo si{};
+  si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+  si.commandBufferCount = 1;
+  si.pCommandBuffers    = &cmd;
+  vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE);
+  vkQueueWaitIdle(queue);
+  vkFreeCommandBuffers(device_, cmdPool, 1, &cmd);
+  vmaDestroyBuffer(allocator_, stageBuf, stageAlloc);
+}
+
 void AttributeBuffer::resizeAttribute(const std::string& name, uint32_t newCount, VkCommandPool cmdPool, VkQueue queue) {
   auto it = attributes_.find(name);
   if(it == attributes_.end()) throw std::runtime_error("Attribute not found: " + name);

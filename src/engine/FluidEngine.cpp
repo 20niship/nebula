@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <cstdlib>
 #include <glm/glm.hpp>
 #include <random>
@@ -49,6 +50,7 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   densityIdx_     = attrBuf_.addAttribute("density", sizeof(float), totalCap);
   lambdaPbfIdx_   = attrBuf_.addAttribute("lambdaPbf", sizeof(float), totalCap);
   omegaIdx_       = attrBuf_.addAttribute("omega", sizeof(glm::vec4), totalCap);
+  lifeIdx_        = attrBuf_.addAttribute("life", sizeof(float), totalCap);
   absorberBufIdx_ = attrBuf_.addAttribute("absorbers", sizeof(float), MAX_ABSORBERS * 8u);
 
   // 境界パーティクル用固定領域 [0, max_boundary) を zero-init する。
@@ -87,12 +89,15 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   load(kVorticityOmega_, "pbf_vorticity_omega.comp");
   load(kVorticityForce_, "pbf_vorticity_force.comp");
   load(kAbsorb_, "fluid_absorb.comp");
+  load(kLifetime_, "fluid_lifetime.comp");
 
   descriptorSetLayout = attrBuf_.descriptorSetLayout;
   descriptorSet       = attrBuf_.descriptorSet;
 }
 
 VkBuffer FluidEngine::getPositionBuffer() const { return attrBuf_.getBuffer("P"); }
+VkBuffer FluidEngine::getTypeFlagBuffer() const { return attrBuf_.getBuffer("typeFlag"); }
+VkBuffer FluidEngine::getLifeBuffer() const { return attrBuf_.getBuffer("life"); }
 
 // ── 境界粒子ロード ────────────────────────────────────────────────────────────
 
@@ -191,6 +196,7 @@ void FluidEngine::setAbsorbers(const std::vector<AbsorberDesc>& absorbers) {
 // ── Emitter 管理 ─────────────────────────────────────────────────────────────
 
 void FluidEngine::addEmitter(std::shared_ptr<Emitter> emitter) {
+  if(emitter && emitter->lifetime > 0.0f) lifetimeEnabled_ = true; // 寿命付きEmitterがあればlifetimeパスを有効化
   emitters_.push_back(std::move(emitter));
   emitterStepsDone_.push_back(0);
 }
@@ -201,6 +207,11 @@ void FluidEngine::clearEmitters() {
 }
 
 void FluidEngine::emitFromEmitters(float dt) {
+  // 寿命付きEmitterが1つでもあればlifetimeパスを有効化(UIでの実行時変更にも追従)。
+  for(const auto& e : emitters_)
+    if(e && e->lifetime > 0.0f) lifetimeEnabled_ = true;
+
+  reclaimDeadSlots_(); // 寿命切れスロットを空きへ回収し、以降の放出で再利用する
   for(size_t i = 0; i < emitters_.size(); ++i) {
     Emitter& emitter = *emitters_[i];
     int& done        = emitterStepsDone_[i];
@@ -215,40 +226,74 @@ void FluidEngine::emitFromEmitters(float dt) {
 
     if(!shouldEmit) continue;
 
-    int available = int(fluidCapacity_) - int(nFluid_);
-    if(available < emitter.particles_per_step) {
-      growFluidCapacity(nFluid_ + uint32_t(std::max(emitter.particles_per_step, 0)));
-      available = int(fluidCapacity_) - int(nFluid_);
-    }
-    int nNew = std::min(emitter.particles_per_step, available);
+    int nNew = emitter.particles_per_step;
     if(nNew <= 0) {
       done++;
       continue;
     }
 
-    std::vector<glm::vec4> pos(nNew);
-    for(int j = 0; j < nNew; ++j) pos[j] = glm::vec4(emitter.sample(emitterRng_), 1.0f);
+    // 空きスロット(freeSlots_)で足りない分だけ末尾を伸ばす。先に必要容量を確保し batch 中の再確保を避ける。
+    const uint32_t appendNeed = (uint32_t)nNew > freeSlots_.size() ? (uint32_t)nNew - (uint32_t)freeSlots_.size() : 0u;
+    if(nFluid_ + appendNeed > fluidCapacity_) growFluidCapacity(nFluid_ + appendNeed);
+    if(slotDeath_.size() < fluidCapacity_) {
+      slotDeath_.resize(fluidCapacity_, std::numeric_limits<float>::infinity());
+      slotAlive_.resize(fluidCapacity_, 0u);
+    }
 
-    // 初速はサンプル位置ごとに求める(emitAlongNormal/velocityRandomness対応)。既定はemitter.vel。
-    std::vector<glm::vec4> vel(nNew);
-    for(int j = 0; j < nNew; ++j) vel[j] = glm::vec4(emitter.sample_velocity(glm::vec3(pos[j]), emitterRng_), 0.0f);
+    // 宛先スロットを確保(空きを優先し、無ければ末尾に追記)。連続runにまとまるようソートする。
+    std::vector<uint32_t> dst;
+    dst.reserve(nNew);
+    for(int j = 0; j < nNew; ++j) {
+      if(!freeSlots_.empty()) {
+        dst.push_back(freeSlots_.back());
+        freeSlots_.pop_back();
+      } else {
+        dst.push_back(nFluid_++);
+      }
+    }
+    std::sort(dst.begin(), dst.end());
+
+    std::vector<glm::vec4> pos(nNew), vel(nNew);
     std::vector<glm::vec4> invM(nNew, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
     std::vector<uint32_t> flags(nNew, emitter.particleType);
+    std::vector<float> life(nNew);
+    std::vector<uint32_t> absIdx(nNew);
+    for(int j = 0; j < nNew; ++j) {
+      const glm::vec3 sp = emitter.sample(emitterRng_);
+      pos[j]             = glm::vec4(sp, 1.0f);
+      vel[j]             = glm::vec4(emitter.sample_velocity(sp, emitterRng_), 0.0f); // emitAlongNormal/randomness対応
+      life[j]            = emitter.sample_lifetime(emitterRng_);                      // <0=無限
+      absIdx[j]          = cfg_.max_boundary + dst[j];
+    }
 
-    VkDeviceSize byteOff = (cfg_.max_boundary + nFluid_) * sizeof(glm::vec4);
-    VkDeviceSize flagOff = (cfg_.max_boundary + nFluid_) * sizeof(uint32_t);
+    attrBuf_.uploadScattered("P", pos.data(), sizeof(glm::vec4), absIdx, cmdPool_, queue_);
+    attrBuf_.uploadScattered("predP", pos.data(), sizeof(glm::vec4), absIdx, cmdPool_, queue_);
+    attrBuf_.uploadScattered("v", vel.data(), sizeof(glm::vec4), absIdx, cmdPool_, queue_);
+    attrBuf_.uploadScattered("invMass", invM.data(), sizeof(glm::vec4), absIdx, cmdPool_, queue_);
+    attrBuf_.uploadScattered("typeFlag", flags.data(), sizeof(uint32_t), absIdx, cmdPool_, queue_);
+    attrBuf_.uploadScattered("life", life.data(), sizeof(float), absIdx, cmdPool_, queue_);
 
-    attrBuf_.uploadAt("P", pos.data(), sizeof(glm::vec4) * nNew, byteOff, cmdPool_, queue_);
-    attrBuf_.uploadAt("predP", pos.data(), sizeof(glm::vec4) * nNew, byteOff, cmdPool_, queue_);
-    attrBuf_.uploadAt("v", vel.data(), sizeof(glm::vec4) * nNew, byteOff, cmdPool_, queue_);
-    attrBuf_.uploadAt("invMass", invM.data(), sizeof(glm::vec4) * nNew, byteOff, cmdPool_, queue_);
-    attrBuf_.uploadAt("typeFlag", flags.data(), sizeof(uint32_t) * nNew, flagOff, cmdPool_, queue_);
-
-    nFluid_ += uint32_t(nNew);
+    for(int j = 0; j < nNew; ++j) {
+      const uint32_t s = dst[j];
+      slotDeath_[s]    = life[j] < 0.0f ? std::numeric_limits<float>::infinity() : simTime_ + life[j];
+      slotAlive_[s]    = 1u;
+    }
     done++;
 
     // エミッタ中心を移動
     emitter.center += emitter.center_vel * dt;
+  }
+  simTime_ += dt;
+}
+
+// simTime_ 時点で寿命切れ(GPUで既に墓場送り済み)のスロットを空きへ回収する。slotAlive_=0で二重回収を防ぐ。
+void FluidEngine::reclaimDeadSlots_() {
+  const uint32_t n = std::min<uint32_t>(nFluid_, (uint32_t)slotAlive_.size());
+  for(uint32_t i = 0; i < n; ++i) {
+    if(slotAlive_[i] != 0u && slotDeath_[i] <= simTime_) {
+      slotAlive_[i] = 0u;
+      freeSlots_.push_back(i);
+    }
   }
 }
 
@@ -265,6 +310,10 @@ void FluidEngine::growFluidCapacity(uint32_t minRequired) {
   attrBuf_.resizeAttribute("density", newTotal, cmdPool_, queue_);
   attrBuf_.resizeAttribute("lambdaPbf", newTotal, cmdPool_, queue_);
   attrBuf_.resizeAttribute("omega", newTotal, cmdPool_, queue_);
+  attrBuf_.resizeAttribute("life", newTotal, cmdPool_, queue_);
+  // スロット再利用のメタ配列も容量に追従させる(新規領域は無限=生存扱いで回収されない)。
+  slotDeath_.resize(fluidCapacity_, std::numeric_limits<float>::infinity());
+  slotAlive_.resize(fluidCapacity_, 0u);
 }
 
 // ── 粒子リセット ─────────────────────────────────────────────────────────────
@@ -275,6 +324,11 @@ void FluidEngine::resetParticles() {
   nFluid_ = 0;
   std::fill(emitterStepsDone_.begin(), emitterStepsDone_.end(), 0);
   emitterRng_.seed(12345);
+  // スロット再利用状態もリセット(死亡予定/空き/累積時刻をクリア)。
+  simTime_ = 0.0f;
+  freeSlots_.clear();
+  std::fill(slotAlive_.begin(), slotAlive_.end(), 0u);
+  std::fill(slotDeath_.begin(), slotDeath_.end(), std::numeric_limits<float>::infinity());
 }
 
 // ── クリーンアップ ───────────────────────────────────────────────────────────
@@ -296,6 +350,7 @@ void FluidEngine::cleanup() {
   kVorticityOmega_.cleanup();
   kVorticityForce_.cleanup();
   kAbsorb_.cleanup();
+  kLifetime_.cleanup();
   cleanupEngineBase();
 }
 
@@ -504,6 +559,13 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     if(absorberCount_ > 0) {
       computeBarrier(cmd);
       kAbsorb_.dispatch(cmd, ds, pc, nFluid_);
+    }
+
+    // ⑩ 寿命パス（lifetimeEnabled_ のとき; subDt減算し寿命切れを墓場送りにする=吸収と同一パターン）
+    if(lifetimeEnabled_ && nFluid_ > 0) {
+      computeBarrier(cmd);
+      pc.pinnedTargetIdx = lifeIdx_; // Cloth専用フィールドをlifeバッファindexとして流用(SimPC 200B固定のため)
+      kLifetime_.dispatch(cmd, ds, pc, nFluid_);
     }
 
     // 次の substep がある場合のみバリアが必要（次の kPredictSdf_ が vel/pos を読む）

@@ -27,6 +27,9 @@ public:
   // dstOffset バイト目から転送（境界粒子の追記用）
   void uploadAt(const std::string& name, const void* data, VkDeviceSize byteSize, VkDeviceSize dstOffset, VkCommandPool cmdPool, VkQueue queue);
 
+  // packed な count 要素を dstIndices[j] の要素位置へ1 submitのmulti-region copyで散布転送する(スロット再利用の穴埋め用; 単位は要素index)。
+  void uploadScattered(const std::string& name, const void* packedData, VkDeviceSize elemSize, const std::vector<uint32_t>& dstIndices, VkCommandPool cmdPool, VkQueue queue);
+
   // 既存データ（先頭からのバイト列）を保持したまま容量を newCount 要素に再確保する。
   // Bindless index は維持されるため、他の保持済みインデックスは変更不要。
   void resizeAttribute(const std::string& name, uint32_t newCount, VkCommandPool cmdPool, VkQueue queue);

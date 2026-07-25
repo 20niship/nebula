@@ -49,6 +49,10 @@ struct Emitter {
   bool emitAlongNormal     = false; // trueで形状表面の外向き法線方向へ|vel|の速さで放出(sample_velocity)
   float velocityRandomness = 0.0f;  // >0で各粒子速度へ[-r,r]^3のランダム摂動を加える[m/s](既定0=無効)
 
+  // ── 寿命(煙などが消える) ─────────────────────────────────────────────────
+  float lifetime           = 0.0f; // 粒子寿命[s]。<=0で無限(死なない)。FluidEngineのlifetimeパスが減算し墓場送り
+  float lifetimeRandomness = 0.0f; // >0で寿命へ[-r,r]sのランダム摂動(sample_lifetime、下限0.01s)
+
   // ── Pyro: グリッドセルへ連続注入する際に使うフィールド ──────────────
   glm::vec3 inflowVelocity{0.0f}; // 放出時に加える初速 [m/s]
   float densityRate     = 0.0f;   // 密度注入速度 [1/s]
@@ -79,6 +83,17 @@ struct Emitter {
       v += glm::vec3(d(rng), d(rng), d(rng));
     }
     return v;
+  }
+
+  // 放出粒子の寿命[s]をサンプルする。lifetime<=0なら-1(無限)を返す。ランダム摂動後は下限0.01s。
+  float sample_lifetime(std::mt19937& rng) const {
+    if(lifetime <= 0.0f) return -1.0f;
+    float l = lifetime;
+    if(lifetimeRandomness > 0.0f) {
+      std::uniform_real_distribution<float> d(-lifetimeRandomness, lifetimeRandomness);
+      l += d(rng);
+    }
+    return l < 0.01f ? 0.01f : l;
   }
 
 protected:

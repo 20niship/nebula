@@ -196,7 +196,6 @@ void FluidEngine::setAbsorbers(const std::vector<AbsorberDesc>& absorbers) {
 // ── Emitter 管理 ─────────────────────────────────────────────────────────────
 
 void FluidEngine::addEmitter(std::shared_ptr<Emitter> emitter) {
-  if(emitter && emitter->lifetime > 0.0f) lifetimeEnabled_ = true; // 寿命付きEmitterがあればlifetimeパスを有効化
   emitters_.push_back(std::move(emitter));
   emitterStepsDone_.push_back(0);
 }
@@ -207,9 +206,8 @@ void FluidEngine::clearEmitters() {
 }
 
 void FluidEngine::emitFromEmitters(float dt) {
-  // 寿命付きEmitterが1つでもあればlifetimeパスを有効化(UIでの実行時変更にも追従)。
-  for(const auto& e : emitters_)
-    if(e && e->lifetime > 0.0f) lifetimeEnabled_ = true;
+  // 寿命付きEmitterが1つでもあればlifetimeパスを有効化(毎フレーム再計算しUIでの実行時変更にも追従)。
+  lifetimeEnabled_ = std::any_of(emitters_.begin(), emitters_.end(), [](const auto& e) { return e && e->lifetime > 0.0f; });
 
   reclaimDeadSlots_(); // 寿命切れスロットを空きへ回収し、以降の放出で再利用する
   for(size_t i = 0; i < emitters_.size(); ++i) {
@@ -311,7 +309,6 @@ void FluidEngine::growFluidCapacity(uint32_t minRequired) {
   attrBuf_.resizeAttribute("lambdaPbf", newTotal, cmdPool_, queue_);
   attrBuf_.resizeAttribute("omega", newTotal, cmdPool_, queue_);
   attrBuf_.resizeAttribute("life", newTotal, cmdPool_, queue_);
-  // スロット再利用のメタ配列も容量に追従させる(新規領域は無限=生存扱いで回収されない)。
   slotDeath_.resize(fluidCapacity_, std::numeric_limits<float>::infinity());
   slotAlive_.resize(fluidCapacity_, 0u);
 }

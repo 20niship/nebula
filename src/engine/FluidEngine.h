@@ -147,7 +147,7 @@ public:
   VkBuffer getPositionBuffer() const;
   VkBuffer getTypeFlagBuffer() const; // 描画側の生存判定用(typeFlag==0=墓場送り済み/死)
   VkBuffer getLifeBuffer() const;     // 残り寿命[s](<0=無限)
-  VkBuffer getColorBuffer() const;    // 放出粒子の色(packed 0x00RRGGBB, uint×N)
+  VkBuffer getEmitterIndexBuffer() const; // 各粒子の放出元エミッタindex(uint×N)。描画側でindex→マテリアル(色)に変換する
 
   // ── TC8: 運動学的境界粒子 (回転スクリュー等) の per-frame GPU 更新 ────────────
   // maxBoundaryCount: 毎フレーム更新する境界粒子の最大数
@@ -176,7 +176,7 @@ private:
   uint32_t lambdaPbfIdx_  = 0;
   uint32_t omegaIdx_      = 0; // 渦度 ω バッファ (vec4 × N)
   uint32_t lifeIdx_       = 0; // 残り寿命 (float × N; <0=無限)
-  uint32_t colorIdx_      = 0; // 放出色 (packed 0x00RRGGBB, uint × N)
+  uint32_t emitterIdxIdx_ = 0; // 放出元エミッタindex (uint × N)
   bool lifetimeEnabled_   = false; // lifetime>0のEmitterが登録されたら有効(lifetimeパスを実行)
 
   // 吸収パス用プライベートメンバー

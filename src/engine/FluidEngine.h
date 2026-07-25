@@ -145,6 +145,8 @@ public:
   uint32_t typeFlagIdx = 0;
 
   VkBuffer getPositionBuffer() const;
+  VkBuffer getTypeFlagBuffer() const; // 描画側の生存判定用(typeFlag==0=墓場送り済み/死)
+  VkBuffer getLifeBuffer() const;     // 残り寿命[s](<0=無限)
 
   // ── TC8: 運動学的境界粒子 (回転スクリュー等) の per-frame GPU 更新 ────────────
   // maxBoundaryCount: 毎フレーム更新する境界粒子の最大数
@@ -172,6 +174,8 @@ private:
   uint32_t densityIdx_    = 0;
   uint32_t lambdaPbfIdx_  = 0;
   uint32_t omegaIdx_      = 0; // 渦度 ω バッファ (vec4 × N)
+  uint32_t lifeIdx_       = 0; // 残り寿命 (float × N; <0=無限)
+  bool lifetimeEnabled_   = false; // lifetime>0のEmitterが登録されたら有効(lifetimeパスを実行)
 
   // 吸収パス用プライベートメンバー
   uint32_t absorberBufIdx_ = 0; // absorbers バッファの bindless index
@@ -191,7 +195,8 @@ private:
   ComputePipeline kHashAddBase_;
   ComputePipeline kVorticityOmega_;
   ComputePipeline kVorticityForce_;
-  ComputePipeline kAbsorb_; // 吸収パス（fluid_absorb.comp; absorberCount_>0 のときのみ使用）
+  ComputePipeline kAbsorb_;   // 吸収パス（fluid_absorb.comp; absorberCount_>0 のときのみ使用）
+  ComputePipeline kLifetime_; // 寿命パス（fluid_lifetime.comp; lifetimeEnabled_ のときのみ使用）
 
   // ── kinematic staging (TC8) ──────────────────────────────────────────────
   static constexpr uint32_t MAX_CONCURRENT_FRAMES       = 2;
@@ -206,6 +211,13 @@ private:
   std::vector<int> emitterStepsDone_;
   uint32_t nFluid_ = 0;
   std::mt19937 emitterRng_{12345};
+
+  // スロット再利用: 死亡予定時刻(sample_lifetime既知)をCPUで持ちreadback無しで寿命切れの穴を新規放出で埋め、バッファを有界化する。
+  float simTime_ = 0.0f;             // 累積シミュレーション時刻 [s] (emitFromEmitters で dt 加算)
+  std::vector<float> slotDeath_;     // fluidスロットの死亡予定sim時刻 (無限寿命=+inf)
+  std::vector<uint8_t> slotAlive_;   // 1=生存(再利用不可) 0=空き(再利用可)
+  std::vector<uint32_t> freeSlots_;  // 再利用可能な空きスロットindex
+  void reclaimDeadSlots_();          // slotDeath_<=simTime_ の生存スロットを空きへ回収する
 
   void computeBarrier(VkCommandBuffer cmd);
 };

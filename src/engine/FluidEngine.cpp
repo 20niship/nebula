@@ -51,6 +51,7 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   lambdaPbfIdx_   = attrBuf_.addAttribute("lambdaPbf", sizeof(float), totalCap);
   omegaIdx_       = attrBuf_.addAttribute("omega", sizeof(glm::vec4), totalCap);
   lifeIdx_        = attrBuf_.addAttribute("life", sizeof(float), totalCap);
+  colorIdx_       = attrBuf_.addAttribute("color", sizeof(uint32_t), totalCap);
   absorberBufIdx_ = attrBuf_.addAttribute("absorbers", sizeof(float), MAX_ABSORBERS * 8u);
 
   // 境界パーティクル用固定領域 [0, max_boundary) を zero-init する。
@@ -98,6 +99,7 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
 VkBuffer FluidEngine::getPositionBuffer() const { return attrBuf_.getBuffer("P"); }
 VkBuffer FluidEngine::getTypeFlagBuffer() const { return attrBuf_.getBuffer("typeFlag"); }
 VkBuffer FluidEngine::getLifeBuffer() const { return attrBuf_.getBuffer("life"); }
+VkBuffer FluidEngine::getColorBuffer() const { return attrBuf_.getBuffer("color"); }
 
 // ── 境界粒子ロード ────────────────────────────────────────────────────────────
 
@@ -254,6 +256,10 @@ void FluidEngine::emitFromEmitters(float dt) {
     std::vector<glm::vec4> pos(nNew), vel(nNew);
     std::vector<glm::vec4> invM(nNew, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
     std::vector<uint32_t> flags(nNew, emitter.particleType);
+    // 放出色をpacked 0x00RRGGBBへ(描画tint用。全粒子同一なのでループ外で1回作る)
+    auto to8   = [](float c) { return (uint32_t)(std::min(std::max(c, 0.0f), 1.0f) * 255.0f + 0.5f); };
+    uint32_t c = (to8(emitter.color.r) << 16) | (to8(emitter.color.g) << 8) | to8(emitter.color.b);
+    std::vector<uint32_t> colr(nNew, c);
     std::vector<float> life(nNew);
     std::vector<uint32_t> absIdx(nNew);
     for(int j = 0; j < nNew; ++j) {
@@ -270,6 +276,7 @@ void FluidEngine::emitFromEmitters(float dt) {
     attrBuf_.uploadScattered("invMass", invM.data(), sizeof(glm::vec4), absIdx, cmdPool_, queue_);
     attrBuf_.uploadScattered("typeFlag", flags.data(), sizeof(uint32_t), absIdx, cmdPool_, queue_);
     attrBuf_.uploadScattered("life", life.data(), sizeof(float), absIdx, cmdPool_, queue_);
+    attrBuf_.uploadScattered("color", colr.data(), sizeof(uint32_t), absIdx, cmdPool_, queue_);
 
     for(int j = 0; j < nNew; ++j) {
       const uint32_t s = dst[j];
@@ -309,6 +316,7 @@ void FluidEngine::growFluidCapacity(uint32_t minRequired) {
   attrBuf_.resizeAttribute("lambdaPbf", newTotal, cmdPool_, queue_);
   attrBuf_.resizeAttribute("omega", newTotal, cmdPool_, queue_);
   attrBuf_.resizeAttribute("life", newTotal, cmdPool_, queue_);
+  attrBuf_.resizeAttribute("color", newTotal, cmdPool_, queue_);
   slotDeath_.resize(fluidCapacity_, std::numeric_limits<float>::infinity());
   slotAlive_.resize(fluidCapacity_, 0u);
 }

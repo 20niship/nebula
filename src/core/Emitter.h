@@ -49,6 +49,8 @@ struct Emitter {
   bool emitAlongNormal     = false; // trueで形状表面の外向き法線方向へ|vel|の速さで放出(sample_velocity)
   float velocityRandomness = 0.0f;  // >0で各粒子速度へ[-r,r]^3のランダム摂動を加える[m/s](既定0=無効)
 
+  glm::vec3 color{1.0f}; // 放出粒子の色(描画tint用。花火など複数エミッタの色分けに使う。既定白)
+
   // ── 寿命(煙などが消える) ─────────────────────────────────────────────────
   float lifetime           = 0.0f; // 粒子寿命[s]。<=0で無限(死なない)。FluidEngineのlifetimeパスが減算し墓場送り
   float lifetimeRandomness = 0.0f; // >0で寿命へ[-r,r]sのランダム摂動(sample_lifetime、下限0.01s)

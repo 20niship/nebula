@@ -185,10 +185,14 @@ void AttributeBuffer::uploadScattered(const std::string& name, const void* packe
   stageAllocInfo.usage = VMA_MEMORY_USAGE_CPU_ONLY;
   VkBuffer stageBuf;
   VmaAllocation stageAlloc;
-  vmaCreateBuffer(allocator_, &stageBufInfo, &stageAllocInfo, &stageBuf, &stageAlloc, nullptr);
+  VkResult r = SAFE_VMA_CREATE_BUFFER(allocator_, &stageBufInfo, &stageAllocInfo, &stageBuf, &stageAlloc, nullptr);
+  if(r != VK_SUCCESS || stageBuf == VK_NULL_HANDLE) throw std::runtime_error("Failed to create staging buffer for uploadScattered: " + name);
 
   void* mapped;
-  vmaMapMemory(allocator_, stageAlloc, &mapped);
+  if(vmaMapMemory(allocator_, stageAlloc, &mapped) != VK_SUCCESS) {
+    vmaDestroyBuffer(allocator_, stageBuf, stageAlloc);
+    throw std::runtime_error("Failed to map staging buffer for uploadScattered: " + name);
+  }
   memcpy(mapped, packedData, total);
   vmaUnmapMemory(allocator_, stageAlloc);
 

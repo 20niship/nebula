@@ -21,9 +21,11 @@
 static const std::string SHADER_DIR_STR = SHADER_DIR;
 
 struct ExplosionArgs : public argparse::Args {
-  // Morton 符号化のため 2 のべき乗であること (PyroEngine::init() が検証する)
-  int& grid_res        = kwarg("grid-res", "Pyro グリッド解像度 (2のべき乗)").set_default(64);
-  float& world_size    = kwarg("world-size", "world size [m] (高さ方向に余裕を持たせる)").set_default(14.0f);
+  // issue #46フォローアップ: 直方体ドメイン対応につき、高さ方向(Y)だけ広めに取れる
+  float& domain_size_x = kwarg("domain-size-x", "ドメイン物理サイズ X [m]").set_default(10.0f);
+  float& domain_size_y = kwarg("domain-size-y", "ドメイン物理サイズ Y [m] (高さ方向に余裕を持たせる)").set_default(14.0f);
+  float& domain_size_z = kwarg("domain-size-z", "ドメイン物理サイズ Z [m]").set_default(10.0f);
+  float& cell_size      = kwarg("cell-size", "セルサイズ [m] (小さいほど高解像度)").set_default(14.0f / 64.0f);
   int& n_frames        = kwarg("n-frames", "実行フレーム数").set_default(240);
   float& dt            = kwarg("dt", "フレームタイムステップ [s]").set_default(1.0f / 60.0f);
   int& substeps        = kwarg("substeps", "1フレームあたりのサブステップ数").set_default(1);
@@ -42,8 +44,8 @@ int main(int argc, char* argv[]) {
     ctx.init();
 
     PyroConfig cfg;
-    cfg.grid_res   = uint32_t(args.grid_res);
-    cfg.world_size = args.world_size;
+    cfg.domainSize = {args.domain_size_x, args.domain_size_y, args.domain_size_z};
+    cfg.cellSize   = args.cell_size;
 
     PyroEngine engine;
     engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR, cfg);
@@ -66,12 +68,12 @@ int main(int argc, char* argv[]) {
     engine.smokeYieldPerFuel = 2.5f;
     engine.flameBrightness   = 4.0f;
 
-    const float W = cfg.world_size;
+    const glm::vec3 W = cfg.domainSize;
 
     // ── 地表付近での爆発源 (短時間バースト後、燃焼と浮力のみで自律的に発達) ──
     auto blast             = std::make_shared<SphereEmitter>();
-    blast->center          = {W * 0.5f, W * 0.06f, W * 0.5f};
-    blast->radius          = W * 0.07f;
+    blast->center          = {W.x * 0.5f, W.y * 0.06f, W.z * 0.5f};
+    blast->radius          = W.x * 0.07f;
     blast->inflowVelocity  = {0.0f, 4.0f, 0.0f}; // 上向きの初速キック
     blast->densityRate     = 30.0f;
     blast->temperatureRate = 40.0f;

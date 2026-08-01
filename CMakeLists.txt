@@ -126,6 +126,7 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/foam.frag
     ${SHADER_SRC_DIR}/fluid_particle_wave.vert
     ${SHADER_SRC_DIR}/foam_particle_wave.vert
+    ${SHADER_SRC_DIR}/fluid_lifetime.comp
     # ── XPBD Soft Body シェーダー ────────────────────────────────────────
     ${SHADER_SRC_DIR}/sb_solve_volume.comp
     ${SHADER_SRC_DIR}/sb_zero_vol_lambdas.comp

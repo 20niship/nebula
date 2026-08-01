@@ -12,7 +12,7 @@ layout(local_size_x = 256) in;
 
 #define SAMPLE_SDF(ix_, iy_, iz_) \
     ( ((ix_) < 0 || (iy_) < 0 || (iz_) < 0 || \
-       (ix_) >= int(pc.gridRes) || (iy_) >= int(pc.gridRes) || (iz_) >= int(pc.gridRes)) \
+       (ix_) >= int(pc.gridRes.x) || (iy_) >= int(pc.gridRes.y) || (iz_) >= int(pc.gridRes.z)) \
       ? 1e6 \
       : readFloat(pc.colliderSDFIdx, pyroMortonEncodeI(ivec3((ix_), (iy_), (iz_)))) )
 
@@ -20,7 +20,7 @@ void main() {
     if (pc.colliderSDFIdx == 0u) return;
 
     uint gid = gl_GlobalInvocationID.x;
-    uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    uint totalCells = pc.hashCells;
     if (gid >= totalCells) return;
 
     ivec3 ijk = pyroMortonDecodeI(gid);

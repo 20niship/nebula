@@ -12,7 +12,7 @@ layout(local_size_x = 256) in;
 
 void main() {
     uint gid = gl_GlobalInvocationID.x;
-    uint totalCells = pc.gridRes * pc.gridRes * pc.gridRes;
+    uint totalCells = pc.hashCells;
     if (gid >= totalCells) return;
 
     ivec3 ijk = pyroMortonDecodeI(gid);

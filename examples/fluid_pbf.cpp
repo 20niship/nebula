@@ -25,13 +25,13 @@ static const std::string ASSET_DIR_STR  = ASSET_DIR;
 
 struct FluidArgs : public argparse::Args {
   int& fluid_nx               = kwarg("nx", "fluid grid X").set_default(192);
-  int& fluid_ny                = kwarg("ny", "fluid grid Y").set_default(3);
-  int& fluid_nz                = kwarg("nz", "fluid grid Z").set_default(192);
-  float& domain_size_x         = kwarg("domain-size-x", "domain physical size X [m]").set_default(20.0f);
-  float& domain_size_y         = kwarg("domain-size-y", "domain physical size Y [m]").set_default(20.0f);
-  float& domain_size_z         = kwarg("domain-size-z", "domain physical size Z [m]").set_default(20.0f);
-  float& cell_size             = kwarg("cell-size", "hash grid cell size [m]").set_default(20.0f / 64.0f);
-  int& max_boundary           = kwarg("max-boundary", "max boundary particle count").set_default(50000);
+  int& fluid_ny               = kwarg("ny", "fluid grid Y").set_default(3);
+  int& fluid_nz               = kwarg("nz", "fluid grid Z").set_default(192);
+  float& domain_size_x        = kwarg("domain-size-x", "domain physical size X [m]").set_default(20.0f);
+  float& domain_size_y        = kwarg("domain-size-y", "domain physical size Y [m]").set_default(20.0f);
+  float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(20.0f);
+  float& cell_size            = kwarg("cell-size", "hash grid cell size [m]").set_default(20.0f / 32.0f);
+  int& max_boundary           = kwarg("max-boundary", "max boundary particle count").set_default(200000);
   float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 60.0f);
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
@@ -56,12 +56,12 @@ public:
     bSpacing_           = args.boundary_spacing;
 
     FluidConfig cfg;
-    cfg.fluid_nx     = (uint32_t)args.fluid_nx;
-    cfg.fluid_ny     = (uint32_t)args.fluid_ny;
-    cfg.fluid_nz     = (uint32_t)args.fluid_nz;
-    cfg.domainSize   = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
-    cfg.cellSize     = args.cell_size;
-    cfg.max_boundary = (uint32_t)args.max_boundary;
+    cfg.fluid_nx            = (uint32_t)args.fluid_nx;
+    cfg.fluid_ny            = (uint32_t)args.fluid_ny;
+    cfg.fluid_nz            = (uint32_t)args.fluid_nz;
+    cfg.domainSize          = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
+    cfg.cellSize            = args.cell_size;
+    cfg.max_boundary        = (uint32_t)args.max_boundary;
     cfg.maxDiffuseParticles = (uint32_t)args.max_diffuse;
 
     base_.initWindow("Vulkan Sim – PBF Fluid");
@@ -95,7 +95,7 @@ private:
 
   void setupScenario(const std::string& scenario, const FluidConfig& cfg) {
     const glm::vec3 w = cfg.domainSize;
-    const float m      = cfg.cellSize * 0.5f; // margin
+    const float m     = cfg.cellSize * 0.5f; // margin
 
     if(scenario == "source-flow") {
       // TC2: 左端から右方向へ移動するボックスソース
@@ -342,82 +342,9 @@ private:
       base_.ctx.recreateSwapchain();
     }
 
-    if(simTime_ >= nextDiagTime_) {
-      printDiag();
-      nextDiagTime_ += DIAG_INTERVAL;
-    }
-
     base_.currentFrame = (base_.currentFrame + 1) % BaseApp::MAX_FRAMES;
   }
 
-  void printDiag() {
-    vkDeviceWaitIdle(base_.ctx.device);
-    const uint32_t N      = engine_.nFluid();
-    VkDeviceSize byteSize = (VkDeviceSize)N * sizeof(glm::vec4);
-
-    VkBufferCreateInfo bci{};
-    bci.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bci.size        = byteSize;
-    bci.usage       = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-    bci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    VmaAllocationCreateInfo aci{};
-    aci.usage = VMA_MEMORY_USAGE_CPU_ONLY;
-    aci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
-
-    VkBuffer stagingBuf        = VK_NULL_HANDLE;
-    VmaAllocation stagingAlloc = VK_NULL_HANDLE;
-    VmaAllocationInfo allocInfo{};
-    if(vmaCreateBuffer(base_.ctx.allocator, &bci, &aci, &stagingBuf, &stagingAlloc, &allocInfo) != VK_SUCCESS) return;
-
-    VkCommandBufferAllocateInfo cai{};
-    cai.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    cai.commandPool        = base_.ctx.graphicsCommandPool;
-    cai.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cai.commandBufferCount = 1;
-    VkCommandBuffer cmd    = VK_NULL_HANDLE;
-    vkAllocateCommandBuffers(base_.ctx.device, &cai, &cmd);
-
-    VkCommandBufferBeginInfo cbi{};
-    cbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    cbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &cbi);
-
-    VkBufferCopy region{};
-    region.size = byteSize;
-    vkCmdCopyBuffer(cmd, engine_.getPositionBuffer(), stagingBuf, 1, &region);
-    vkEndCommandBuffer(cmd);
-
-    VkSubmitInfo sub{};
-    sub.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    sub.commandBufferCount = 1;
-    sub.pCommandBuffers    = &cmd;
-    vkQueueSubmit(base_.ctx.graphicsQueue, 1, &sub, VK_NULL_HANDLE);
-    vkQueueWaitIdle(base_.ctx.graphicsQueue);
-    vkFreeCommandBuffers(base_.ctx.device, base_.ctx.graphicsCommandPool, 1, &cmd);
-
-    vmaInvalidateAllocation(base_.ctx.allocator, stagingAlloc, 0, VK_WHOLE_SIZE);
-    const float* d = static_cast<const float*>(allocInfo.pMappedData);
-
-    glm::vec3 centroid(0.0f), bmin(1e9f), bmax(-1e9f);
-    for(uint32_t i = 0; i < N; ++i) {
-      float x = d[i * 4 + 0], y = d[i * 4 + 1], z = d[i * 4 + 2];
-      centroid.x += x;
-      centroid.y += y;
-      centroid.z += z;
-      bmin.x = std::min(bmin.x, x);
-      bmax.x = std::max(bmax.x, x);
-      bmin.y = std::min(bmin.y, y);
-      bmax.y = std::max(bmax.y, y);
-      bmin.z = std::min(bmin.z, z);
-      bmax.z = std::max(bmax.z, z);
-    }
-    centroid /= float(N);
-
-    std::printf("[DIAG t=%.2fs] centroid=(%.3f,%.3f,%.3f) AABB_X=[%.3f,%.3f] AABB_Y=[%.3f,%.3f] AABB_Z=[%.3f,%.3f]\n", simTime_, centroid.x, centroid.y, centroid.z, bmin.x, bmax.x, bmin.y, bmax.y, bmin.z, bmax.z);
-    std::fflush(stdout);
-    vmaDestroyBuffer(base_.ctx.allocator, stagingBuf, stagingAlloc);
-  }
 
   void mainLoop(int nShots) {
     while(!glfwWindowShouldClose(base_.window) && !base_.shouldExit) {

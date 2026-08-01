@@ -84,26 +84,33 @@ inline uint32_t meshSdfMortonExpand(uint32_t v) {
 }
 inline uint32_t meshSdfMortonEncode(uint32_t x, uint32_t y, uint32_t z) { return meshSdfMortonExpand(x) | (meshSdfMortonExpand(y) << 1u) | (meshSdfMortonExpand(z) << 2u); }
 
-// ── メッシュ→SDF バッファ構築 (O(gridRes³ × 三角形数) のブルートフォース) ───
-// 三角形数・grid_res が大きいと重いため、動的障害物として毎フレーム呼ぶ場合は
-// 低ポリメッシュ + 適度な grid_res + 再構築間隔 (interval) で実用速度に収めること。
+// ── メッシュ→SDF バッファ構築 (O(realRes.x*y*z × 三角形数) のブルートフォース) ───
+// 三角形数・解像度が大きいと重いため、動的障害物として毎フレーム呼ぶ場合は
+// 低ポリメッシュ + 適度な解像度 + 再構築間隔 (interval) で実用速度に収めること。
+//
+// issue #46フォローアップ: 直方体ドメイン対応。realRes(各軸の実セル数)+totalCells(=Morton
+// dispatch用の立方体セル総数、cubeRes^3。PyroConfig::totalCells()/MPMConfig::totalCells()と
+// 同じ値)+cellSize(全軸共通セルサイズ)を受け取る。出力バッファは常に totalCells 要素確保し、
+// realRes 範囲内のみ SDF を計算する(範囲外=パディング領域はデフォルト値 1e9f=無衝突のまま)。
+// これにより PyroEngine::setColliderSDF() が要求するサイズ契約 (cfg().totalCells()) と
+// 型レベルで一致する。
 
-inline std::vector<float> buildMeshSDF(const std::vector<MeshTriangle>& tris, uint32_t gridRes, float worldSize, bool verbose = true) {
-  const float cs = worldSize / float(gridRes);
-  std::vector<float> sdf(size_t(gridRes) * gridRes * gridRes, 1e9f);
+inline std::vector<float> buildMeshSDF(const std::vector<MeshTriangle>& tris, const glm::uvec3& realRes, uint32_t totalCells, float cellSize, bool verbose = true) {
+  const float cs = cellSize;
+  std::vector<float> sdf(size_t(totalCells), 1e9f);
 
   if(verbose) {
-    std::printf("  SDF 構築中: %u³ セル × %zu 三角形 ...\n", gridRes, tris.size());
+    std::printf("  SDF 構築中: %u×%u×%u セル (cube総数%u) × %zu 三角形 ...\n", realRes.x, realRes.y, realRes.z, totalCells, tris.size());
     std::fflush(stdout);
   }
 
-  for(uint32_t iz = 0; iz < gridRes; ++iz) {
-    if(verbose && iz % std::max(1u, gridRes / 8) == 0) {
-      std::printf("  SDF %u/%u\r", iz, gridRes);
+  for(uint32_t iz = 0; iz < realRes.z; ++iz) {
+    if(verbose && iz % std::max(1u, realRes.z / 8) == 0) {
+      std::printf("  SDF %u/%u\r", iz, realRes.z);
       std::fflush(stdout);
     }
-    for(uint32_t iy = 0; iy < gridRes; ++iy)
-      for(uint32_t ix = 0; ix < gridRes; ++ix) {
+    for(uint32_t iy = 0; iy < realRes.y; ++iy)
+      for(uint32_t ix = 0; ix < realRes.x; ++ix) {
         glm::vec3 p = {(ix + 0.5f) * cs, (iy + 0.5f) * cs, (iz + 0.5f) * cs};
         float minD  = 1e9f;
         bool outer  = true;

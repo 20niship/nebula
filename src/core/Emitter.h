@@ -41,10 +41,17 @@ struct Emitter {
 
   // ── MPM / Fluid(PBF): 粒子を直接生成する際に使うフィールド ──────────
   glm::vec3 center{0.0f};
-  glm::vec3 vel{0.0f};        // 放出粒子の初速
+  glm::vec3 vel{0.0f};        // 放出粒子の初速(既定0)。emitAlongNormal=true時は速さ(|vel|)としても使う
   glm::vec3 center_vel{0.0f}; // エミッタ自体の移動速度 [m/s]
   int particles_per_step = 1024;
   uint32_t particleType  = 1u; // MPM: material id / Fluid: 1=流体,4=煙,5=粉体
+
+  bool emitAlongNormal     = false; // trueで形状表面の外向き法線方向へ|vel|の速さで放出(sample_velocity)
+  float velocityRandomness = 0.0f;  // >0で各粒子速度へ[-r,r]^3のランダム摂動を加える[m/s](既定0=無効)
+
+  // ── 寿命(煙などが消える) ─────────────────────────────────────────────────
+  float lifetime           = 0.0f; // 粒子寿命[s]。<=0で無限(死なない)。FluidEngineのlifetimeパスが減算し墓場送り
+  float lifetimeRandomness = 0.0f; // >0で寿命へ[-r,r]sのランダム摂動(sample_lifetime、下限0.01s)
 
   // ── Pyro: グリッドセルへ連続注入する際に使うフィールド ──────────────
   glm::vec3 inflowVelocity{0.0f}; // 放出時に加える初速 [m/s]
@@ -60,6 +67,34 @@ struct Emitter {
   virtual glm::vec3 sample(std::mt19937& rng) const = 0;
   // Pyro が使用: GPU アップロード用の packed 表現へ変換する。
   virtual EmitterGPU pack() const = 0;
+
+  // pos における形状表面の外向き法線。既定は中心からの放射方向(球で厳密、他形状の近似)。
+  virtual glm::vec3 surface_normal(const glm::vec3& pos) const {
+    const glm::vec3 d = pos - center;
+    const float len   = glm::length(d);
+    return len > 1e-6f ? d / len : glm::vec3(0.0f, 0.0f, 1.0f);
+  }
+
+  // 放出粒子の初速をサンプルする(Fluid(PBF)/MPM の emit で使用)。
+  glm::vec3 sample_velocity(const glm::vec3& pos, std::mt19937& rng) const {
+    glm::vec3 v = emitAlongNormal ? surface_normal(pos) * glm::length(vel) : vel;
+    if(velocityRandomness > 0.0f) {
+      std::uniform_real_distribution<float> d(-velocityRandomness, velocityRandomness);
+      v += glm::vec3(d(rng), d(rng), d(rng));
+    }
+    return v;
+  }
+
+  // 放出粒子の寿命[s]をサンプルする。lifetime<=0なら-1(無限)を返す。ランダム摂動後は下限0.01s。
+  float sample_lifetime(std::mt19937& rng) const {
+    if(lifetime <= 0.0f) return -1.0f;
+    float l = lifetime;
+    if(lifetimeRandomness > 0.0f) {
+      std::uniform_real_distribution<float> d(-lifetimeRandomness, lifetimeRandomness);
+      l += d(rng);
+    }
+    return l < 0.01f ? 0.01f : l;
+  }
 
 protected:
   // shape/center/size 以外の共通フィールドを EmitterGPU に詰める補助。
@@ -87,6 +122,16 @@ struct AABBEmitter : public Emitter {
     std::uniform_real_distribution<float> dy(-half.y, half.y);
     std::uniform_real_distribution<float> dz(-half.z, half.z);
     return center + glm::vec3(dx(rng), dy(rng), dz(rng));
+  }
+
+  // 最も近い面の外向き法線(pos を半辺長で正規化した優勢軸)。
+  glm::vec3 surface_normal(const glm::vec3& pos) const override {
+    const glm::vec3 half = glm::max(size * 0.5f, glm::vec3(1e-6f));
+    const glm::vec3 d    = (pos - center) / half;
+    const glm::vec3 a    = glm::abs(d);
+    if(a.x >= a.y && a.x >= a.z) return glm::vec3(d.x >= 0.0f ? 1.0f : -1.0f, 0.0f, 0.0f);
+    if(a.y >= a.z) return glm::vec3(0.0f, d.y >= 0.0f ? 1.0f : -1.0f, 0.0f);
+    return glm::vec3(0.0f, 0.0f, d.z >= 0.0f ? 1.0f : -1.0f);
   }
 
   EmitterGPU pack() const override {

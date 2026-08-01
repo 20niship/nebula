@@ -69,15 +69,22 @@ inline uint32_t hashCells(const glm::uvec3& res) {
   return computeAdaptiveMortonParams(res).hashCells;
 }
 
-// MPM (mpm_common.glsl) 専用: 従来の固定3ビット周期Morton(立方体)でのセル数。
-// MPMのシェーダー側実装(mortonEncodeI/mortonDecodeI)は今回のアダプティブ化の
-// スコープ外のため、MPMEngine::totalCells() は必ずこちらを呼ぶこと
-// (上の hashCells() をMPM側で使うと、シェーダー側は旧立方体サイズのIDを
-// 生成し続けるのにバッファは縮小されてしまい、範囲外アクセスになる)。
-inline uint32_t hashCellsCube(const glm::uvec3& res) {
+// MPM (mpm_common.glsl) / Pyro (稠密Eulerianグリッド) 専用: 従来の固定3ビット周期
+// Morton(立方体)での軸解像度・セル数。両エンジンとも「スレッドID=Morton符号」の
+// 稠密グリッド設計で、セルはそもそも全て使用される(疎ハッシュではない)ため、
+// 上のアダプティブ化(疎な空間ハッシュ向け、無駄なセルを削減する最適化)のスコープ外。
+// MPMEngine::totalCells() / PyroConfig::totalCells() は必ずこちらを呼ぶこと
+// (上の hashCells() を使うと、シェーダー側は旧立方体サイズのIDを生成し続けるのに
+// バッファは縮小されてしまい、範囲外アクセスになる)。
+inline uint32_t mortonCubeRes(const glm::uvec3& res) {
   uint32_t m = std::max({res.x, res.y, res.z, 1u});
   uint32_t p = 1u;
   while(p < m) p <<= 1u;
+  return p;
+}
+
+inline uint32_t hashCellsCube(const glm::uvec3& res) {
+  const uint32_t p = mortonCubeRes(res);
   return p * p * p;
 }
 

@@ -28,8 +28,7 @@ public:
   uint32_t graphicsFamily = UINT32_MAX;
   uint32_t computeFamily  = UINT32_MAX;
 
-  // VSync 制御 (init() 前に設定する)
-  bool vsync = true;
+  bool vsync = false;
 
   // ── Swapchain ────────────────────────────────────────────────────────
   VkSwapchainKHR swapchain   = VK_NULL_HANDLE;

@@ -69,7 +69,7 @@ struct WaveFoamArgs : public argparse::Args {
   float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 60.0f);
   float& paddle_amp           = kwarg("paddle-amp", "波発生パドル SHM 振幅 [m]").set_default(3.0f);
   float& paddle_omega         = kwarg("paddle-omega", "波発生パドル SHM 角振動数 [rad/s]").set_default(1.2f);
-  int& max_diffuse            = kwarg("max-diffuse", "泡(spray/foam/bubble)の最大パーティクル数").set_default(0);
+  int& max_diffuse            = kwarg("max-diffuse", "泡(spray/foam/bubble)の最大パーティクル数 (0=無効)").set_default(20000);
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
 };
@@ -277,19 +277,23 @@ private:
     src->particleType       = 1u;
     engine_.addEmitter(src);
 
-    // // ── 泡 (spray/foam/bubble) ────────────────────────────────────────────
-    // foamParams_.kTa                 = 1500.0f; // 既定4000→生成量を抑制
-    // foamParams_.kWc                 = 1500.0f;
-    // foamParams_.taLo                = 8.0f; // 既定5→表面の乱れが大きい箇所のみ生成
-    // foamParams_.taHi                = 25.0f;
-    // foamParams_.wcLo                = 2.0f; // 既定1
-    // foamParams_.wcHi                = 6.0f;
-    // foamParams_.keLo                = 8.0f;  // 既定5→高速な粒子のみ生成対象
-    // foamParams_.surfaceDensityRatio = 0.85f; // 既定0.95→表面ゲートを厳しくして対象粒子数を削減
-    // foamParams_.lifetimeMin         = 0.6f;  // 既定1.0→同時生存数(=advectの実効負荷)を削減
-    // foamParams_.lifetimeMax         = 1.8f;  // 既定3.0
-    // engine_.foamEnabled             = false;
-    // engine_.setFoamParams(foamParams_);
+    // ── 泡 (spray/foam/bubble) ────────────────────────────────────────────
+    // パドルが起こす波はかなり激しい(振幅3.0m)ため、既定値のままだと生成が
+    // 多すぎて advect の負荷が高くなる。生成しきい値を上げ・生成係数を下げて
+    // 抑制しつつ、maxDiffuseParticlesが0だとdispatch自体スキップされるため
+    // args.max_diffuse (既定20000) を有効にする。
+    foamParams_.kTa                 = 1500.0f; // 既定4000→生成量を抑制
+    foamParams_.kWc                 = 1500.0f;
+    foamParams_.taLo                = 8.0f; // 既定5→表面の乱れが大きい箇所のみ生成
+    foamParams_.taHi                = 25.0f;
+    foamParams_.wcLo                = 2.0f; // 既定1
+    foamParams_.wcHi                = 6.0f;
+    foamParams_.keLo                = 8.0f;  // 既定5→高速な粒子のみ生成対象
+    foamParams_.surfaceDensityRatio = 0.85f; // 既定0.95→表面ゲートを厳しくして対象粒子数を削減
+    foamParams_.lifetimeMin         = 0.6f;  // 既定1.0→同時生存数(=advectの実効負荷)を削減
+    foamParams_.lifetimeMax         = 1.8f;  // 既定3.0
+    engine_.foamEnabled             = cfg.maxDiffuseParticles > 0;
+    engine_.setFoamParams(foamParams_);
 
     // fluid_particle_wave.vert / foam_particle_wave.vert は本シーン専用のカメラ
     // (共有版より約2倍近く、Z軸まわりにさらに斜めから見下ろす) を使う複製シェーダー。

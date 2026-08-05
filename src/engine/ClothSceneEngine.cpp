@@ -1,4 +1,5 @@
 #include "ClothSceneEngine.h"
+#include "../core/DefineShaderCompiler.h"
 
 #include <algorithm>
 #include <cstring>
@@ -144,17 +145,33 @@ void ClothSceneEngine::init(VkDevice device, VmaAllocator allocator, VkDescripto
   auto load = [&](ComputePipeline& k, const std::string& name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
 
   load(kSdfCollision_, "sdf_collision.comp");
-  load(kHashCount_, "hash_count.comp");
   load(kHashScanLocal_, "hash_scan_local.comp");
   load(kHashScanGlobal_, "hash_scan_global.comp");
   load(kHashAddBase_, "hash_add_base.comp");
-  load(kHashSort_, "hash_sort.comp");
-  load(kSolveDensity_, "solve_density.comp");
   load(kSolveStretch_, "solve_stretch.comp");
   load(kUpdateVelocity_, "update_velocity.comp");
   load(kZeroLambdas_, "zero_lambdas.comp");
   load(kZeroCells_, "zero_cells.comp");
   if(hasPinAnimated_) load(kMovePins_, "move_pins.comp");
+
+  // 空間ハッシュ近傍探索シェーダー (cellId()/mortonAxisTriples() 使用) はアダプティブ
+  // (直方体)Morton定数をドメイン形状から算出し#defineで注入する必要があるため、
+  // 実行時コンパイルする (FluidEngine::init() と同じ理由・同じパターン)。
+  const domain::AdaptiveMortonParams morton = domain::computeAdaptiveMortonParams(gridRes());
+  const std::vector<std::pair<std::string, std::string>> mortonDefines = {
+      {"ADAPTIVE_MASK", std::to_string(morton.mask) + "u"},
+      {"ADAPTIVE_COMMON_BITS", std::to_string(morton.commonBits) + "u"},
+      {"ADAPTIVE_SHIFT_X", std::to_string(morton.shiftX) + "u"},
+      {"ADAPTIVE_SHIFT_Y", std::to_string(morton.shiftY) + "u"},
+      {"ADAPTIVE_SHIFT_Z", std::to_string(morton.shiftZ) + "u"},
+  };
+  auto loadAdaptive = [&](ComputePipeline& k, const std::string& name) {
+    std::vector<uint32_t> spirv = DefineShaderCompiler::compile(name, mortonDefines);
+    k.initFromSpirv(device, attrBuf_.descriptorSetLayout, spirv);
+  };
+  loadAdaptive(kHashCount_, "hash_count.comp");
+  loadAdaptive(kHashSort_, "hash_sort.comp");
+  loadAdaptive(kSolveDensity_, "solve_density.comp");
 
   descriptorSetLayout = attrBuf_.descriptorSetLayout;
   descriptorSet       = attrBuf_.descriptorSet;

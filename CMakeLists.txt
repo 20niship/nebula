@@ -94,20 +94,22 @@ set(SHADER_SOURCES
     # predict.comp / predict_sdf.comp / mpm_grid_update.comp は FORCE_AUTOGEN
     # マーカーを含み、Engine 側で ForceShaderCompiler により実行時に shaderc で
     # コンパイルされる (issue #30)。静的 glslc ビルド対象には含めない。
+    #
+    # hash_count.comp / hash_sort.comp / pbf_density.comp / pbf_delta_p.comp /
+    # pbf_viscosity.comp / pbf_vorticity_omega.comp / pbf_vorticity_force.comp /
+    # pbf_foam_generate.comp / pbf_foam_advect.comp / solve_density.comp /
+    # coupling_cloth.comp は common.glsl の cellId()/mortonAxisTriples() 経由で
+    # アダプティブ(直方体)Morton定数(ADAPTIVE_MASK等)を必要とし、ドメイン形状
+    # (gridRes)ごとに値が変わるため、各Engine(FluidEngine/ClothSceneEngine/
+    # SimulationEngine/MultiPhysicsEngine)のinit()内でDefineShaderCompilerに
+    # より実行時コンパイルされる。静的 glslc ビルド対象には含めない
+    # (MPM専用の mpm_hash_count.comp/mpm_hash_sort.comp は対象外、従来通り静的コンパイル)。
     ${SHADER_SRC_DIR}/sdf_collision.comp
-    ${SHADER_SRC_DIR}/hash_count.comp
     ${SHADER_SRC_DIR}/hash_scan_local.comp
     ${SHADER_SRC_DIR}/hash_scan_global.comp
     ${SHADER_SRC_DIR}/hash_add_base.comp
-    ${SHADER_SRC_DIR}/hash_sort.comp
-    ${SHADER_SRC_DIR}/solve_density.comp
     ${SHADER_SRC_DIR}/solve_stretch.comp
     ${SHADER_SRC_DIR}/update_velocity.comp
-    ${SHADER_SRC_DIR}/pbf_density.comp
-    ${SHADER_SRC_DIR}/pbf_delta_p.comp
-    ${SHADER_SRC_DIR}/pbf_viscosity.comp
-    ${SHADER_SRC_DIR}/pbf_vorticity_omega.comp
-    ${SHADER_SRC_DIR}/pbf_vorticity_force.comp
     ${SHADER_SRC_DIR}/particle.vert
     ${SHADER_SRC_DIR}/particle.frag
     ${SHADER_SRC_DIR}/cloth.vert
@@ -116,11 +118,14 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/string2d.frag
     ${SHADER_SRC_DIR}/fluid_particle.vert
     ${SHADER_SRC_DIR}/fluid.frag
-    ${SHADER_SRC_DIR}/coupling_cloth.comp
     ${SHADER_SRC_DIR}/zero_cells.comp
     ${SHADER_SRC_DIR}/zero_lambdas.comp
     ${SHADER_SRC_DIR}/move_pins.comp
     ${SHADER_SRC_DIR}/fluid_absorb.comp
+    ${SHADER_SRC_DIR}/foam_particle.vert
+    ${SHADER_SRC_DIR}/foam.frag
+    ${SHADER_SRC_DIR}/fluid_particle_wave.vert
+    ${SHADER_SRC_DIR}/foam_particle_wave.vert
     ${SHADER_SRC_DIR}/fluid_lifetime.comp
     # ── XPBD Soft Body シェーダー ────────────────────────────────────────
     ${SHADER_SRC_DIR}/sb_solve_volume.comp
@@ -234,6 +239,9 @@ add_sim_example(smoke examples/smoke.cpp)
 # ── screw_fluid: TC8 回転スクリュー in PBF 流体 ──────────────────────────────
 add_sim_example(screw_fluid examples/screw_fluid.cpp)
 
+# ── fluid_wave_foam: 波発生パドル + Bunny 障害物 + 泡 (issue #47) ────────────
+add_sim_example(fluid_wave_foam examples/fluid_wave_foam.cpp)
+
 # ── cloth_scene: TC5 布2枚 / TC7 4隅ねじれ ──────────────────────────────────
 add_sim_example(cloth_scene examples/cloth_scene.cpp)
 
@@ -292,6 +300,6 @@ add_pyro_example(pyro_explosion   examples/pyro_explosion.cpp)
 # ── capture_all: capture_sim.py が使う実行ファイルを一括ビルドするための集約ターゲット ──
 add_custom_target(capture_all DEPENDS
     fluid_pbf cloth_3d cloth_scene smoke fluid_absorb xpbd_softbody
-    screw_fluid mpm_elastic mpm_avalanche mpm_multimaterial
+    screw_fluid fluid_wave_foam mpm_elastic mpm_avalanche mpm_multimaterial
     mpm_snow_impact mpm_geolayer pyro_cow_blast pyro_explosion
 )

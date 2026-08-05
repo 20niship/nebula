@@ -4,6 +4,8 @@
 
 #include "AttributeBuffer.h"
 #include "ComputePipeline.h"
+#include "DefineShaderCompiler.h"
+#include "Domain.h"
 #include "Force.h"
 #include "ForceShaderCompiler.h"
 #include "SimPC.h"
@@ -340,13 +342,30 @@ void String2DSim::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   // ── Compute パイプライン ───────────────────────────────────────────
   auto load = [&](ComputePipeline& k, const std::string& name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
   load(kSdfCollision_, "sdf_collision.comp");
-  load(kHashCount_, "hash_count.comp");
   load(kHashScanLocal_, "hash_scan_local.comp");
   load(kHashScanGlobal_, "hash_scan_global.comp");
-  load(kHashSort_, "hash_sort.comp");
-  load(kSolveDensity_, "solve_density.comp");
   load(kSolveStretch_, "solve_stretch.comp");
   load(kUpdateVelocity_, "update_velocity.comp");
+
+  // 空間ハッシュ近傍探索シェーダー (cellId()/mortonAxisTriples() 使用) はアダプティブ
+  // (直方体)Morton定数をドメイン形状から算出し#defineで注入する必要があるため、
+  // 実行時コンパイルする (FluidEngine::init() 等と同じ理由・同じパターン)。
+  // このシーンは常に立方体ドメイン (STR_GRID 一律) を想定している。
+  const domain::AdaptiveMortonParams morton = domain::computeAdaptiveMortonParams(glm::uvec3(STR_GRID));
+  const std::vector<std::pair<std::string, std::string>> mortonDefines = {
+      {"ADAPTIVE_MASK", std::to_string(morton.mask) + "u"},
+      {"ADAPTIVE_COMMON_BITS", std::to_string(morton.commonBits) + "u"},
+      {"ADAPTIVE_SHIFT_X", std::to_string(morton.shiftX) + "u"},
+      {"ADAPTIVE_SHIFT_Y", std::to_string(morton.shiftY) + "u"},
+      {"ADAPTIVE_SHIFT_Z", std::to_string(morton.shiftZ) + "u"},
+  };
+  auto loadAdaptive = [&](ComputePipeline& k, const std::string& name) {
+    std::vector<uint32_t> spirv = DefineShaderCompiler::compile(name, mortonDefines);
+    k.initFromSpirv(device, attrBuf_.descriptorSetLayout, spirv);
+  };
+  loadAdaptive(kHashCount_, "hash_count.comp");
+  loadAdaptive(kHashSort_, "hash_sort.comp");
+  loadAdaptive(kSolveDensity_, "solve_density.comp");
 
   printf("[String2D] %u particles, %u edges, %d colors\n", STR_N, totalEdges, nColors_);
 }

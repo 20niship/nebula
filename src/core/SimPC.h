@@ -80,8 +80,18 @@ struct SimPC {
                         // pbf_viscosity/vorticity/absorb など「流体のみ」を対象とする FluidEngine
                         // 専用ディスパッチで i に加算し実バッファ添字を得る。既定値0=オフセットなし
                         // のため、このフィールドを設定しない他エンジンは影響を受けない。
+
+  // ── 泡 (foam/spray/bubble) 二次パーティクル (pbf_foam_generate/pbf_foam_advect 専用;
+  //    他シェーダーは宣言のみで不使用。issue #47) ──────────────────────────
+  uint32_t foamPosIdx;          // vec4 × maxDiffuseParticles (xyz=位置, w=残り寿命[s])
+  uint32_t foamVelIdx;          // vec4 × maxDiffuseParticles (xyz=速度, w=初期寿命[s])
+  uint32_t foamKindIdx;         // uint × (maxDiffuseParticles+1)。0=死/未使用,1=spray,2=foam,3=bubble。
+                                 // 末尾1要素は生成スロット確保用の atomicAdd カーソル。
+  uint32_t foamParamsIdx;       // FoamParams (16 floats) の bindless index
+  uint32_t maxDiffuseParticles; // 泡バッファの固定容量 (0=無効)。pbf_foam_advect の境界チェックに使用
+                                 // (pc.particleCount は同 substep 内で別用途のため流用不可)
 };
-static_assert(sizeof(SimPC) == 200, "SimPC must be 200 bytes");
+static_assert(sizeof(SimPC) == 220, "SimPC must be 220 bytes"); // issue #46 直方体ドメイン対応 (200B) + issue #47 泡 (foamPosIdx等5フィールド, +20B)
 static_assert(offsetof(SimPC, cellCountIdx) == 20, "hash compat offset");
 static_assert(offsetof(SimPC, cellOffsetIdx) == 24, "hash compat offset");
 static_assert(offsetof(SimPC, hashCells) == 36, "hash compat offset");

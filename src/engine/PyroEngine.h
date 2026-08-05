@@ -25,7 +25,7 @@ struct PyroConfig {
 
   glm::uvec3 gridRes() const { return domain::gridRes(domainSize, cellSize); } // 各軸の実セル数 (nx,ny,nz)。2^n不要
   uint32_t cubeRes() const { return domain::mortonCubeRes(gridRes()); }        // Morton dispatch用の立方体解像度 (自動的に2^n、CPU限定)
-  uint32_t totalCells() const { return domain::hashCells(gridRes()); }         // = cubeRes()^3。GPUバッファ確保数/dispatch数
+  uint32_t totalCells() const { return domain::hashCellsCube(gridRes()); }     // = cubeRes()^3。GPUバッファ確保数/dispatch数
   uint32_t nGroups() const { return domain::nGroups(totalCells()); }
 };
 

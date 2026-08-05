@@ -41,8 +41,12 @@ struct MPMConfig {
   uint32_t particleCount() const { return nx * ny * nz; }
   uint32_t maxParticleCount() const { return maxParticles > 0 ? maxParticles : particleCount(); }
   glm::uvec3 gridRes() const { return domain::gridRes(domainSize, cellSize); }
-  // 空間ハッシュ/MPMグリッドバッファの実要素数 (= cubeRes^3。gridRes.x*y*zではない点に注意)
-  uint32_t totalCells() const { return domain::hashCells(gridRes()); }
+  // 空間ハッシュ/MPMグリッドバッファの実要素数 (= cubeRes^3。gridRes.x*y*zではない点に注意)。
+  // mpm_common.glsl のMorton実装は従来の固定立方体方式のままのため、必ず
+  // hashCellsCube() (旧hashCells()相当) を使うこと。domain::hashCells() は
+  // Fluid/XPBD/MultiPhysics向けにアダプティブ(直方体)方式へ変更済みで、
+  // MPMのシェーダー側実装とはセルID体系が異なるため使ってはいけない。
+  uint32_t totalCells() const { return domain::hashCellsCube(gridRes()); }
   glm::vec3 spacing() const { return domainSize / glm::vec3(nx, ny, nz); }
   float particleVolume() const {
     glm::vec3 s = spacing();

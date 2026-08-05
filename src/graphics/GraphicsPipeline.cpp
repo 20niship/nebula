@@ -22,7 +22,7 @@ VkShaderModule GraphicsPipeline::loadShader(const std::string& path) {
   return mod;
 }
 
-void GraphicsPipeline::init(VkDevice device, VkRenderPass renderPass, VkDescriptorSetLayout bindlessLayout, const std::string& vertPath, const std::string& fragPath, VkPrimitiveTopology topology) {
+void GraphicsPipeline::init(VkDevice device, VkRenderPass renderPass, VkDescriptorSetLayout bindlessLayout, const std::string& vertPath, const std::string& fragPath, VkPrimitiveTopology topology, bool enableBlend) {
   device_ = device;
 
   // Pipeline layout
@@ -80,6 +80,15 @@ void GraphicsPipeline::init(VkDevice device, VkRenderPass renderPass, VkDescript
 
   VkPipelineColorBlendAttachmentState blendAttach{};
   blendAttach.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  if(enableBlend) {
+    blendAttach.blendEnable         = VK_TRUE;
+    blendAttach.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    blendAttach.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blendAttach.colorBlendOp        = VK_BLEND_OP_ADD;
+    blendAttach.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    blendAttach.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blendAttach.alphaBlendOp        = VK_BLEND_OP_ADD;
+  }
 
   VkPipelineColorBlendStateCreateInfo blend{};
   blend.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;

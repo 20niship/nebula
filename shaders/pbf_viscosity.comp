@@ -44,7 +44,7 @@ void main() {
         if (any(lessThan(nc, ivec3(0))) ||
             any(greaterThanEqual(nc, ivec3(pc.gridRes)))) continue;
 
-        uint cid   = mx[dx + 1] | (my[dy + 1] << 1u) | (mz[dz + 1] << 2u);
+        uint cid   = mx[dx + 1] | my[dy + 1] | mz[dz + 1];
         uint cnt   = readUint(pc.cellCountIdx, cid);
         uint start = readUint(pc.cellOffsetIdx, cid) - cnt;
 

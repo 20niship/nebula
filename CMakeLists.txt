@@ -105,6 +105,7 @@ set(SHADER_SOURCES
     # より実行時コンパイルされる。静的 glslc ビルド対象には含めない
     # (MPM専用の mpm_hash_count.comp/mpm_hash_sort.comp は対象外、従来通り静的コンパイル)。
     ${SHADER_SRC_DIR}/sdf_collision.comp
+    ${SHADER_SRC_DIR}/sdf_collision_velocity.comp
     ${SHADER_SRC_DIR}/hash_scan_local.comp
     ${SHADER_SRC_DIR}/hash_scan_global.comp
     ${SHADER_SRC_DIR}/hash_add_base.comp

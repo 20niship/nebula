@@ -55,6 +55,8 @@ private:
   uint32_t sortedIdx_  = 0;
   uint32_t densityIdx_ = 0;
   uint32_t lambdaIdx_  = 0;
+  uint32_t sortedPredPIdx_    = 0; // issue #65: sortedIdx順に物理コピーした predP
+  uint32_t sortedTypeFlagIdx_ = 0; // issue #65: sortedIdx順に物理コピーした typeFlag
 
   // Force (issue #30): cfg.gravity 互換の既定Forceを一度だけ登録する
   std::vector<std::shared_ptr<Force>> forces_;
@@ -67,6 +69,7 @@ private:
   ComputePipeline kScanGlob_;
   ComputePipeline kAddBase_;
   ComputePipeline kSort_;
+  ComputePipeline kPbfReorder_; // issue #65: predP/typeFlag を sortedIdx 順に物理コピー
   ComputePipeline kPbfDensity_;
   ComputePipeline kPbfDeltaP_;
   ComputePipeline kPbfViscosity_;

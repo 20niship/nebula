@@ -214,6 +214,8 @@ private:
   uint32_t sortedIdxIdx_  = 0;
   uint32_t densityIdx_    = 0;
   uint32_t lambdaPbfIdx_  = 0;
+  uint32_t sortedPredPIdx_    = 0; // issue #65: sortedIdx順に物理コピーした predP (vec4 × N)
+  uint32_t sortedTypeFlagIdx_ = 0; // issue #65: sortedIdx順に物理コピーした typeFlag (uint × N)
   uint32_t omegaIdx_      = 0; // 渦度 ω バッファ (vec4 × N)
   uint32_t lifeIdx_       = 0; // 残り寿命 (float × N; <0=無限)
   uint32_t emitterIdxIdx_ = 0; // 放出元エミッタindex (uint × N)
@@ -235,6 +237,7 @@ private:
   ComputePipeline kHashScanLocal_;
   ComputePipeline kHashScanGlobal_;
   ComputePipeline kHashSort_;
+  ComputePipeline kPbfReorder_; // issue #65: predP/typeFlag を sortedIdx 順に物理コピー(pbf_reorder.comp)
   ComputePipeline kPbfDensity_;
   ComputePipeline kPbfDeltaP_;
   ComputePipeline kPbfViscosity_;

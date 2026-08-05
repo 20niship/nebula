@@ -90,8 +90,18 @@ struct SimPC {
   uint32_t foamParamsIdx;       // FoamParams (16 floats) の bindless index
   uint32_t maxDiffuseParticles; // 泡バッファの固定容量 (0=無効)。pbf_foam_advect の境界チェックに使用
                                  // (pc.particleCount は同 substep 内で別用途のため流用不可)
+
+  // ── PBF 近傍探索の物理reorderキャッシュ (issue #65; pbf_reorder.comp/
+  //    pbf_density.comp/pbf_delta_p.comp 専用。他シェーダーは宣言のみで不使用) ──
+  // hash_sort.comp が作る sortedIdx はインデックスのみのソートで、predP/typeFlag
+  // 実データは元の(未ソートの)順序のまま残るため、近傍ループの読み出しが
+  // ランダムgatherになっていた。pbf_reorder.comp が sortedIdx の順に predP/typeFlag
+  // を以下2バッファへ物理コピーし、density/delta_p の近傍ループはこちらを
+  // 連続アクセス(k添字)で読む。
+  uint32_t sortedPredPIdx;    // vec4 × N  sortedIdx順に並べ替えた predP のコピー
+  uint32_t sortedTypeFlagIdx; // uint × N  sortedIdx順に並べ替えた typeFlag のコピー
 };
-static_assert(sizeof(SimPC) == 220, "SimPC must be 220 bytes"); // issue #46 直方体ドメイン対応 (200B) + issue #47 泡 (foamPosIdx等5フィールド, +20B)
+static_assert(sizeof(SimPC) == 228, "SimPC must be 228 bytes"); // issue #46 直方体ドメイン対応 (200B) + issue #47 泡 (+20B) + issue #65 reorder (sortedPredPIdx/sortedTypeFlagIdx, +8B)
 static_assert(offsetof(SimPC, cellCountIdx) == 20, "hash compat offset");
 static_assert(offsetof(SimPC, cellOffsetIdx) == 24, "hash compat offset");
 static_assert(offsetof(SimPC, hashCells) == 36, "hash compat offset");

@@ -62,6 +62,8 @@ SimPC MultiPhysicsEngine::buildPC(float subDt) const {
   pc.forceCount        = (uint32_t)forces_.size();
   pc.densityIdx        = densityIdx_;
   pc.lambdaPbfIdx      = lambdaPbfIdx_;
+  pc.sortedPredPIdx    = sortedPredPIdx_;    // issue #65
+  pc.sortedTypeFlagIdx = sortedTypeFlagIdx_; // issue #65
   pc.boundaryStart     = cfg_.fluidStart(); // 境界粒子なし; 流体開始でも使用される
   pc.linearDamping     = 0.6f;              // 布の従来挙動を維持（update_velocity 共用）
   pc.cfmEpsilon        = 100.0f;            // pbf_density の CFM ε（0 除算回避）
@@ -87,6 +89,9 @@ void MultiPhysicsEngine::init(VkDevice device, VmaAllocator allocator, VkDescrip
   sortedIdxIdx_     = attrBuf_.addAttribute("sortedIdx", sizeof(uint32_t), cfg_.totalMax());
   densityIdx_       = attrBuf_.addAttribute("density", sizeof(float), cfg_.totalMax());
   lambdaPbfIdx_     = attrBuf_.addAttribute("lambdaPbf", sizeof(float), cfg_.totalMax());
+  // issue #65: sortedIdx順に物理コピーした predP/typeFlag のキャッシュ (近傍探索の連続アクセス化)
+  sortedPredPIdx_    = attrBuf_.addAttribute("sortedPredP", sizeof(glm::vec4), cfg_.totalMax());
+  sortedTypeFlagIdx_ = attrBuf_.addAttribute("sortedTypeFlag", sizeof(uint32_t), cfg_.totalMax());
   couplingForceIdx_ = attrBuf_.addAttribute("couplingF", sizeof(glm::vec4), cfg_.clothCount());
 
   initClothParticles(cmdPool, queue);
@@ -103,6 +108,7 @@ void MultiPhysicsEngine::init(VkDevice device, VmaAllocator allocator, VkDescrip
   load(kHashAddBase_, "hash_add_base.comp");
   load(kSolveStretch_, "solve_stretch.comp");
   load(kUpdateVelocity_, "update_velocity.comp");
+  load(kPbfReorder_, "pbf_reorder.comp"); // issue #65: cellId()/mortonAxisTriples()不使用のため静的コンパイルで足りる
 
   // 空間ハッシュ近傍探索シェーダー (cellId()/mortonAxisTriples() 使用) はアダプティブ
   // (直方体)Morton定数をドメイン形状から算出し#defineで注入する必要があるため、
@@ -202,6 +208,7 @@ void MultiPhysicsEngine::cleanup() {
   kHashScanGlobal_.cleanup();
   kHashAddBase_.cleanup();
   kHashSort_.cleanup();
+  kPbfReorder_.cleanup();
   kPbfDensity_.cleanup();
   kPbfDeltaP_.cleanup();
   kCouplingCloth_.cleanup();
@@ -266,6 +273,13 @@ void MultiPhysicsEngine::step(VkCommandBuffer cmd, float dt) {
 
     // ⑤ PBF + XPBD 連立ループ
     for(int iter = 0; iter < pbfIterations; ++iter) {
+      // predP は反復ごとに kPbfDeltaP_/XPBD が更新するため、density の前に毎回
+      // sortedPredP/sortedTypeFlag を最新化する (issue #65: 物理reorderキャッシュ)。
+      // このエンジンは境界未使用プレースホルダを持たない(cfg_.totalMax()=cloth+fluidが
+      // 全て有効粒子)ため、reorder の有効範囲は pc.particleCount のままでよい。
+      kPbfReorder_.dispatch(cmd, ds, pc, cfg_.totalMax());
+      computeBarrier(cmd);
+
       // PBF: 流体密度・λ 計算
       kPbfDensity_.dispatch(cmd, ds, pc, cfg_.totalMax());
       computeBarrier(cmd);

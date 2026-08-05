@@ -68,6 +68,10 @@ layout(push_constant) uniform PC {
     uint  foamKindIdx;
     uint  foamParamsIdx;
     uint  maxDiffuseParticles;
+    // PBF 近傍探索の物理reorderキャッシュ (issue #65; pbf_reorder.comp/pbf_density.comp/
+    // pbf_delta_p.comp 専用。他シェーダーは宣言のみで不使用)
+    uint  sortedPredPIdx;
+    uint  sortedTypeFlagIdx;
 } pc;
 
 // ── vec4 読み書き（FP32, MoltenVK 関数化バグ回避のためマクロ）────

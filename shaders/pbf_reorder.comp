@@ -1,0 +1,32 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "common.glsl"
+
+// issue #65: PBF近傍探索の物理reorder。
+//
+// hash_sort.comp が構築する sortedIdx はセル順に並んだ「元インデックス」の配列に
+// すぎず、predP/typeFlag の実データ自体は元の(未ソートの)順序のまま残る。その
+// ため pbf_density.comp/pbf_delta_p.comp の27近傍セル探索は
+//   j = sortedIdx[k]; predP[j]
+// という間接gather(ランダムアクセス)になっていた。
+//
+// 本シェーダーは sortedIdx の順(= 空間的に近い粒子ほど隣接する順)に predP/
+// typeFlag を sortedPredP/sortedTypeFlag へ物理コピーする。以降、近傍ループは
+// k を直接添字にした連続アクセスで pj/fj を読めるようになる。
+//
+// PBFはsubstep内でpredPを複数回更新する(反復ごとにdelta_pが位置補正するため)、
+// 呼び出し側は反復のたびに本シェーダーを実行しキャッシュを最新化する
+// (FluidEngine::step() 参照)。dispatch は sortedIdx が実際に埋めている
+// 有効スロット数([0, nBoundary+nFluid_)) に限定すること
+// (未使用境界プレースホルダ分の sortedIdx は書き込まれておらず不定値のため)。
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint k = gl_GlobalInvocationID.x;
+    if (k >= pc.particleCount) return;
+
+    uint j = readUint(pc.sortedIdxIdx, k);
+    writeVec4(pc.sortedPredPIdx, k, readVec4(pc.predPIdx, j));
+    writeUint(pc.sortedTypeFlagIdx, k, readUint(pc.typeFlagIdx, j));
+}

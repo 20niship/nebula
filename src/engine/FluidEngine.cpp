@@ -50,6 +50,9 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   sortedIdxIdx_   = attrBuf_.addAttribute("sorted", sizeof(uint32_t), totalCap);
   densityIdx_     = attrBuf_.addAttribute("density", sizeof(float), totalCap);
   lambdaPbfIdx_   = attrBuf_.addAttribute("lambdaPbf", sizeof(float), totalCap);
+  // issue #65: sortedIdx順に物理コピーした predP/typeFlag のキャッシュ (近傍探索の連続アクセス化)
+  sortedPredPIdx_    = attrBuf_.addAttribute("sortedPredP", sizeof(glm::vec4), totalCap);
+  sortedTypeFlagIdx_ = attrBuf_.addAttribute("sortedTypeFlag", sizeof(uint32_t), totalCap);
   omegaIdx_       = attrBuf_.addAttribute("omega", sizeof(glm::vec4), totalCap);
   lifeIdx_        = attrBuf_.addAttribute("life", sizeof(float), totalCap);
   emitterIdxIdx_  = attrBuf_.addAttribute("emitterIdx", sizeof(uint32_t), totalCap);
@@ -98,6 +101,7 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   load(kZeroCells_, "zero_cells.comp");
   load(kAbsorb_, "fluid_absorb.comp");
   load(kLifetime_, "fluid_lifetime.comp");
+  load(kPbfReorder_, "pbf_reorder.comp"); // issue #65: cellId()/mortonAxisTriples()不使用のため静的コンパイルで足りる
 
   // 空間ハッシュ近傍探索を使うシェーダー (cellId()/mortonAxisTriples() を common.glsl
   // から呼ぶもの) は、アダプティブ(直方体)Morton定数をドメイン形状(gridRes)から
@@ -395,6 +399,7 @@ void FluidEngine::cleanup() {
   kHashScanGlobal_.cleanup();
   kHashAddBase_.cleanup();
   kHashSort_.cleanup();
+  kPbfReorder_.cleanup();
   kPbfDensity_.cleanup();
   kPbfDeltaP_.cleanup();
   kPbfViscosity_.cleanup();
@@ -530,6 +535,8 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     pc.forceCount        = (uint32_t)forces_.size();
     pc.densityIdx        = densityIdx_;
     pc.lambdaPbfIdx      = lambdaPbfIdx_;
+    pc.sortedPredPIdx    = sortedPredPIdx_;    // issue #65
+    pc.sortedTypeFlagIdx = sortedTypeFlagIdx_; // issue #65
     pc.fluidStart        = cfg_.max_boundary;
     // PBF 論文準拠パラメータ
     pc.cfmEpsilon       = cfmEpsilon;
@@ -589,8 +596,20 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     kHashSort_.dispatch(cmd, ds, pc, totalN);
     computeBarrier(cmd);
 
+    // issue #65: pbf_reorder.comp 用の有効スロット数。hash_sort.comp は typeFlag==6
+    // (未使用境界プレースホルダ)を書き込まずスキップするため、sortedIdx は
+    // [0, nBoundary+nFluid_) にのみ有効な値が詰まっている。totalN(=max_boundary+nFluid_)
+    // をそのまま使うと未書き込み領域を読んでしまうため、実際に埋まっている範囲に限定する。
+    const uint32_t validSortedN = nBoundary + nFluid_;
+    SimPC reorderPc          = pc;
+    reorderPc.particleCount  = validSortedN;
+
     // ④ PBF 不圧縮ソルバー × pbfIterations
     for(int iter = 0; iter < pbfIterations; ++iter) {
+      // predP は反復ごとに kPbfDeltaP_ が更新するため、density の前に毎回
+      // sortedPredP/sortedTypeFlag を最新化する (issue #65: 物理reorderキャッシュ)。
+      kPbfReorder_.dispatch(cmd, ds, reorderPc, validSortedN);
+      computeBarrier(cmd);
       kPbfDensity_.dispatch(cmd, ds, pc, nFluid_);
       computeBarrier(cmd);
       kPbfDeltaP_.dispatch(cmd, ds, pc, nFluid_);

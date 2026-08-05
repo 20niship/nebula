@@ -48,6 +48,9 @@ void PBFHarness::init(const HeadlessCtx& ctx, const Config& cfg, const std::stri
   sortedIdx_  = attrBuf_.addAttribute("sorted", sizeof(uint32_t), totalN);
   densityIdx_ = attrBuf_.addAttribute("density", sizeof(float), totalN);
   lambdaIdx_  = attrBuf_.addAttribute("lambdaPbf", sizeof(float), totalN);
+  // issue #65: sortedIdx順に物理コピーした predP/typeFlag のキャッシュ (近傍探索の連続アクセス化)
+  sortedPredPIdx_    = attrBuf_.addAttribute("sortedPredP", sizeof(glm::vec4), totalN);
+  sortedTypeFlagIdx_ = attrBuf_.addAttribute("sortedTypeFlag", sizeof(uint32_t), totalN);
 
   auto pool  = ctx.commandPool;
   auto queue = ctx.computeQueue;
@@ -97,6 +100,7 @@ void PBFHarness::init(const HeadlessCtx& ctx, const Config& cfg, const std::stri
   load(kScanGlob_, "hash_scan_global.comp.spv");
   load(kAddBase_, "hash_add_base.comp.spv");
   load(kUpdateVel_, "update_velocity.comp.spv");
+  load(kPbfReorder_, "pbf_reorder.comp.spv"); // issue #65: cellId()/mortonAxisTriples()不使用のため静的コンパイルで足りる
 
   // 空間ハッシュ近傍探索シェーダー (cellId()/mortonAxisTriples() 使用) はアダプティブ
   // (直方体)Morton定数をドメイン形状から算出し#defineで注入する必要があるため、
@@ -158,6 +162,8 @@ void PBFHarness::recordSubstep(VkCommandBuffer cmd, float subDt) {
   pc.forceCount        = (uint32_t)forces_.size();
   pc.densityIdx        = densityIdx_;
   pc.lambdaPbfIdx      = lambdaIdx_;
+  pc.sortedPredPIdx    = sortedPredPIdx_;    // issue #65
+  pc.sortedTypeFlagIdx = sortedTypeFlagIdx_; // issue #65
   pc.boundaryStart     = cfg_.N;
   pc.cfmEpsilon        = cfg_.cfmEpsilon;
 
@@ -199,7 +205,13 @@ void PBFHarness::recordSubstep(VkCommandBuffer cmd, float subDt) {
   computeBarrier(cmd);
 
   // 4. PBF incompressibility solver x pbfIterations
+  // issue #65: このハーネスは境界未使用プレースホルダを持たない(全 totalN スロットが
+  // 有効な流体/境界粒子)ため、reorder の有効範囲は pc.particleCount(=totalN)のままでよい。
   for(int iter = 0; iter < cfg_.pbfIterations; ++iter) {
+    // predP は反復ごとに kPbfDeltaP_ が更新するため、density の前に毎回
+    // sortedPredP/sortedTypeFlag を最新化する (issue #65: 物理reorderキャッシュ)。
+    kPbfReorder_.dispatch(cmd, ds, pc, totalN);
+    computeBarrier(cmd);
     kPbfDensity_.dispatch(cmd, ds, pc, totalN);
     computeBarrier(cmd);
     kPbfDeltaP_.dispatch(cmd, ds, pc, totalN);
@@ -252,6 +264,7 @@ void PBFHarness::cleanup() {
   kScanGlob_.cleanup();
   kAddBase_.cleanup();
   kSort_.cleanup();
+  kPbfReorder_.cleanup();
   kPbfDensity_.cleanup();
   kPbfDeltaP_.cleanup();
   kPbfViscosity_.cleanup();

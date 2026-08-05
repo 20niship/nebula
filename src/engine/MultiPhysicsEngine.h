@@ -80,6 +80,8 @@ private:
   uint32_t sortedIdxIdx_     = 0;
   uint32_t densityIdx_       = 0;
   uint32_t lambdaPbfIdx_     = 0;
+  uint32_t sortedPredPIdx_    = 0; // issue #65: sortedIdx順に物理コピーした predP
+  uint32_t sortedTypeFlagIdx_ = 0; // issue #65: sortedIdx順に物理コピーした typeFlag
   uint32_t stretchEdgesIdx_  = 0;
   uint32_t clothLambdasIdx_  = 0;
   uint32_t couplingForceIdx_ = 0;
@@ -94,6 +96,7 @@ private:
   ComputePipeline kHashScanGlobal_;
   ComputePipeline kHashAddBase_;
   ComputePipeline kHashSort_;
+  ComputePipeline kPbfReorder_; // issue #65: predP/typeFlag を sortedIdx 順に物理コピー
   ComputePipeline kPbfDensity_;
   ComputePipeline kPbfDeltaP_;
   ComputePipeline kCouplingCloth_;

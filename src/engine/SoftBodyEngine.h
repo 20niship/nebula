@@ -114,11 +114,10 @@ private:
   float cellSize_ = 10.0f / 64.0f;
 
   ComputePipeline kPredict_;
-  ComputePipeline kSdfCollision_;
   ComputePipeline kSolveEdge_;
   ComputePipeline kZeroEdgeLambda_;
   ComputePipeline kSolveVolume_;
   ComputePipeline kZeroVolLambda_;
   ComputePipeline kParticleCollision_;
-  ComputePipeline kUpdateVelocity_;
+  ComputePipeline kSdfVelocity_; // issue #66: SDF境界再衝突+速度更新を統合(旧kSdfCollision_+kUpdateVelocity_)
 };

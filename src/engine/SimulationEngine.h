@@ -84,7 +84,7 @@ private:
   ComputePipeline kHashSort_;
   ComputePipeline kSolveDensity_;
   ComputePipeline kSolveStretch_;
-  ComputePipeline kUpdateVelocity_;
+  ComputePipeline kSdfVelocity_; // issue #66: 末尾のSDF境界再衝突+速度更新を統合(sdf_collision_velocity.comp)
   ComputePipeline kZeroLambdas_;
   ComputePipeline kZeroCells_;
 

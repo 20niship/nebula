@@ -8,13 +8,21 @@ void main() {
     uint i = gl_GlobalInvocationID.x;
     if (i >= pc.particleCount) return;
 
+    // issue #70: [0,boundaryUsedCount) と [fluidStart,fluidStart+N) の2レンジだけを
+    // ディスパッチ対象にするため、論理添字 i を実バッファ添字 idx へ変換する。
+    // boundaryUsedCount==0 (他エンジンの既定値、または境界未使用の FluidEngine) の場合は
+    // idx = fluidStart + i に退化し、後者はさらに fluidStart 自体も未設定エンジンでは
+    // 0 なので idx=i の恒等変換になる。
+    uint idx = (i < pc.boundaryUsedCount) ? i : (pc.fluidStart + (i - pc.boundaryUsedCount));
+
     // 未使用スロット（境界未ロード分の空き領域; typeFlag=6=TYPE_FLAG_UNUSED）は全て
     // predP=(0,0,0) のため同一セルに大量に積み上がり近傍探索を破綻させる。ここで除外する。
     // typeFlag=0 は XPBD エンジン (PhysicsHarness 等) で「砂」として実際に衝突判定が
     // 必要な粒子に使われるため、未使用スロットの判定には専用の値(6)を使う。
-    if (readUint(pc.typeFlagIdx, i) == 6u) return;
+    // (issue #70 適用後は本来このチェックに到達しないはずだが、安全のため残す)
+    if (readUint(pc.typeFlagIdx, idx) == 6u) return;
 
-    vec4 predP = readVec4(pc.predPIdx, i);
+    vec4 predP = readVec4(pc.predPIdx, idx);
     uint cid   = cellId(predP.xyz);
 
     atomicAdd(buffers[pc.cellCountIdx].data[cid], 1u);

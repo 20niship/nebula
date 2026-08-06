@@ -531,6 +531,7 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     pc.densityIdx        = densityIdx_;
     pc.lambdaPbfIdx      = lambdaPbfIdx_;
     pc.fluidStart        = cfg_.max_boundary;
+    pc.boundaryUsedCount = nBoundary; // issue #70: hash_count/hash_sort用の実境界粒子数
     // PBF 論文準拠パラメータ
     pc.cfmEpsilon       = cfmEpsilon;
     pc.scorrK           = scorrK;
@@ -562,7 +563,15 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     kZeroCells_.dispatch(cmd, ds, pc, cfg_.totalCells());
     computeBarrier(cmd); // kHashCount_ が cellCount を読むため必要
 
-    kHashCount_.dispatch(cmd, ds, pc, totalN);
+    // issue #70: hash_count/hash_sort は [0,nBoundary)+[max_boundary,max_boundary+nFluid_)
+    // の実粒子のみをディスパッチ対象にし、間の未使用境界プレースホルダ
+    // ([nBoundary,max_boundary)) をスキップする。pc.particleCount はこの2パス専用に
+    // validN へ差し替えた別コピーを使う(他ディスパッチは totalN 前提のため pc 本体は不変)。
+    const uint32_t validN = nBoundary + nFluid_;
+    SimPC hashPc          = pc;
+    hashPc.particleCount  = validN;
+
+    kHashCount_.dispatch(cmd, ds, hashPc, validN);
     computeBarrier(cmd);
 
     {
@@ -586,7 +595,7 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     kHashAddBase_.dispatch(cmd, ds, pc, cfg_.totalCells());
     computeBarrier(cmd);
 
-    kHashSort_.dispatch(cmd, ds, pc, totalN);
+    kHashSort_.dispatch(cmd, ds, hashPc, validN); // issue #70: hashPc/validN で境界ギャップをスキップ
     computeBarrier(cmd);
 
     // ④ PBF 不圧縮ソルバー × pbfIterations

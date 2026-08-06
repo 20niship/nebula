@@ -90,8 +90,15 @@ struct SimPC {
   uint32_t foamParamsIdx;       // FoamParams (16 floats) の bindless index
   uint32_t maxDiffuseParticles; // 泡バッファの固定容量 (0=無効)。pbf_foam_advect の境界チェックに使用
                                  // (pc.particleCount は同 substep 内で別用途のため流用不可)
+
+  // issue #70: hash_count.comp/hash_sort.comp 専用。[0,boundaryUsedCount) と
+  // [fluidStart, fluidStart+nFluid) の2レンジだけをディスパッチ対象にし、間の未使用
+  // 境界プレースホルダ([boundaryUsedCount, fluidStart))をスキップするための実境界
+  // 粒子数。0(既定値)のときは従来通り fluidStart==boundaryUsedCount 相当の恒等変換になり
+  // 他エンジンの挙動には影響しない(他シェーダーは宣言のみで不使用)。
+  uint32_t boundaryUsedCount;
 };
-static_assert(sizeof(SimPC) == 220, "SimPC must be 220 bytes"); // issue #46 直方体ドメイン対応 (200B) + issue #47 泡 (foamPosIdx等5フィールド, +20B)
+static_assert(sizeof(SimPC) == 224, "SimPC must be 224 bytes"); // issue #46 直方体ドメイン対応 (200B) + issue #47 泡 (+20B) + issue #70 boundaryUsedCount (+4B)
 static_assert(offsetof(SimPC, cellCountIdx) == 20, "hash compat offset");
 static_assert(offsetof(SimPC, cellOffsetIdx) == 24, "hash compat offset");
 static_assert(offsetof(SimPC, hashCells) == 36, "hash compat offset");

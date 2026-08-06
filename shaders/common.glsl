@@ -68,6 +68,9 @@ layout(push_constant) uniform PC {
     uint  foamKindIdx;
     uint  foamParamsIdx;
     uint  maxDiffuseParticles;
+    // issue #70: hash_count.comp/hash_sort.comp 専用。境界プレースホルダのギャップを
+    // スキップするための実境界粒子数(0=無効、恒等変換)
+    uint  boundaryUsedCount;
 } pc;
 
 // ── vec4 読み書き（FP32, MoltenVK 関数化バグ回避のためマクロ）────

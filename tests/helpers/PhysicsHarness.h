@@ -74,7 +74,8 @@ private:
 
   ComputePipeline kPredict_, kSdf_;
   ComputePipeline kHashCnt_, kScanLoc_, kScanGlob_, kAddBase_, kSort_;
-  ComputePipeline kSolveDen_, kSolveSt_, kUpdateVel_;
+  ComputePipeline kSolveDen_, kSolveSt_;
+  ComputePipeline kSdfVel_; // 末尾のSDF再適用+速度更新を統合(sdf_collision_velocity.comp)
 
   void recordSubstep(VkCommandBuffer cmd, float subDt);
   void computeBarrier(VkCommandBuffer cmd);

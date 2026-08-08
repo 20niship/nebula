@@ -99,10 +99,10 @@ void PhysicsHarness::init(const HeadlessCtx& ctx, const Config& cfg, const std::
   // Force (issue #30): cfg.gravity/windX/windZ 互換の既定Forceを一度だけ登録する
   forcesIdx_ = attrBuf_.addAttribute("forces", sizeof(ForceGPU), 2);
   {
-    auto legacyGravity      = GravityForce::FromDirection({0.0f, 0.0f, 1.0f}, cfg.gravity); // Z-up
-    auto legacyWind         = ConstantWindForce::FromDirection({cfg.windX, cfg.windZ, 0.0f}, 1.0f);
-    legacyWind->affectMask  = ForceAffectTypeFlag(2u); // 布/文字列 (typeFlag==2) のみ
-    forces_                 = {legacyGravity, legacyWind};
+    auto legacyGravity     = GravityForce::FromDirection({0.0f, 0.0f, 1.0f}, cfg.gravity); // Z-up
+    auto legacyWind        = ConstantWindForce::FromDirection({cfg.windX, cfg.windZ, 0.0f}, 1.0f);
+    legacyWind->affectMask = ForceAffectTypeFlag(2u); // 布/文字列 (typeFlag==2) のみ
+    forces_                = {legacyGravity, legacyWind};
     std::vector<ForceGPU> packed;
     for(const auto& f : forces_) packed.push_back(f->pack());
     attrBuf_.upload("forces", packed.data(), sizeof(ForceGPU) * packed.size(), pool, queue);
@@ -119,19 +119,16 @@ void PhysicsHarness::init(const HeadlessCtx& ctx, const Config& cfg, const std::
   load(kScanGlob_, "hash_scan_global.comp.spv");
   load(kAddBase_, "hash_add_base.comp.spv");
   load(kSolveSt_, "solve_stretch.comp.spv");
-  load(kUpdateVel_, "update_velocity.comp.spv");
+  load(kSdfVel_, "sdf_collision_velocity.comp.spv"); // 末尾のkSdf_+kUpdateVel_を統合
 
   // 空間ハッシュ近傍探索シェーダー (cellId()/mortonAxisTriples() 使用) はアダプティブ
   // (直方体)Morton定数をドメイン形状から算出し#defineで注入する必要があるため、
   // 実行時コンパイルする (FluidEngine::init() 等と同じ理由・同じパターン)。
   // このハーネスは常に立方体ドメイン (gridRes 一律) を想定している。
-  const domain::AdaptiveMortonParams morton = domain::computeAdaptiveMortonParams(glm::uvec3(cfg.gridRes));
+  const domain::AdaptiveMortonParams morton                            = domain::computeAdaptiveMortonParams(glm::uvec3(cfg.gridRes));
   const std::vector<std::pair<std::string, std::string>> mortonDefines = {
-      {"ADAPTIVE_MASK", std::to_string(morton.mask) + "u"},
-      {"ADAPTIVE_COMMON_BITS", std::to_string(morton.commonBits) + "u"},
-      {"ADAPTIVE_SHIFT_X", std::to_string(morton.shiftX) + "u"},
-      {"ADAPTIVE_SHIFT_Y", std::to_string(morton.shiftY) + "u"},
-      {"ADAPTIVE_SHIFT_Z", std::to_string(morton.shiftZ) + "u"},
+    {"ADAPTIVE_MASK", std::to_string(morton.mask) + "u"},      {"ADAPTIVE_COMMON_BITS", std::to_string(morton.commonBits) + "u"}, {"ADAPTIVE_SHIFT_X", std::to_string(morton.shiftX) + "u"},
+    {"ADAPTIVE_SHIFT_Y", std::to_string(morton.shiftY) + "u"}, {"ADAPTIVE_SHIFT_Z", std::to_string(morton.shiftZ) + "u"},
   };
   auto loadAdaptive = [&](ComputePipeline& k, const std::string& name) {
     std::vector<uint32_t> spirv = DefineShaderCompiler::compile(name, mortonDefines);
@@ -226,7 +223,7 @@ void PhysicsHarness::recordSubstep(VkCommandBuffer cmd, float subDt) {
     kScanLoc_.dispatch(cmd, ds, pc, nCells_); // dispatch one workgroup per 256 cells
     computeBarrier(cmd);
     kScanGlob_.dispatch(cmd, ds, pc, nGroups_); // one workgroup (1024 threads) for all groups
-    computeBarrier(cmd); // exclusive prefix を書き戻してから kAddBase_ が読む
+    computeBarrier(cmd);                        // exclusive prefix を書き戻してから kAddBase_ が読む
     kAddBase_.dispatch(cmd, ds, pc, nCells_);
     computeBarrier(cmd);
     kSort_.dispatch(cmd, ds, pc, N);
@@ -238,8 +235,8 @@ void PhysicsHarness::recordSubstep(VkCommandBuffer cmd, float subDt) {
     computeBarrier(cmd);
   }
 
-  // ⑤ Update velocity
-  kUpdateVel_.dispatch(cmd, ds, pc, N);
+  // ⑤ SDF再適用 + 速度更新 (1ディスパッチに統合)
+  kSdfVel_.dispatch(cmd, ds, pc, N);
   computeBarrier(cmd);
 }
 
@@ -280,6 +277,6 @@ void PhysicsHarness::cleanup() {
   kSort_.cleanup();
   kSolveDen_.cleanup();
   kSolveSt_.cleanup();
-  kUpdateVel_.cleanup();
+  kSdfVel_.cleanup();
   attrBuf_.cleanup();
 }

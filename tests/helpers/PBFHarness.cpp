@@ -81,7 +81,7 @@ void PBFHarness::init(const HeadlessCtx& ctx, const Config& cfg, const std::stri
   forcesIdx_ = attrBuf_.addAttribute("forces", sizeof(ForceGPU), 1);
   {
     auto legacyGravity = GravityForce::FromDirection({0.0f, 0.0f, 1.0f}, cfg.gravity); // Z-up
-    forces_             = {legacyGravity};
+    forces_            = {legacyGravity};
     std::vector<ForceGPU> packed;
     for(const auto& f : forces_) packed.push_back(f->pack());
     attrBuf_.upload("forces", packed.data(), sizeof(ForceGPU) * packed.size(), pool, queue);
@@ -96,19 +96,16 @@ void PBFHarness::init(const HeadlessCtx& ctx, const Config& cfg, const std::stri
   load(kScanLoc_, "hash_scan_local.comp.spv");
   load(kScanGlob_, "hash_scan_global.comp.spv");
   load(kAddBase_, "hash_add_base.comp.spv");
-  load(kUpdateVel_, "update_velocity.comp.spv");
+  load(kSdfVel_, "sdf_collision_velocity.comp.spv"); // 末尾のkSdf_+kUpdateVel_を統合
 
   // 空間ハッシュ近傍探索シェーダー (cellId()/mortonAxisTriples() 使用) はアダプティブ
   // (直方体)Morton定数をドメイン形状から算出し#defineで注入する必要があるため、
   // 実行時コンパイルする (FluidEngine::init() 等と同じ理由・同じパターン)。
   // このハーネスは常に立方体ドメイン (gridRes 一律) を想定している。
-  const domain::AdaptiveMortonParams morton = domain::computeAdaptiveMortonParams(glm::uvec3(cfg_.gridRes));
+  const domain::AdaptiveMortonParams morton                            = domain::computeAdaptiveMortonParams(glm::uvec3(cfg_.gridRes));
   const std::vector<std::pair<std::string, std::string>> mortonDefines = {
-      {"ADAPTIVE_MASK", std::to_string(morton.mask) + "u"},
-      {"ADAPTIVE_COMMON_BITS", std::to_string(morton.commonBits) + "u"},
-      {"ADAPTIVE_SHIFT_X", std::to_string(morton.shiftX) + "u"},
-      {"ADAPTIVE_SHIFT_Y", std::to_string(morton.shiftY) + "u"},
-      {"ADAPTIVE_SHIFT_Z", std::to_string(morton.shiftZ) + "u"},
+    {"ADAPTIVE_MASK", std::to_string(morton.mask) + "u"},      {"ADAPTIVE_COMMON_BITS", std::to_string(morton.commonBits) + "u"}, {"ADAPTIVE_SHIFT_X", std::to_string(morton.shiftX) + "u"},
+    {"ADAPTIVE_SHIFT_Y", std::to_string(morton.shiftY) + "u"}, {"ADAPTIVE_SHIFT_Z", std::to_string(morton.shiftZ) + "u"},
   };
   auto loadAdaptive = [&](ComputePipeline& k, const std::string& name) {
     std::vector<uint32_t> spirv = DefineShaderCompiler::compile(name, mortonDefines);
@@ -206,12 +203,8 @@ void PBFHarness::recordSubstep(VkCommandBuffer cmd, float subDt) {
     computeBarrier(cmd);
   }
 
-  // 5. SDF re-apply
-  kSdf_.dispatch(cmd, ds, pc, totalN);
-  computeBarrier(cmd);
-
-  // 6. Velocity update
-  kUpdateVel_.dispatch(cmd, ds, pc, totalN);
+  // 5+6. SDF re-apply + Velocity update (1ディスパッチに統合)
+  kSdfVel_.dispatch(cmd, ds, pc, totalN);
   computeBarrier(cmd);
 
   // 7. XSPH viscosity
@@ -255,6 +248,6 @@ void PBFHarness::cleanup() {
   kPbfDensity_.cleanup();
   kPbfDeltaP_.cleanup();
   kPbfViscosity_.cleanup();
-  kUpdateVel_.cleanup();
+  kSdfVel_.cleanup();
   attrBuf_.cleanup();
 }

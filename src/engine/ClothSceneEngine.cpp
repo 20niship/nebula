@@ -149,7 +149,7 @@ void ClothSceneEngine::init(VkDevice device, VmaAllocator allocator, VkDescripto
   load(kHashScanGlobal_, "hash_scan_global.comp");
   load(kHashAddBase_, "hash_add_base.comp");
   load(kSolveStretch_, "solve_stretch.comp");
-  load(kUpdateVelocity_, "update_velocity.comp");
+  load(kSdfVelocity_, "sdf_collision_velocity.comp"); // issue #66: 末尾のkSdfCollision_+kUpdateVelocity_統合
   load(kZeroLambdas_, "zero_lambdas.comp");
   load(kZeroCells_, "zero_cells.comp");
   if(hasPinAnimated_) load(kMovePins_, "move_pins.comp");
@@ -202,7 +202,7 @@ void ClothSceneEngine::cleanup() {
   kHashSort_.cleanup();
   kSolveDensity_.cleanup();
   kSolveStretch_.cleanup();
-  kUpdateVelocity_.cleanup();
+  kSdfVelocity_.cleanup();
   kZeroLambdas_.cleanup();
   kZeroCells_.cleanup();
   if(hasPinAnimated_) kMovePins_.cleanup();
@@ -351,12 +351,10 @@ void ClothSceneEngine::step(VkCommandBuffer cmd, float dt) {
         kSolveDensity_.dispatch(cmd, ds, pc, totalCount_);
         computeBarrier(cmd);
       }
-      kSdfCollision_.dispatch(cmd, ds, pc, totalCount_);
-      computeBarrier(cmd);
     }
 
-    // ⑧ 速度更新
-    kUpdateVelocity_.dispatch(cmd, ds, pc, totalCount_);
+    // ⑧ SDF境界再衝突 + 速度更新 (issue #66: 1ディスパッチに統合)
+    kSdfVelocity_.dispatch(cmd, ds, pc, totalCount_);
     computeBarrier(cmd);
   }
 }

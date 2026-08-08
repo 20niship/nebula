@@ -40,13 +40,12 @@ void SoftBodyEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorP
   initForces();
 
   auto load = [&](ComputePipeline& k, const std::string& name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
-  load(kSdfCollision_, "sdf_collision.comp");
   load(kSolveEdge_, "solve_stretch.comp");
   load(kZeroEdgeLambda_, "zero_lambdas.comp");
   load(kSolveVolume_, "sb_solve_volume.comp");
   load(kZeroVolLambda_, "sb_zero_vol_lambdas.comp");
   load(kParticleCollision_, "sb_particle_collision.comp");
-  load(kUpdateVelocity_, "update_velocity.comp");
+  load(kSdfVelocity_, "sdf_collision_velocity.comp"); // issue #66: kSdfCollision_+kUpdateVelocity_ 統合
 
   descriptorSetLayout = attrBuf_.descriptorSetLayout;
   descriptorSet       = attrBuf_.descriptorSet;
@@ -56,13 +55,12 @@ void SoftBodyEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorP
 
 void SoftBodyEngine::cleanup() {
   kPredict_.cleanup();
-  kSdfCollision_.cleanup();
   kSolveEdge_.cleanup();
   kZeroEdgeLambda_.cleanup();
   kSolveVolume_.cleanup();
   kZeroVolLambda_.cleanup();
   kParticleCollision_.cleanup();
-  kUpdateVelocity_.cleanup();
+  kSdfVelocity_.cleanup();
   cleanupEngineBase();
 }
 
@@ -162,12 +160,8 @@ void SoftBodyEngine::step(VkCommandBuffer cmd, float dt) {
     kParticleCollision_.dispatch(cmd, ds, pc, totalCount_);
     computeBarrier(cmd);
 
-    // ⑤ SDF 境界衝突
-    kSdfCollision_.dispatch(cmd, ds, pc, totalCount_);
-    computeBarrier(cmd);
-
-    // ⑥ XPBD 速度更新: v = (predP - P) / dt
-    kUpdateVelocity_.dispatch(cmd, ds, pc, totalCount_);
+    // ⑤+⑥ SDF境界衝突 + XPBD速度更新 (issue #66: 1ディスパッチに統合)
+    kSdfVelocity_.dispatch(cmd, ds, pc, totalCount_);
     computeBarrier(cmd);
   }
 }

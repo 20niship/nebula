@@ -1,6 +1,6 @@
 #pragma once
 // examples 共通 ImGui UI ヘルパー。
-// FluidEngine / SimulationEngine / MultiPhysicsEngine のパラメータを
+// FluidEngine / SimulationEngine のパラメータを
 // 日本語 tooltip 付きで描画する inline 関数群。
 //
 // 使い方: 各 example .cpp で #include "utils.hpp" を追加し、
@@ -8,7 +8,6 @@
 
 #include "core/Force.h"
 #include "engine/FluidEngine.h"
-#include "engine/MultiPhysicsEngine.h"
 #include "engine/SimulationEngine.h"
 #include <imgui.h>
 
@@ -123,46 +122,6 @@ inline void cloth_params(SimulationEngine& sim, GravityForce& gravity, ConstantW
   SIM_TIP("1フレームを分割するサブステップ数。\n多いほど安定するが計算コストが増える。");
   ImGui::Checkbox("自己衝突", &sim.enableSelfCollision);
   SIM_TIP("布の自己衝突を有効化。有効にすると布が自分自身を貫通しなくなる。\n計算コストが増える。");
-}
-
-// ── Multi-Physics 用（布・流体サブセット + 連成） ─────────────────────────────
-
-// issue #30 レビュー対応: gravity/windX/windZ は MultiPhysicsEngine の public
-// メンバとしては廃止されたため、呼び出し側が addForce() で登録した
-// GravityForce/ConstantWindForce への参照を直接受け取る。
-inline void multi_physics_params(MultiPhysicsEngine& e, GravityForce& gravity, ConstantWindForce& wind) {
-  ImGui::Text("シミュレーション共通");
-  ImGui::SliderFloat("重力", &gravity.strength, 0.0f, 20.0f);
-  SIM_TIP("重力加速度 [m/s²]。");
-  ImGui::SliderFloat("反発係数", &e.restitution, 0.0f, 1.0f);
-  SIM_TIP("壁・床との衝突時の反発係数。0で完全吸収、1で完全弾性。");
-  ImGui::SliderInt("サブステップ", &e.numSubsteps, 1, 20);
-  SIM_TIP("1フレームを分割するサブステップ数。多いほど安定するが計算コストが増える。");
-  ImGui::SliderInt("PBFイテレーション", &e.pbfIterations, 1, 10);
-  SIM_TIP("PBF 流体の密度拘束の反復回数。多いほど不圧縮性が正確になる。推奨: 2〜4。");
-
-  ImGui::Separator();
-  ImGui::Text("流体");
-  ImGui::SliderFloat("静止密度 rho0", &e.rho0, 100.0f, 5000.0f);
-  SIM_TIP("流体の目標密度 [kg/m³]。高すぎると過圧縮、低すぎると膨張が起きる。");
-  ImGui::SliderFloat("粘性係数", &e.viscosityC, 0.0f, 0.1f, "%.4f");
-  SIM_TIP("XSPH粘性係数。大きいほど粘い流体になる。0で無粘性（水に近い）。");
-
-  ImGui::Separator();
-  ImGui::Text("布");
-  ImGui::SliderFloat("伸び剛性", &e.stretchCompliance, 0.0f, 1e-2f, "%.6f");
-  SIM_TIP("布の伸び拘束のコンプライアンス（柔らかさ）。0で完全剛体、大きいほど伸びやすい。");
-  ImGui::SliderFloat("曲げ剛性", &e.bendCompliance, 0.0f, 1e-1f, "%.6f");
-  SIM_TIP("布の曲げ拘束のコンプライアンス。大きいほど曲がりやすくなる。");
-  ImGui::SliderFloat("風 X", &wind.direction.x, -10.0f, 10.0f);
-  SIM_TIP("X軸方向の風力 [N/m²]。");
-  ImGui::SliderFloat("風 Z", &wind.direction.y, -10.0f, 10.0f);
-  SIM_TIP("Z軸方向の風力 [N/m²]。");
-
-  ImGui::Separator();
-  ImGui::Text("連成");
-  ImGui::Checkbox("流体-布 連成を有効化", &e.enableCoupling);
-  SIM_TIP("流体と布の双方向連成を有効化。\n有効にすると流体が布を押す/布が流体を押す相互作用が生じる。\n計算コストが増える。");
 }
 
 #undef SIM_TIP

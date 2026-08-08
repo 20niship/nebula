@@ -30,7 +30,7 @@ void SimulationEngine::init(VkDevice device, VmaAllocator allocator, VkDescripto
   load(kHashScanGlobal_, "hash_scan_global.comp");
   load(kHashAddBase_, "hash_add_base.comp");
   load(kSolveStretch_, "solve_stretch.comp");
-  load(kUpdateVelocity_, "update_velocity.comp");
+  load(kSdfVelocity_, "sdf_collision_velocity.comp"); // issue #66: 末尾のkSdfCollision_+kUpdateVelocity_統合
   load(kZeroLambdas_, "zero_lambdas.comp");
   load(kZeroCells_, "zero_cells.comp");
 
@@ -212,7 +212,7 @@ void SimulationEngine::cleanup() {
   kHashSort_.cleanup();
   kSolveDensity_.cleanup();
   kSolveStretch_.cleanup();
-  kUpdateVelocity_.cleanup();
+  kSdfVelocity_.cleanup();
   kZeroLambdas_.cleanup();
   kZeroCells_.cleanup();
   cleanupEngineBase();
@@ -340,12 +340,10 @@ void SimulationEngine::step(VkCommandBuffer cmd, float dt) {
         kSolveDensity_.dispatch(cmd, ds, pc, cfg_.clothVertCount());
         computeBarrier(cmd);
       }
-      kSdfCollision_.dispatch(cmd, ds, pc, cfg_.clothVertCount());
-      computeBarrier(cmd);
     }
 
-    // ⑦ Update Velocity
-    kUpdateVelocity_.dispatch(cmd, ds, pc, cfg_.clothVertCount());
+    // ⑦ SDF境界再衝突 + 速度更新 (issue #66: 1ディスパッチに統合)
+    kSdfVelocity_.dispatch(cmd, ds, pc, cfg_.clothVertCount());
     computeBarrier(cmd);
   }
 }

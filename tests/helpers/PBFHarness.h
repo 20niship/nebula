@@ -70,7 +70,7 @@ private:
   ComputePipeline kPbfDensity_;
   ComputePipeline kPbfDeltaP_;
   ComputePipeline kPbfViscosity_;
-  ComputePipeline kUpdateVel_;
+  ComputePipeline kSdfVel_; // 末尾のSDF再適用+速度更新を統合(sdf_collision_velocity.comp)
 
   void computeBarrier(VkCommandBuffer cmd);
   void fillBarrier(VkCommandBuffer cmd, VkBuffer buf);

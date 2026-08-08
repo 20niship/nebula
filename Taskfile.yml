@@ -195,7 +195,7 @@ tasks:
     desc: "テストケース別シミュレーションを実行してグリッド動画を生成 (sim_captures/simulation_results.mp4)"
     deps: [configure]
     cmds:
-      - cmake --build {{.BUILD_DIR}} --target fluid_pbf cloth_3d smoke cloth_scene fluid_absorb xpbd_softbody fluid_wave_foam screw_fluid mpm_elastic mpm_avalanche mpm_multimaterial mpm_snow_impact mpm_geolayer pyro_cow_blast pyro_explosion -j{{.JOBS}}
+      - cmake --build {{.BUILD_DIR}} -j{{.JOBS}}
       - /opt/homebrew/bin/python3 capture_sim.py
     env:
       MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS: "0"

@@ -62,10 +62,8 @@ SimPC MultiPhysicsEngine::buildPC(float subDt) const {
   pc.forceCount        = (uint32_t)forces_.size();
   pc.densityIdx        = densityIdx_;
   pc.lambdaPbfIdx      = lambdaPbfIdx_;
-  // issue #65: pbfReorderEnabled==false のとき 0 (無効) を渡し、シェーダー側で
-  // predP[j]/typeFlag[j] 直接gatherにフォールバックさせる。
-  pc.sortedPredPIdx    = pbfReorderEnabled ? sortedPredPIdx_ : 0;
-  pc.sortedTypeFlagIdx = pbfReorderEnabled ? sortedTypeFlagIdx_ : 0;
+  pc.sortedPredPIdx    = sortedPredPIdx_;
+  pc.sortedTypeFlagIdx = sortedTypeFlagIdx_;
   pc.boundaryStart     = cfg_.fluidStart(); // 境界粒子なし; 流体開始でも使用される
   pc.linearDamping     = 0.6f;              // 布の従来挙動を維持（update_velocity 共用）
   pc.cfmEpsilon        = 100.0f;            // pbf_density の CFM ε（0 除算回避）
@@ -116,13 +114,14 @@ void MultiPhysicsEngine::init(VkDevice device, VmaAllocator allocator, VkDescrip
   // (直方体)Morton定数をドメイン形状から算出し#defineで注入する必要があるため、
   // 実行時コンパイルする (FluidEngine::init() と同じ理由・同じパターン)。
   const domain::AdaptiveMortonParams morton = domain::computeAdaptiveMortonParams(cfg_.gridRes());
-  const std::vector<std::pair<std::string, std::string>> mortonDefines = {
+  std::vector<std::pair<std::string, std::string>> mortonDefines = {
       {"ADAPTIVE_MASK", std::to_string(morton.mask) + "u"},
       {"ADAPTIVE_COMMON_BITS", std::to_string(morton.commonBits) + "u"},
       {"ADAPTIVE_SHIFT_X", std::to_string(morton.shiftX) + "u"},
       {"ADAPTIVE_SHIFT_Y", std::to_string(morton.shiftY) + "u"},
       {"ADAPTIVE_SHIFT_Z", std::to_string(morton.shiftZ) + "u"},
   };
+  if(pbfReorderEnabled) mortonDefines.push_back({"PBF_REORDER_ENABLED", "1"});
   auto loadAdaptive = [&](ComputePipeline& k, const std::string& name) {
     std::vector<uint32_t> spirv = DefineShaderCompiler::compile(name, mortonDefines);
     k.initFromSpirv(device, attrBuf_.descriptorSetLayout, spirv);

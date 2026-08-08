@@ -107,13 +107,14 @@ void PBFHarness::init(const HeadlessCtx& ctx, const Config& cfg, const std::stri
   // 実行時コンパイルする (FluidEngine::init() 等と同じ理由・同じパターン)。
   // このハーネスは常に立方体ドメイン (gridRes 一律) を想定している。
   const domain::AdaptiveMortonParams morton = domain::computeAdaptiveMortonParams(glm::uvec3(cfg_.gridRes));
-  const std::vector<std::pair<std::string, std::string>> mortonDefines = {
+  std::vector<std::pair<std::string, std::string>> mortonDefines = {
       {"ADAPTIVE_MASK", std::to_string(morton.mask) + "u"},
       {"ADAPTIVE_COMMON_BITS", std::to_string(morton.commonBits) + "u"},
       {"ADAPTIVE_SHIFT_X", std::to_string(morton.shiftX) + "u"},
       {"ADAPTIVE_SHIFT_Y", std::to_string(morton.shiftY) + "u"},
       {"ADAPTIVE_SHIFT_Z", std::to_string(morton.shiftZ) + "u"},
   };
+  if(cfg_.pbfReorderEnabled) mortonDefines.push_back({"PBF_REORDER_ENABLED", "1"});
   auto loadAdaptive = [&](ComputePipeline& k, const std::string& name) {
     std::vector<uint32_t> spirv = DefineShaderCompiler::compile(name, mortonDefines);
     k.initFromSpirv(ctx.device, attrBuf_.descriptorSetLayout, spirv);
@@ -162,8 +163,8 @@ void PBFHarness::recordSubstep(VkCommandBuffer cmd, float subDt) {
   pc.forceCount        = (uint32_t)forces_.size();
   pc.densityIdx        = densityIdx_;
   pc.lambdaPbfIdx      = lambdaIdx_;
-  pc.sortedPredPIdx    = cfg_.pbfReorderEnabled ? sortedPredPIdx_ : 0;
-  pc.sortedTypeFlagIdx = cfg_.pbfReorderEnabled ? sortedTypeFlagIdx_ : 0;
+  pc.sortedPredPIdx    = sortedPredPIdx_;
+  pc.sortedTypeFlagIdx = sortedTypeFlagIdx_;
   pc.boundaryStart     = cfg_.N;
   pc.cfmEpsilon        = cfg_.cfmEpsilon;
 

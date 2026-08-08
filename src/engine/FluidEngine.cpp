@@ -109,13 +109,14 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   // ドメインごとに異なるこれらの定数を焼き込めないため)。src/core/Domain.h の
   // AdaptiveMortonParams / shaders/common.glsl の ADAPTIVE_* フォールバック定義と対。
   const domain::AdaptiveMortonParams morton = domain::computeAdaptiveMortonParams(cfg_.gridRes());
-  const std::vector<std::pair<std::string, std::string>> mortonDefines = {
+  std::vector<std::pair<std::string, std::string>> mortonDefines = {
       {"ADAPTIVE_MASK", std::to_string(morton.mask) + "u"},
       {"ADAPTIVE_COMMON_BITS", std::to_string(morton.commonBits) + "u"},
       {"ADAPTIVE_SHIFT_X", std::to_string(morton.shiftX) + "u"},
       {"ADAPTIVE_SHIFT_Y", std::to_string(morton.shiftY) + "u"},
       {"ADAPTIVE_SHIFT_Z", std::to_string(morton.shiftZ) + "u"},
   };
+  if(pbfReorderEnabled) mortonDefines.push_back({"PBF_REORDER_ENABLED", "1"});
   auto loadAdaptive = [&](ComputePipeline& k, const std::string& name) {
     std::vector<uint32_t> spirv = DefineShaderCompiler::compile(name, mortonDefines);
     k.initFromSpirv(device, attrBuf_.descriptorSetLayout, spirv);
@@ -535,8 +536,8 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     pc.forceCount        = (uint32_t)forces_.size();
     pc.densityIdx        = densityIdx_;
     pc.lambdaPbfIdx      = lambdaPbfIdx_;
-    pc.sortedPredPIdx    = pbfReorderEnabled ? sortedPredPIdx_ : 0;
-    pc.sortedTypeFlagIdx = pbfReorderEnabled ? sortedTypeFlagIdx_ : 0;
+    pc.sortedPredPIdx    = sortedPredPIdx_;
+    pc.sortedTypeFlagIdx = sortedTypeFlagIdx_;
     pc.fluidStart        = cfg_.max_boundary;
     // PBF 論文準拠パラメータ
     pc.cfmEpsilon       = cfmEpsilon;

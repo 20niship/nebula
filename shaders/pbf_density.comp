@@ -51,14 +51,18 @@ void main() {
         uint start = readUint(pc.cellOffsetIdx, cid) - cnt;
 
         for (uint k = start; k < start + cnt; ++k) {
-            // issue #65: predP/typeFlag は pbf_reorder.comp が sortedIdx 順に物理コピー済み
-            // (sortedPredP/sortedTypeFlag) のため、k を直接添字にした連続アクセスで読む。
-            // j (元インデックス) は自己判定 (j == idx) にのみ必要。
             uint j  = readUint(pc.sortedIdxIdx, k);
-            uint fj = readUint(pc.sortedTypeFlagIdx, k);
+            uint fj;
+            vec3 pj;
+#ifdef PBF_REORDER_ENABLED
+            fj = readUint(pc.sortedTypeFlagIdx, k);
+            pj = readVec4(pc.sortedPredPIdx, k).xyz;
+#else
+            fj = readUint(pc.typeFlagIdx, j);
+            pj = readVec4(pc.predPIdx, j).xyz;
+#endif
             if (fj != 1u && fj != 2u && fj != 3u && fj != 5u) continue; // 流体・布・境界・粉体
 
-            vec3 pj = readVec4(pc.sortedPredPIdx, k).xyz;
             vec3 r  = pi - pj;
             float r2 = dot(r, r);
             if (r2 >= h2) continue;

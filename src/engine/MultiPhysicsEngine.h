@@ -55,7 +55,7 @@ public:
   int pbfIterations       = 4;
   int numSubsteps         = 6;
   bool enableCoupling     = true;
-  bool pbfReorderEnabled  = true;
+  bool pbfReorderEnabled  = true; // init()時の値でshaderが#defineコンパイルされるため以降の変更は無効
 
   VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
   VkDescriptorSet descriptorSet             = VK_NULL_HANDLE;

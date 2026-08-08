@@ -62,8 +62,10 @@ SimPC MultiPhysicsEngine::buildPC(float subDt) const {
   pc.forceCount        = (uint32_t)forces_.size();
   pc.densityIdx        = densityIdx_;
   pc.lambdaPbfIdx      = lambdaPbfIdx_;
-  pc.sortedPredPIdx    = sortedPredPIdx_;    // issue #65
-  pc.sortedTypeFlagIdx = sortedTypeFlagIdx_; // issue #65
+  // issue #65: pbfReorderEnabled==false のとき 0 (無効) を渡し、シェーダー側で
+  // predP[j]/typeFlag[j] 直接gatherにフォールバックさせる。
+  pc.sortedPredPIdx    = pbfReorderEnabled ? sortedPredPIdx_ : 0;
+  pc.sortedTypeFlagIdx = pbfReorderEnabled ? sortedTypeFlagIdx_ : 0;
   pc.boundaryStart     = cfg_.fluidStart(); // 境界粒子なし; 流体開始でも使用される
   pc.linearDamping     = 0.6f;              // 布の従来挙動を維持（update_velocity 共用）
   pc.cfmEpsilon        = 100.0f;            // pbf_density の CFM ε（0 除算回避）
@@ -277,8 +279,12 @@ void MultiPhysicsEngine::step(VkCommandBuffer cmd, float dt) {
       // sortedPredP/sortedTypeFlag を最新化する (issue #65: 物理reorderキャッシュ)。
       // このエンジンは境界未使用プレースホルダを持たない(cfg_.totalMax()=cloth+fluidが
       // 全て有効粒子)ため、reorder の有効範囲は pc.particleCount のままでよい。
-      kPbfReorder_.dispatch(cmd, ds, pc, cfg_.totalMax());
-      computeBarrier(cmd);
+      // pbfReorderEnabled==false の場合は完全にスキップ(pc側も0を渡し済みのため
+      // density/delta_pはフォールバックgatherを使う)。
+      if(pbfReorderEnabled) {
+        kPbfReorder_.dispatch(cmd, ds, pc, cfg_.totalMax());
+        computeBarrier(cmd);
+      }
 
       // PBF: 流体密度・λ 計算
       kPbfDensity_.dispatch(cmd, ds, pc, cfg_.totalMax());

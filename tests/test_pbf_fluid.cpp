@@ -535,3 +535,54 @@ TEST_CASE("TC11: rectangular (non-cube) domain clamps particles to the short axi
     engine.cleanup();
     ctx.cleanup();
 }
+
+// ── TC12: issue #65 reorder無効時 (pbfReorderEnabled=false) でも不圧縮拘束が動く ──
+// TC3 (incompressibility) と同一シナリオを reorder OFF で再実行し、
+// pbf_density/pbf_delta_p のフォールバックgather (predP[j]/typeFlag[j] 直接読み)が
+// reorderと同じ物理挙動 (過密解消) を再現できることを確認する。
+TEST_CASE("PBF Fluid - reorder disabled falls back to direct gather correctly") {
+  HeadlessCtx ctx;
+  ctx.init();
+
+  constexpr uint32_t N = 8;
+
+  PBFHarness::Config cfg;
+  cfg.N                 = N;
+  cfg.worldMin          = 0.0f;
+  cfg.worldMax          = 10.0f;
+  cfg.gridRes           = 8;
+  cfg.gravity           = -9.8f;
+  cfg.rho0              = 1.0f; // 非常に小さい → 常に過密 → PBF が斥力を出し続ける
+  cfg.pbfIterations     = 6;
+  cfg.numSubsteps       = 4;
+  cfg.pbfReorderEnabled = false; // issue #65: 物理reorderをOFFにしてフォールバック経路を検証
+
+  constexpr float SPACING = 0.3f;
+  std::vector<glm::vec4> pos(N), invM(N, glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
+  uint32_t idx = 0;
+  for(int z = 0; z < 2; ++z)
+    for(int y = 0; y < 2; ++y)
+      for(int x = 0; x < 2; ++x) pos[idx++] = glm::vec4(4.85f + x * SPACING, 7.0f + y * SPACING, 4.85f + z * SPACING, 1.0f);
+
+  PBFHarness sim;
+  sim.init(ctx, cfg, SHADERS, pos, invM);
+
+  const float dt = 1.0f / 60.0f;
+  for(int f = 0; f < 60; ++f) sim.step(dt);
+
+  std::vector<glm::vec4> endPos(N);
+  for(uint32_t i = 0; i < N; ++i) endPos[i] = sim.readPos(i);
+
+  float h       = (cfg.worldMax - cfg.worldMin) / float(cfg.gridRes);
+  float minDist = 1e9f;
+  for(uint32_t a = 0; a < N; ++a)
+    for(uint32_t b = a + 1; b < N; ++b) {
+      glm::vec3 d = glm::vec3(endPos[a]) - glm::vec3(endPos[b]);
+      float dist  = std::sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
+      minDist     = std::min(minDist, dist);
+    }
+  CHECK(minDist > h * 0.05f);
+
+  sim.cleanup();
+  ctx.cleanup();
+}

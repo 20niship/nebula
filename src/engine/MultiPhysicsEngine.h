@@ -55,6 +55,7 @@ public:
   int pbfIterations       = 4;
   int numSubsteps         = 6;
   bool enableCoupling     = true;
+  bool pbfReorderEnabled  = true;
 
   VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
   VkDescriptorSet descriptorSet             = VK_NULL_HANDLE;

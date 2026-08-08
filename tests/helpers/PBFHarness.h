@@ -26,6 +26,7 @@ public:
     int pbfIterations      = 4;
     int numSubsteps        = 4;
     float cfmEpsilon       = 2500.0f; // CFM 緩和 ε (pbf_density の 0 除算防止; MultiPhysicsEngine と同じ rho0^2 比)
+    bool pbfReorderEnabled = true; // 粒子をmorton codeでsortし大量に粒子があるときに高速化
   };
 
   // boundaryPos: typeFlag=3, invMass=0 boundary particles (optional)

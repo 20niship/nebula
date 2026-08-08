@@ -112,6 +112,7 @@ public:
   float vorticityEpsilon = 0.1f;    // 渦度閉じ込め ε (式16)
   float linearDamping    = 0.02f;   // 速度減衰 [1/s]。元のハードコード値
   bool vorticityEnabled  = false;   // 渦度閉じ込めの ON/OFF
+  bool pbfReorderEnabled = true; // 粒子をmorton codeでsortし大量に粒子があるときに高速化
 
   // ── 煙・粉体パラメータ ──────────────────────────────────────────────────────
   float smokeRiseAccel = 8.0f; // 煙の浮力加速度 [m/s²] (typeFlag==4)

@@ -535,8 +535,8 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     pc.forceCount        = (uint32_t)forces_.size();
     pc.densityIdx        = densityIdx_;
     pc.lambdaPbfIdx      = lambdaPbfIdx_;
-    pc.sortedPredPIdx    = sortedPredPIdx_;    // issue #65
-    pc.sortedTypeFlagIdx = sortedTypeFlagIdx_; // issue #65
+    pc.sortedPredPIdx    = pbfReorderEnabled ? sortedPredPIdx_ : 0;
+    pc.sortedTypeFlagIdx = pbfReorderEnabled ? sortedTypeFlagIdx_ : 0;
     pc.fluidStart        = cfg_.max_boundary;
     // PBF 論文準拠パラメータ
     pc.cfmEpsilon       = cfmEpsilon;
@@ -608,8 +608,12 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     for(int iter = 0; iter < pbfIterations; ++iter) {
       // predP は反復ごとに kPbfDeltaP_ が更新するため、density の前に毎回
       // sortedPredP/sortedTypeFlag を最新化する (issue #65: 物理reorderキャッシュ)。
-      kPbfReorder_.dispatch(cmd, ds, reorderPc, validSortedN);
-      computeBarrier(cmd);
+      // pbfReorderEnabled==false の場合は完全にスキップ(pc側も0を渡し済みのため
+      // density/delta_pはフォールバックgatherを使う)。
+      if(pbfReorderEnabled) {
+        kPbfReorder_.dispatch(cmd, ds, reorderPc, validSortedN);
+        computeBarrier(cmd);
+      }
       kPbfDensity_.dispatch(cmd, ds, pc, nFluid_);
       computeBarrier(cmd);
       kPbfDeltaP_.dispatch(cmd, ds, pc, nFluid_);

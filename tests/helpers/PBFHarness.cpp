@@ -162,8 +162,8 @@ void PBFHarness::recordSubstep(VkCommandBuffer cmd, float subDt) {
   pc.forceCount        = (uint32_t)forces_.size();
   pc.densityIdx        = densityIdx_;
   pc.lambdaPbfIdx      = lambdaIdx_;
-  pc.sortedPredPIdx    = sortedPredPIdx_;    // issue #65
-  pc.sortedTypeFlagIdx = sortedTypeFlagIdx_; // issue #65
+  pc.sortedPredPIdx    = cfg_.pbfReorderEnabled ? sortedPredPIdx_ : 0;
+  pc.sortedTypeFlagIdx = cfg_.pbfReorderEnabled ? sortedTypeFlagIdx_ : 0;
   pc.boundaryStart     = cfg_.N;
   pc.cfmEpsilon        = cfg_.cfmEpsilon;
 
@@ -205,13 +205,12 @@ void PBFHarness::recordSubstep(VkCommandBuffer cmd, float subDt) {
   computeBarrier(cmd);
 
   // 4. PBF incompressibility solver x pbfIterations
-  // issue #65: このハーネスは境界未使用プレースホルダを持たない(全 totalN スロットが
-  // 有効な流体/境界粒子)ため、reorder の有効範囲は pc.particleCount(=totalN)のままでよい。
   for(int iter = 0; iter < cfg_.pbfIterations; ++iter) {
     // predP は反復ごとに kPbfDeltaP_ が更新するため、density の前に毎回
-    // sortedPredP/sortedTypeFlag を最新化する (issue #65: 物理reorderキャッシュ)。
-    kPbfReorder_.dispatch(cmd, ds, pc, totalN);
-    computeBarrier(cmd);
+    if(cfg_.pbfReorderEnabled) {
+      kPbfReorder_.dispatch(cmd, ds, pc, totalN);
+      computeBarrier(cmd);
+    }
     kPbfDensity_.dispatch(cmd, ds, pc, totalN);
     computeBarrier(cmd);
     kPbfDeltaP_.dispatch(cmd, ds, pc, totalN);

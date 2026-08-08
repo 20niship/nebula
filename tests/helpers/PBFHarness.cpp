@@ -84,7 +84,7 @@ void PBFHarness::init(const HeadlessCtx& ctx, const Config& cfg, const std::stri
   forcesIdx_ = attrBuf_.addAttribute("forces", sizeof(ForceGPU), 1);
   {
     auto legacyGravity = GravityForce::FromDirection({0.0f, 0.0f, 1.0f}, cfg.gravity); // Z-up
-    forces_             = {legacyGravity};
+    forces_            = {legacyGravity};
     std::vector<ForceGPU> packed;
     for(const auto& f : forces_) packed.push_back(f->pack());
     attrBuf_.upload("forces", packed.data(), sizeof(ForceGPU) * packed.size(), pool, queue);
@@ -99,8 +99,8 @@ void PBFHarness::init(const HeadlessCtx& ctx, const Config& cfg, const std::stri
   load(kScanLoc_, "hash_scan_local.comp.spv");
   load(kScanGlob_, "hash_scan_global.comp.spv");
   load(kAddBase_, "hash_add_base.comp.spv");
-  load(kUpdateVel_, "update_velocity.comp.spv");
   load(kPbfReorder_, "pbf_reorder.comp.spv"); // issue #65: cellId()/mortonAxisTriples()不使用のため静的コンパイルで足りる
+  load(kSdfVel_, "sdf_collision_velocity.comp.spv"); // 末尾のkSdf_+kUpdateVel_を統合
 
   // 空間ハッシュ近傍探索シェーダー (cellId()/mortonAxisTriples() 使用) はアダプティブ
   // (直方体)Morton定数をドメイン形状から算出し#defineで注入する必要があるため、
@@ -218,12 +218,8 @@ void PBFHarness::recordSubstep(VkCommandBuffer cmd, float subDt) {
     computeBarrier(cmd);
   }
 
-  // 5. SDF re-apply
-  kSdf_.dispatch(cmd, ds, pc, totalN);
-  computeBarrier(cmd);
-
-  // 6. Velocity update
-  kUpdateVel_.dispatch(cmd, ds, pc, totalN);
+  // 5+6. SDF re-apply + Velocity update (1ディスパッチに統合)
+  kSdfVel_.dispatch(cmd, ds, pc, totalN);
   computeBarrier(cmd);
 
   // 7. XSPH viscosity
@@ -268,6 +264,6 @@ void PBFHarness::cleanup() {
   kPbfDensity_.cleanup();
   kPbfDeltaP_.cleanup();
   kPbfViscosity_.cleanup();
-  kUpdateVel_.cleanup();
+  kSdfVel_.cleanup();
   attrBuf_.cleanup();
 }

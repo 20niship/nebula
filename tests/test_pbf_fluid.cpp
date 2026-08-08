@@ -388,97 +388,99 @@ TEST_CASE("TC8: average SPH density is within [0.1, 5.0] * rho0 after settling")
 // 初期容量 (fluidCount()) を小さく設定し、それを超える particles_per_step を持つ
 // emitter を複数フレーム実行して、nFluid_ が初期容量を超えて増え続けることを確認する。
 TEST_CASE("TC9: fluid capacity grows dynamically beyond initial fluidCount() via emitters") {
-    HeadlessCtx ctx; ctx.init();
+  HeadlessCtx ctx;
+  ctx.init();
 
-    FluidConfig cfg;
-    cfg.fluid_nx     = 4;
-    cfg.fluid_ny     = 1;
-    cfg.fluid_nz     = 4; // fluidCount() = 16 (小さい初期容量)
-    cfg.domainSize   = glm::vec3(10.0f, 10.0f, 10.0f);
-    cfg.cellSize     = 10.0f / 4.0f;
-    cfg.max_boundary = 0;
+  FluidConfig cfg;
+  cfg.fluid_nx     = 4;
+  cfg.fluid_ny     = 1;
+  cfg.fluid_nz     = 4; // fluidCount() = 16 (小さい初期容量)
+  cfg.domainSize   = glm::vec3(10.0f, 10.0f, 10.0f);
+  cfg.cellSize     = 10.0f / 4.0f;
+  cfg.max_boundary = 0;
 
-    FluidEngine engine;
-    engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
+  FluidEngine engine;
+  engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
 
-    CHECK(cfg.fluidCount() == 16);
+  CHECK(cfg.fluidCount() == 16);
 
-    auto src                = std::make_shared<AABBEmitter>();
-    src->center             = glm::vec3(5.0f, 5.0f, 5.0f);
-    src->size               = glm::vec3(2.0f, 2.0f, 2.0f);
-    src->particles_per_step = 50; // 初期容量 16 を超えるリクエスト → 拡張が必要
-    src->step_count         = 3;
-    src->particleType       = 1u;
-    engine.addEmitter(src);
+  auto src                = std::make_shared<AABBEmitter>();
+  src->center             = glm::vec3(5.0f, 5.0f, 5.0f);
+  src->size               = glm::vec3(2.0f, 2.0f, 2.0f);
+  src->particles_per_step = 50; // 初期容量 16 を超えるリクエスト → 拡張が必要
+  src->step_count         = 3;
+  src->particleType       = 1u;
+  engine.addEmitter(src);
 
-    const float dt = 1.0f / 60.0f;
-    for(int f = 0; f < 3; ++f) {
-        engine.emitFromEmitters(dt);
-        VkCommandBuffer cmd = ctx.beginCmd();
-        engine.step(cmd, dt);
-        ctx.submitCmd(cmd);
-    }
+  const float dt = 1.0f / 60.0f;
+  for(int f = 0; f < 3; ++f) {
+    engine.emitFromEmitters(dt);
+    VkCommandBuffer cmd = ctx.beginCmd();
+    engine.step(cmd, dt);
+    ctx.submitCmd(cmd);
+  }
 
-    // 3フレーム × 50粒子 = 150粒子。initial fluidCount()=16 を大きく超えて増え続けている。
-    CHECK(engine.nFluid() == 150);
-    CHECK(engine.nFluid() > cfg.fluidCount());
+  // 3フレーム × 50粒子 = 150粒子。initial fluidCount()=16 を大きく超えて増え続けている。
+  CHECK(engine.nFluid() == 150);
+  CHECK(engine.nFluid() > cfg.fluidCount());
 
-    engine.cleanup();
-    ctx.cleanup();
+  engine.cleanup();
+  ctx.cleanup();
 }
 
 // ── TC10: 動的拡張後も境界パーティクルのデータが破損しないこと (Issue #13) ──────
 // resizeAttribute は先頭バイト列を保持するだけなので、buffer index 0 に固定配置
 // される境界パーティクルは流体容量が何度拡張されても位置が変わらないはず。
 TEST_CASE("TC10: boundary particle data survives fluid capacity growth") {
-    HeadlessCtx ctx; ctx.init();
+  HeadlessCtx ctx;
+  ctx.init();
 
-    FluidConfig cfg;
-    cfg.fluid_nx     = 4;
-    cfg.fluid_ny     = 1;
-    cfg.fluid_nz     = 4; // fluidCount() = 16
-    cfg.domainSize   = glm::vec3(10.0f, 10.0f, 10.0f);
-    cfg.cellSize     = 10.0f / 4.0f;
-    cfg.max_boundary = 8;
+  FluidConfig cfg;
+  cfg.fluid_nx     = 4;
+  cfg.fluid_ny     = 1;
+  cfg.fluid_nz     = 4; // fluidCount() = 16
+  cfg.domainSize   = glm::vec3(10.0f, 10.0f, 10.0f);
+  cfg.cellSize     = 10.0f / 4.0f;
+  cfg.max_boundary = 8;
 
-    FluidEngine engine;
-    engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
+  FluidEngine engine;
+  engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
 
-    constexpr uint32_t NB = 8;
-    std::vector<glm::vec4> boundaryPts(NB);
-    for(uint32_t i = 0; i < NB; ++i) boundaryPts[i] = glm::vec4(1.0f + float(i), 2.0f, 3.0f, 1.0f);
-    engine.loadBoundaryParticles(boundaryPts);
+  constexpr uint32_t NB = 8;
+  std::vector<glm::vec4> boundaryPts(NB);
+  for(uint32_t i = 0; i < NB; ++i) boundaryPts[i] = glm::vec4(1.0f + float(i), 2.0f, 3.0f, 1.0f);
+  engine.loadBoundaryParticles(boundaryPts);
 
-    auto src                = std::make_shared<AABBEmitter>();
-    src->center             = glm::vec3(8.0f, 8.0f, 8.0f);
-    src->size               = glm::vec3(1.0f, 1.0f, 1.0f);
-    src->particles_per_step = 50; // 初期容量 16 を超えるリクエスト → 拡張が必要
-    src->step_count         = 3;
-    src->particleType       = 1u;
-    engine.addEmitter(src);
+  auto src                = std::make_shared<AABBEmitter>();
+  src->center             = glm::vec3(8.0f, 8.0f, 8.0f);
+  src->size               = glm::vec3(1.0f, 1.0f, 1.0f);
+  src->particles_per_step = 50; // 初期容量 16 を超えるリクエスト → 拡張が必要
+  src->step_count         = 3;
+  src->particleType       = 1u;
+  engine.addEmitter(src);
 
-    const float dt = 1.0f / 60.0f;
-    for(int f = 0; f < 3; ++f) {
-        engine.emitFromEmitters(dt);
-        VkCommandBuffer cmd = ctx.beginCmd();
-        engine.step(cmd, dt);
-        ctx.submitCmd(cmd);
-    }
+  const float dt = 1.0f / 60.0f;
+  for(int f = 0; f < 3; ++f) {
+    engine.emitFromEmitters(dt);
+    VkCommandBuffer cmd = ctx.beginCmd();
+    engine.step(cmd, dt);
+    ctx.submitCmd(cmd);
+  }
 
-    CHECK(engine.nFluid() > cfg.fluidCount()); // 拡張が発生したことを確認
+  CHECK(engine.nFluid() > cfg.fluidCount()); // 拡張が発生したことを確認
 
-    // 境界パーティクル (typeFlag=3, invMass=0) は速度更新パスの対象外のため、
-    // 拡張後も buffer index 0 からアップロード時の値のまま読み出せるはず。
-    for(uint32_t i = 0; i < NB; ++i) {
-        glm::vec4 p{};
-        ctx.readBuffer(engine.getPositionBuffer(), i * sizeof(glm::vec4), &p, sizeof(p));
-        CHECK(p.x == 1.0f + float(i));
-        CHECK(p.y == 2.0f);
-        CHECK(p.z == 3.0f);
-    }
+  // 境界パーティクル (typeFlag=3, invMass=0) は速度更新パスの対象外のため、
+  // 拡張後も buffer index 0 からアップロード時の値のまま読み出せるはず。
+  for(uint32_t i = 0; i < NB; ++i) {
+    glm::vec4 p{};
+    ctx.readBuffer(engine.getPositionBuffer(), i * sizeof(glm::vec4), &p, sizeof(p));
+    CHECK(p.x == 1.0f + float(i));
+    CHECK(p.y == 2.0f);
+    CHECK(p.z == 3.0f);
+  }
 
-    engine.cleanup();
-    ctx.cleanup();
+  engine.cleanup();
+  ctx.cleanup();
 }
 
 // ── TC11: 直方体(非立方体)ドメイン — 短辺軸の境界クランプ (issue #46) ──────────
@@ -487,53 +489,53 @@ TEST_CASE("TC10: boundary particle data survives fluid capacity growth") {
 // worldMin/worldMax が vec3 化される前は全軸共通のスカラーだったため、
 // このテストは「Y軸の境界判定に誤って X/Z 軸のサイズが使われていないか」を検出する。
 TEST_CASE("TC11: rectangular (non-cube) domain clamps particles to the short axis boundary") {
-    HeadlessCtx ctx;
-    ctx.init();
+  HeadlessCtx ctx;
+  ctx.init();
 
-    FluidConfig cfg;
-    cfg.fluid_nx     = 4;
-    cfg.fluid_ny     = 4;
-    cfg.fluid_nz     = 4;
-    cfg.domainSize   = glm::vec3(20.0f, 5.0f, 20.0f); // Y 軸だけ短い偏平ドメイン
-    cfg.cellSize     = 1.25f;
-    cfg.max_boundary = 0;
+  FluidConfig cfg;
+  cfg.fluid_nx     = 4;
+  cfg.fluid_ny     = 4;
+  cfg.fluid_nz     = 4;
+  cfg.domainSize   = glm::vec3(20.0f, 5.0f, 20.0f); // Y 軸だけ短い偏平ドメイン
+  cfg.cellSize     = 1.25f;
+  cfg.max_boundary = 0;
 
-    FluidEngine engine;
-    engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
+  FluidEngine engine;
+  engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
 
-    // ドメイン中央付近から Y 方向へ高速発射 (X/Z 方向には力を加えない)
-    auto src                = std::make_shared<AABBEmitter>();
-    src->center              = glm::vec3(10.0f, 2.5f, 10.0f);
-    src->size                = glm::vec3(0.1f, 0.1f, 0.1f);
-    src->vel                 = glm::vec3(0.0f, 50.0f, 0.0f);
-    src->particles_per_step = 1;
-    src->step_count          = 1;
-    src->particleType        = 1u;
-    engine.addEmitter(src);
+  // ドメイン中央付近から Y 方向へ高速発射 (X/Z 方向には力を加えない)
+  auto src                = std::make_shared<AABBEmitter>();
+  src->center             = glm::vec3(10.0f, 2.5f, 10.0f);
+  src->size               = glm::vec3(0.1f, 0.1f, 0.1f);
+  src->vel                = glm::vec3(0.0f, 50.0f, 0.0f);
+  src->particles_per_step = 1;
+  src->step_count         = 1;
+  src->particleType       = 1u;
+  engine.addEmitter(src);
 
-    const float dt = 1.0f / 60.0f;
-    for(int f = 0; f < 30; ++f) {
-        engine.emitFromEmitters(dt);
-        VkCommandBuffer cmd = ctx.beginCmd();
-        engine.step(cmd, dt);
-        ctx.submitCmd(cmd);
-    }
+  const float dt = 1.0f / 60.0f;
+  for(int f = 0; f < 30; ++f) {
+    engine.emitFromEmitters(dt);
+    VkCommandBuffer cmd = ctx.beginCmd();
+    engine.step(cmd, dt);
+    ctx.submitCmd(cmd);
+  }
 
-    CHECK(engine.nFluid() == 1);
+  CHECK(engine.nFluid() == 1);
 
-    glm::vec4 p{};
-    ctx.readBuffer(engine.getPositionBuffer(), cfg.max_boundary * sizeof(glm::vec4), &p, sizeof(p));
+  glm::vec4 p{};
+  ctx.readBuffer(engine.getPositionBuffer(), cfg.max_boundary * sizeof(glm::vec4), &p, sizeof(p));
 
-    // Y 軸は短いドメイン (5m) の境界でクランプされているはず。
-    // もし誤って X/Z 側の 20m がクランプ境界に使われていれば p.y はここまで到達しない。
-    CHECK(p.y <= cfg.domainSize.y);
-    CHECK(p.y > cfg.domainSize.y * 0.5f);
-    // X/Z には力を加えていないため、ほぼ初期位置に留まっているはず。
-    CHECK(std::abs(p.x - 10.0f) < 1.0f);
-    CHECK(std::abs(p.z - 10.0f) < 1.0f);
+  // Y 軸は短いドメイン (5m) の境界でクランプされているはず。
+  // もし誤って X/Z 側の 20m がクランプ境界に使われていれば p.y はここまで到達しない。
+  CHECK(p.y <= cfg.domainSize.y);
+  CHECK(p.y > cfg.domainSize.y * 0.5f);
+  // X/Z には力を加えていないため、ほぼ初期位置に留まっているはず。
+  CHECK(std::abs(p.x - 10.0f) < 1.0f);
+  CHECK(std::abs(p.z - 10.0f) < 1.0f);
 
-    engine.cleanup();
-    ctx.cleanup();
+  engine.cleanup();
+  ctx.cleanup();
 }
 
 // ── TC12: issue #65 reorder無効時 (pbfReorderEnabled=false) でも不圧縮拘束が動く ──

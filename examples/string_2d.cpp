@@ -251,7 +251,8 @@ private:
 
   ComputePipeline kPredict_, kSdfCollision_;
   ComputePipeline kHashCount_, kHashScanLocal_, kHashScanGlobal_, kHashSort_;
-  ComputePipeline kSolveDensity_, kSolveStretch_, kUpdateVelocity_;
+  ComputePipeline kSolveDensity_, kSolveStretch_;
+  ComputePipeline kSdfVelocity_; // issue #66: 末尾のSDF境界再衝突+速度更新を統合(sdf_collision_velocity.comp)
 
   void computeBarrier(VkCommandBuffer cmd);
 };
@@ -345,7 +346,7 @@ void String2DSim::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   load(kHashScanLocal_, "hash_scan_local.comp");
   load(kHashScanGlobal_, "hash_scan_global.comp");
   load(kSolveStretch_, "solve_stretch.comp");
-  load(kUpdateVelocity_, "update_velocity.comp");
+  load(kSdfVelocity_, "sdf_collision_velocity.comp"); // issue #66: 末尾のkSdfCollision_+kUpdateVelocity_統合
 
   // 空間ハッシュ近傍探索シェーダー (cellId()/mortonAxisTriples() 使用) はアダプティブ
   // (直方体)Morton定数をドメイン形状から算出し#defineで注入する必要があるため、
@@ -507,12 +508,10 @@ void String2DSim::step(VkCommandBuffer cmd, float dt) {
       kSolveDensity_.dispatch(cmd, ds, pc, STR_N);
       computeBarrier(cmd);
 
-      kSdfCollision_.dispatch(cmd, ds, pc, STR_N);
-      computeBarrier(cmd);
     }
 
-    // ⑦ 速度更新
-    kUpdateVelocity_.dispatch(cmd, ds, pc, STR_N);
+    // ⑦ SDF境界再衝突 + 速度更新 (issue #66: 1ディスパッチに統合)
+    kSdfVelocity_.dispatch(cmd, ds, pc, STR_N);
     computeBarrier(cmd);
   }
 }
@@ -526,7 +525,7 @@ void String2DSim::cleanup() {
   kHashSort_.cleanup();
   kSolveDensity_.cleanup();
   kSolveStretch_.cleanup();
-  kUpdateVelocity_.cleanup();
+  kSdfVelocity_.cleanup();
   attrBuf_.cleanup();
 }
 

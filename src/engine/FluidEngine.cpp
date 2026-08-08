@@ -93,11 +93,10 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   initForces();
 
   auto load = [&](ComputePipeline& k, const char* name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
-  load(kSdfCollision_, "sdf_collision.comp");
+  load(kSdfVelocity_, "sdf_collision_velocity.comp"); // issue #66: kSdfCollision_+kUpdateVelocity_ 統合
   load(kHashScanLocal_, "hash_scan_local.comp");
   load(kHashScanGlobal_, "hash_scan_global.comp");
   load(kHashAddBase_, "hash_add_base.comp");
-  load(kUpdateVelocity_, "update_velocity.comp");
   load(kZeroCells_, "zero_cells.comp");
   load(kAbsorb_, "fluid_absorb.comp");
   load(kLifetime_, "fluid_lifetime.comp");
@@ -394,7 +393,7 @@ void FluidEngine::resetParticles() {
 void FluidEngine::cleanup() {
   cleanupKinematicBoundaryStaging();
   kPredictSdf_.cleanup();
-  kSdfCollision_.cleanup();
+  kSdfVelocity_.cleanup();
   kHashCount_.cleanup();
   kHashScanLocal_.cleanup();
   kHashScanGlobal_.cleanup();
@@ -404,7 +403,6 @@ void FluidEngine::cleanup() {
   kPbfDensity_.cleanup();
   kPbfDeltaP_.cleanup();
   kPbfViscosity_.cleanup();
-  kUpdateVelocity_.cleanup();
   kZeroCells_.cleanup();
   kVorticityOmega_.cleanup();
   kVorticityForce_.cleanup();
@@ -621,12 +619,10 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
       computeBarrier(cmd);
     }
 
-    // ⑤ SDF 再適用 (PBF 補正後の境界貫通防止; 境界粒子は固定位置のため除外)
-    kSdfCollision_.dispatch(cmd, ds, pc, nFluid_);
-    computeBarrier(cmd);
-
-    // ⑥ 速度更新（境界粒子は invMass==0 で速度変化なし、除外)
-    kUpdateVelocity_.dispatch(cmd, ds, pc, nFluid_);
+    // ⑤+⑥ SDF 再適用 + 速度更新 (issue #66: 1ディスパッチに統合。境界粒子は固定位置の
+    // ため除外。sdf_collision_velocity.comp 冒頭のコメント参照: restitution/friction は
+    // 元々このステップでは無効化されていたため統合しても数値的に同一結果)
+    kSdfVelocity_.dispatch(cmd, ds, pc, nFluid_);
     computeBarrier(cmd);
 
     // ⑦ 渦度閉じ込め (式15-16; ON/OFF 切替可能)

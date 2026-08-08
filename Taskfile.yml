@@ -94,12 +94,6 @@ tasks:
     cmds:
       - cmake --build {{.BUILD_DIR}} --target fluid_wave_foam -j{{.JOBS}}
 
-  build:multi:
-    desc: "multi_physics (Phase 6) をビルド"
-    deps: [configure]
-    cmds:
-      - cmake --build {{.BUILD_DIR}} --target multi_physics -j{{.JOBS}}
-
   build:cloth:
     desc: "cloth_3d をビルド"
     deps: [configure]
@@ -171,13 +165,6 @@ tasks:
     prompt: "{{.PERF_BUILD_DIR}}/ を削除します。よろしいですか？"
 
   # ── アプリ起動 ──────────────────────────────────────────────────────────────
-  run:multi:
-    desc: "multi_physics (Phase 6) を起動"
-    deps: [build:multi]
-    cmds:
-      - "{{.BUILD_DIR}}/multi_physics"
-    env:
-      MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS: "0"
 
   run:fluid:
     desc: "fluid_pbf を起動"

@@ -101,7 +101,7 @@ set(SHADER_SOURCES
     # coupling_cloth.comp は common.glsl の cellId()/mortonAxisTriples() 経由で
     # アダプティブ(直方体)Morton定数(ADAPTIVE_MASK等)を必要とし、ドメイン形状
     # (gridRes)ごとに値が変わるため、各Engine(FluidEngine/ClothSceneEngine/
-    # SimulationEngine/MultiPhysicsEngine)のinit()内でDefineShaderCompilerに
+    # SimulationEngine)のinit()内でDefineShaderCompilerに
     # より実行時コンパイルされる。静的 glslc ビルド対象には含めない
     # (MPM専用の mpm_hash_count.comp/mpm_hash_sort.comp は対象外、従来通り静的コンパイル)。
     ${SHADER_SRC_DIR}/sdf_collision.comp
@@ -110,7 +110,6 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/hash_scan_global.comp
     ${SHADER_SRC_DIR}/hash_add_base.comp
     ${SHADER_SRC_DIR}/solve_stretch.comp
-    ${SHADER_SRC_DIR}/update_velocity.comp
     ${SHADER_SRC_DIR}/particle.vert
     ${SHADER_SRC_DIR}/particle.frag
     ${SHADER_SRC_DIR}/cloth.vert
@@ -248,9 +247,6 @@ add_sim_example(cloth_scene examples/cloth_scene.cpp)
 
 # ── xpbd_softbody: XPBD 四面体ソフトボディシミュレーション ──────────────────
 add_sim_example(xpbd_softbody examples/xpbd_softbody.cpp)
-
-# ── multi_physics: Phase 5 布×流体 双方向連成 ────────────────────────────────
-add_sim_example(multi_physics examples/multi_physics.cpp)
 
 # ── mpm_elastic: GPU MPM 弾性/塑性シミュレーション ─────────────────────────
 add_sim_example(mpm_elastic examples/mpm_elastic.cpp)

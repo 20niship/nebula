@@ -230,7 +230,7 @@ private:
   uint32_t foamParamsIdx_ = 0;
 
   ComputePipeline kPredictSdf_;
-  ComputePipeline kSdfCollision_;
+  ComputePipeline kSdfVelocity_; // issue #66: SDF境界再衝突+速度更新を統合(旧kSdfCollision_+kUpdateVelocity_)
   ComputePipeline kHashCount_;
   ComputePipeline kHashScanLocal_;
   ComputePipeline kHashScanGlobal_;
@@ -238,7 +238,6 @@ private:
   ComputePipeline kPbfDensity_;
   ComputePipeline kPbfDeltaP_;
   ComputePipeline kPbfViscosity_;
-  ComputePipeline kUpdateVelocity_;
   ComputePipeline kZeroCells_;
   ComputePipeline kHashAddBase_;
   ComputePipeline kVorticityOmega_;

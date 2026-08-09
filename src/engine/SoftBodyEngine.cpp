@@ -1,4 +1,5 @@
 #include "SoftBodyEngine.h"
+#include "../core/Profiling.h"
 
 #include <algorithm>
 #include <cstring>
@@ -65,6 +66,8 @@ void SoftBodyEngine::cleanup() {
 }
 
 void SoftBodyEngine::step(VkCommandBuffer cmd, float dt) {
+  ZoneScoped;
+  FrameMark;
   if(totalCount_ == 0) return;
 
   uploadForces(dt);

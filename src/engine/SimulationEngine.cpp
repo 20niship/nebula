@@ -1,5 +1,6 @@
 #include "SimulationEngine.h"
 #include "../core/DefineShaderCompiler.h"
+#include "../core/Profiling.h"
 
 #include <algorithm>
 #include <cstring>
@@ -231,6 +232,8 @@ void SimulationEngine::computeBarrier(VkCommandBuffer cmd) {
 // ─── 1フレームのシミュレーション ──────────────────────────────────────────
 
 void SimulationEngine::step(VkCommandBuffer cmd, float dt) {
+  ZoneScoped;
+  FrameMark;
   auto ds = attrBuf_.descriptorSet;
 
   uploadForces(dt);

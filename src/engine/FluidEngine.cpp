@@ -1,6 +1,7 @@
 #include "FluidEngine.h"
 #include "BoundaryParticles.h"
 #include "../core/DefineShaderCompiler.h"
+#include "../core/Profiling.h"
 
 #include <algorithm>
 #include <cmath>
@@ -547,6 +548,8 @@ void FluidEngine::cleanupKinematicBoundaryStaging() {
 // ── 1フレームのシミュレーション ───────────────────────────────────────────────
 
 void FluidEngine::step(VkCommandBuffer cmd, float dt) {
+  ZoneScoped;
+  FrameMark;
   // emitFromEmitters() は呼び出し側が事前に(このフレームのコマンドバッファへ
   // FluidEngine の VkBuffer ハンドルを焼き込む前に)呼び出す想定。ここでは呼ばない
   // (容量拡張でバッファが再確保されると、先に記録済みのコマンドが古いハンドルを

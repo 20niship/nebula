@@ -144,9 +144,7 @@ public:
     const float domainSizeZ = args.world_size / 6.0f; // Z方向の高さは world_size の1/6 (旧1/3から半減)
 
     FluidConfig cfg;
-    cfg.fluid_nx            = uint32_t(args.fluid_nx);
-    cfg.fluid_ny            = 16; // 流体薄層の奥行き分解能
-    cfg.fluid_nz            = uint32_t(args.fluid_nz);
+    cfg.particleRadius      = (args.world_size / float(args.fluid_nx)) / 2.0f;
     cfg.domainSize          = glm::vec3(args.world_size, domainSizeY, domainSizeZ);
     cfg.cellSize            = args.world_size / float(args.grid_res);
     cfg.max_boundary        = 20000;
@@ -156,7 +154,7 @@ public:
     paddle_.omega     = args.paddle_omega;
 
     base_.initWindow("Vulkan Sim - Wave Paddle + Bunny + Foam (issue #47)");
-    initVulkan(cfg);
+    initVulkan(cfg, args.fluid_nz);
     mainLoop(args.n_shots);
     cleanup();
   }
@@ -176,7 +174,7 @@ private:
   float dt_      = 1.0f / 60.0f;
   float simTime_ = 0.0f;
 
-  void initVulkan(const FluidConfig& cfg) {
+  void initVulkan(const FluidConfig& cfg, int fluidNz) {
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
@@ -196,7 +194,7 @@ private:
 
     const float w           = cfg.domainSize.x;      // ドメイン X/Z サイズ (world_size)
     const float d           = cfg.particleSpacing(); // 流体粒子間隔（密度の基準）
-    const float waterDepth  = cfg.fluid_nz * d;
+    const float waterDepth  = float(fluidNz) * d;
     const float domainSizeY = cfg.domainSize.y; // run() で HALF_Y*2+Y_MARGIN*2 に設定済み
     const float centerY     = domainSizeY * 0.5f;
 

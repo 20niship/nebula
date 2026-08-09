@@ -72,9 +72,7 @@ SIMS = [
         "env": {},
         "extra_args": [
             "--scenario", "source-flow",
-            "--world-size", "40",
-            "--nx", "192", "--ny", "3", "--nz", "192",
-            "--grid-res", "128",
+            "--domain-size-x", "40",
         ],
         "params": "N~110K | moving AABB source | world=40",
     },

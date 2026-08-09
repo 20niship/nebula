@@ -128,6 +128,15 @@ private:
     engine_.rho0            = large_ ? cfg.computeRestDensity() : 30.0f;
     engine_.linearDamping   = 0.02f;
     engine_.surfaceTension  = surfaceTension;
+    if(large_) {
+      // cfmEpsilon/scorrKの既定値(3000 / 0.001)はh≈1.25m規模でのチューニング値。
+      // --large(h=0.02m, rho0≈100万)ではCFM緩和項がgrad項優位になり密度拘束が
+      // 過剰に硬くなって暴走する(TC13で実測確認: 既定値のままだと水たまりが
+      // ドメイン天井まで吹き飛ぶ)。cfmEpsilonを大幅に緩め、人工圧力(Tensile
+      // Instability対策)を無効化することで安定する。
+      engine_.cfmEpsilon = 1e6f;
+      engine_.scorrK     = 0.0f;
+    }
 
     graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/fluid_particle.vert.spv", SHADER_DIR_STR + "/fluid.frag.spv");
 

@@ -1,5 +1,6 @@
 #include "ClothSceneEngine.h"
 #include "../core/DefineShaderCompiler.h"
+#include "../core/Profiling.h"
 
 #include <algorithm>
 #include <cstring>
@@ -231,6 +232,8 @@ void ClothSceneEngine::transferBarrier(VkCommandBuffer cmd) {
 // ─── 1フレームのシミュレーション ──────────────────────────────────────────
 
 void ClothSceneEngine::step(VkCommandBuffer cmd, float dt) {
+  ZoneScoped;
+  FrameMark;
   auto ds = attrBuf_.descriptorSet;
 
   // PinAnimated ターゲットをGPUへ転送

@@ -25,6 +25,11 @@ find_program(GLSLC glslc HINTS "${VULKAN_SDK}/bin" REQUIRED)
 # デフォルトOFF。task perf (build-perf/) からのみ ON でconfigureされる。
 option(NEBULA_GPU_PROFILING "Enable Vulkan timestamp-query based GPU pass profiling (PyroEngine)" OFF)
 
+# ── Tracy プロファイラ (https://github.com/wolfpld/tracy) ───────────────────
+# デフォルトOFF。Taskfile経由のビルド (task configure/build 等) では常にONになる
+# (Taskfile.yml の configure タスク参照)。手動 cmake 直呼びではOFFのまま。
+option(NEBULA_TRACY "Enable Tracy profiler client (FetchContent, only fetched when ON)" OFF)
+
 # ── shaderc (実行時 GLSL→SPIR-V 動的コンパイル; issue #30 Force システム用) ──
 # Vulkan SDK に同梱の shaderc_combined を使用。新規パッケージ導入は不要。
 find_path(SHADERC_INCLUDE_DIR shaderc/shaderc.hpp
@@ -176,8 +181,20 @@ endforeach()
 
 add_custom_target(shaders ALL DEPENDS ${SHADER_SPV})
 
-# ── doctest (ヘッダオンリー、FetchContent 経由) ───────────────────────────
+# ── Tracy プロファイラ (FetchContent、NEBULA_TRACY=ON のときのみ取得・ビルド) ──
 include(FetchContent)
+if(NEBULA_TRACY)
+    set(TRACY_ENABLE ON CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        tracy
+        GIT_REPOSITORY https://github.com/wolfpld/tracy.git
+        GIT_TAG        v0.11.1
+        GIT_SHALLOW    TRUE
+    )
+    FetchContent_MakeAvailable(tracy)
+endif()
+
+# ── doctest (ヘッダオンリー、FetchContent 経由) ───────────────────────────
 FetchContent_Declare(
     doctest
     GIT_REPOSITORY https://github.com/doctest/doctest.git

@@ -1,4 +1,5 @@
 #include "PyroEngine.h"
+#include "../core/Profiling.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -261,6 +262,8 @@ PyroSimPC PyroEngine::buildPC(float dt) const {
 // ── ステップ ──────────────────────────────────────────────────────────────
 
 void PyroEngine::step(VkCommandBuffer cmd, float dt) {
+  ZoneScoped;
+  FrameMark;
   uploadForces(dt);
 
   const float subDt = dt / float(std::max(1, numSubsteps));

@@ -68,6 +68,14 @@ if(NEBULA_GPU_PROFILING)
     target_compile_definitions(nebula PUBLIC NEBULA_GPU_PROFILING)
 endif()
 
+# Tracy: nebula にPUBLICでリンクすることで、nebulaを使う全example/testに伝播する。
+# NEBULA_TRACY未定義時はsrc/core/Profiling.hがno-opマクロにフォールバックするため、
+# 呼び出し側コードは常にコンパイル可能(TracyClientの有無を意識しなくてよい)。
+if(NEBULA_TRACY)
+    target_compile_definitions(nebula PUBLIC NEBULA_TRACY)
+    target_link_libraries(nebula PUBLIC TracyClient)
+endif()
+
 if(APPLE)
     target_compile_definitions(nebula PUBLIC VK_USE_PLATFORM_METAL_EXT)
     target_link_libraries(nebula PUBLIC "-framework Foundation")

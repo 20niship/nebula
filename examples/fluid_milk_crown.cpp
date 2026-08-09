@@ -41,12 +41,10 @@ public:
     base_.screenshotDir = args.screenshot_dir;
 
     FluidConfig cfg;
-    cfg.fluid_nx     = 32;
-    cfg.fluid_ny     = 32;
-    cfg.fluid_nz     = 8; // fluidCount()=8192 (水たまり+水滴の初期容量として十分; 動的拡張(issue #13)にも対応)
-    cfg.domainSize   = glm::vec3(kWorldSize, kWorldSize, kWorldSize);
-    cfg.cellSize     = 2.0f * cfg.particleSpacing(); // h/d比≈2 (fluid_absorb.cppと同方針)
-    cfg.max_boundary = 0;                            // 床はドメインのSDF境界がそのまま機能する (専用境界メッシュ不要)
+    cfg.particleRadius = (kWorldSize / 32.0f) / 2.0f; // spacing=20/32=0.625m (旧 fluid_nx=32 相当)
+    cfg.domainSize     = glm::vec3(kWorldSize, kWorldSize, kWorldSize);
+    cfg.cellSize       = 2.0f * cfg.particleSpacing(); // h/d比≈2 (fluid_absorb.cppと同方針)
+    cfg.max_boundary   = 0;                            // 床はドメインのSDF境界がそのまま機能する (専用境界メッシュ不要)
 
     base_.initWindow("Vulkan Sim – Milk Crown (Surface Tension)");
     initVulkan(cfg, args.surface_tension);

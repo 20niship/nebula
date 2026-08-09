@@ -68,6 +68,8 @@ layout(push_constant) uniform PC {
     uint  foamKindIdx;
     uint  foamParamsIdx;
     uint  maxDiffuseParticles;
+    // 表面張力 (pbf_delta_p 専用; Akinci 2013 cohesion。他シェーダーは宣言のみで不使用)
+    float surfaceTension;
 } pc;
 
 // ── vec4 読み書き（FP32, MoltenVK 関数化バグ回避のためマクロ）────

@@ -57,6 +57,8 @@ inline void fluid_params(FluidEngine& e, GravityForce& gravity) {
   SIM_TIP("制約力混合（CFM）の緩和パラメータ (Macklin & Müller 式11)。\n大きいほど密度拘束が「柔らかく」なり発散を防ぐ。\n小さすぎると爆発的に発散する。推奨: 100〜3000。");
   ImGui::SliderFloat("人工圧力 k", &e.scorrK, 0.0f, 1.0f, "%.5f");
   SIM_TIP("人工圧力の強さ (Macklin & Müller 式13)。\n負圧による粒子クラスタリング（Tensile Instability）を補正する。\n0で無効。推奨: 0（通常）〜 0.001（引力が強い場合）。");
+  ImGui::SliderFloat("表面張力 sigma", &e.surfaceTension, 0.0f, 0.02f, "%.5f");
+  SIM_TIP("表面張力(Akinci 2013 cohesion)の強さ。\n近傍流体粒子を引き寄せて水滴・水たまりの丸まりを作る。\n0で無効。CFM epsilonが柔らかい設定のため非常に小さい値でも効果が強く出る。推奨: 0.0005〜0.002程度から調整。");
   ImGui::SliderFloat("線形ダンピング", &e.linearDamping, 0.0f, 2.0f, "%.3f");
   SIM_TIP("速度の減衰率 [1/s]。v *= exp(-d*dt) で計算。\n大きいほど粒子が素早く減速・停止する。\n0で減衰なし、0.6が標準値。");
   ImGui::Checkbox("渦度閉じ込め", &e.vorticityEnabled);

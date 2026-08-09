@@ -16,12 +16,11 @@
 #include "SimPC.h"
 
 // issue #46: ドメインは domainSize(vec3, 物理サイズ[m]) + cellSize(float, 全軸共通の
-// セルサイズ[m]) で指定する。h = cellSize, 粒子間隔 d = domainSize.x/fluid_nx
-// 推奨: h >= 2d → cellSize >= 2 * domainSize.x/fluid_nx
+// セルサイズ[m]) で指定する。h = cellSize, 粒子間隔 d = particleSpacing() = 2*particleRadius
+// 推奨: h >= 2d → cellSize >= 2 * particleSpacing()
+// issue #78: 粒子サイズの知識源を particleRadius 一本に統合(旧 fluid_nx/ny/nz は廃止)。
 struct FluidConfig {
-  uint32_t fluid_nx = 192;
-  uint32_t fluid_ny = 3;
-  uint32_t fluid_nz = 192;
+  float particleRadius = 20.0f / 192.0f / 2.0f; // 唯一のサイズ知識源 (spacing = 2*radius)
 
   glm::vec3 domainSize{20.0f, 20.0f, 20.0f}; // ドメイン物理サイズ [m] (旧 world_size)
   float cellSize = 20.0f / 64.0f;            // 全軸共通のセルサイズ [m] (旧 grid_res の逆算値)
@@ -31,11 +30,15 @@ struct FluidConfig {
   // 0 = 無効（バッファ確保・パイプラインdispatchとも完全スキップ、既存挙動に影響なし）
   uint32_t maxDiffuseParticles = 0;
 
-  uint32_t fluidCount() const { return fluid_nx * fluid_ny * fluid_nz; }
+  float particleSpacing() const { return particleRadius * 2.0f; }
+  // domain体積を粒子スペーシングの立方体で埋め尽くした場合の粒子数 (GPUバッファ確保上限)
+  uint32_t fluidCount() const {
+    const float d = particleSpacing();
+    return (uint32_t)(domainSize.x * domainSize.y * domainSize.z / (d * d * d));
+  }
   glm::uvec3 gridRes() const { return domain::gridRes(domainSize, cellSize); }
   // 空間ハッシュバッファの実要素数 (= cubeRes^3。gridRes.x*y*zではない点に注意)
   uint32_t totalCells() const { return domain::hashCells(gridRes()); }
-  float particleSpacing() const { return domainSize.x / float(fluid_nx); }
   uint32_t nTotalMax() const { return fluidCount() + max_boundary; }
 
   // 粒子間距離 d と平滑化長 h から静止密度 ρ₀ を数値計算

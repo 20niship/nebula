@@ -57,8 +57,8 @@ struct WaveFoamArgs : public argparse::Args {
   // 粒子間距離 d=world_size/nx (=粒子半径相当) を旧値の1.5倍にするため、nx を
   // 旧200から1/1.5倍の134に変更 (d: 0.12m→0.179m、約1.49倍)。grid_res は
   // h=2d 推奨を維持するため nx/2=67 に連動して下げている。
-  int& grid_res               = kwarg("grid-res", "spatial hash grid resolution").set_default(67);
-  int& fluid_nx               = kwarg("nx", "fluid particle grid X (密度基準)").set_default(134);
+  int& grid_res = kwarg("grid-res", "spatial hash grid resolution").set_default(67);
+  int& fluid_nx = kwarg("nx", "fluid particle grid X (密度基準)").set_default(134);
   // nz は水深方向の層数にほぼ等しい (waterDepth = fluid_nz * d より layers=waterDepth/d=fluid_nz)。
   // 層数を10程度にするため旧4から10へ変更 (副次的に粒子数も約2.5倍になる)。
   // 一時的に40まで上げたが、waterDepth(=nz*d)が domainSizeZ(world_size/6=4m) を
@@ -144,9 +144,7 @@ public:
     const float domainSizeZ = args.world_size / 6.0f; // Z方向の高さは world_size の1/6 (旧1/3から半減)
 
     FluidConfig cfg;
-    cfg.fluid_nx            = uint32_t(args.fluid_nx);
-    cfg.fluid_ny            = 16; // 流体薄層の奥行き分解能
-    cfg.fluid_nz            = uint32_t(args.fluid_nz);
+    cfg.particleRadius      = (args.world_size / float(args.fluid_nx)) / 2.0f;
     cfg.domainSize          = glm::vec3(args.world_size, domainSizeY, domainSizeZ);
     cfg.cellSize            = args.world_size / float(args.grid_res);
     cfg.max_boundary        = 20000;
@@ -156,7 +154,7 @@ public:
     paddle_.omega     = args.paddle_omega;
 
     base_.initWindow("Vulkan Sim - Wave Paddle + Bunny + Foam (issue #47)");
-    initVulkan(cfg);
+    initVulkan(cfg, args.fluid_nz);
     mainLoop(args.n_shots);
     cleanup();
   }
@@ -176,7 +174,7 @@ private:
   float dt_      = 1.0f / 60.0f;
   float simTime_ = 0.0f;
 
-  void initVulkan(const FluidConfig& cfg) {
+  void initVulkan(const FluidConfig& cfg, int fluidNz) {
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
@@ -187,8 +185,8 @@ private:
     engine_.linearDamping    = 0.003f;
     engine_.vorticityEnabled = false;
     engine_.vorticityEpsilon = 0.15f;
-    engine_.pbfIterations    = 2;
-    engine_.numSubsteps      = 2;
+    engine_.pbfIterations    = 6;
+    engine_.numSubsteps      = 4;
 
     gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f); // Z-up
 
@@ -196,7 +194,7 @@ private:
 
     const float w           = cfg.domainSize.x;      // ドメイン X/Z サイズ (world_size)
     const float d           = cfg.particleSpacing(); // 流体粒子間隔（密度の基準）
-    const float waterDepth  = cfg.fluid_nz * d;
+    const float waterDepth  = float(fluidNz) * d;
     const float domainSizeY = cfg.domainSize.y; // run() で HALF_Y*2+Y_MARGIN*2 に設定済み
     const float centerY     = domainSizeY * 0.5f;
 
@@ -209,7 +207,11 @@ private:
     const float paddleRestX     = paddle_.amplitude + 1.2f;   // 左壁からの最小マージンを確保
     const float paddleZMargin   = 2.0f * boundarySpacing;     // ドメイン下端よりわずかに下へ潜らせる
     const float paddleZMin      = -paddleZMargin;
-    const float paddleZMax      = cfg.domainSize.z * 0.85f; // フレーム中央〜上寄りに収まる高さ (ドメインZ高さ基準)
+    // 旧実装は paddleZMax=domainSizeZ*0.85 で上端15%を覆っておらず、波の飛沫が
+    // パドル上端を飛び越えて反対側(左壁側)に着水し蓄積する貫通漏れを実機確認した
+    // (frame0180/0360スクリーンショットでパドル背後に青い流体粒子が溜まる様子を確認)。
+    // 下端と同様に、ドメイン上端をわずかに残してほぼ全高を覆うことで飛び越えを防ぐ。
+    const float paddleZMax = cfg.domainSize.z - paddleZMargin;
     // パドルは前後2枚のシェル(x=center.x±paddleHalfThicknessX)で近似しているため、
     // 2枚の間隔(=paddleHalfThicknessX*2)が近傍探索の半径 h=cfg.cellSize より大きいと、
     // 2枚のどちらのカーネル範囲にも入らない「死角」がシェル内部にでき、そこを

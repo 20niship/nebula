@@ -27,9 +27,7 @@ TEST_CASE("PBF Foam - buffer allocation") {
   ctx.init();
 
   FluidConfig cfg;
-  cfg.fluid_nx            = 4;
-  cfg.fluid_ny             = 1;
-  cfg.fluid_nz             = 4;
+  cfg.particleRadius       = (10.0f / 4.0f) / 2.0f;
   cfg.domainSize           = glm::vec3(10.0f);
   cfg.cellSize             = 10.0f / 4.0f;
   cfg.max_boundary         = 0;
@@ -51,9 +49,7 @@ TEST_CASE("PBF Foam - generation occurs on high-speed impact") {
   ctx.init();
 
   FluidConfig cfg;
-  cfg.fluid_nx            = 12;
-  cfg.fluid_ny             = 6;
-  cfg.fluid_nz             = 12;
+  cfg.particleRadius       = (10.0f / 12.0f) / 2.0f;
   cfg.domainSize           = glm::vec3(10.0f);
   cfg.cellSize             = 10.0f / 16.0f;
   cfg.max_boundary         = 0;
@@ -76,7 +72,7 @@ TEST_CASE("PBF Foam - generation occurs on high-speed impact") {
   src->center             = glm::vec3(5.0f, 5.0f, 8.0f);
   src->size               = glm::vec3(3.0f, 3.0f, 1.5f);
   src->vel                = glm::vec3(0.0f, 0.0f, -15.0f); // 高速下向き初速
-  src->particles_per_step = cfg.fluidCount();
+  src->particles_per_step = 12u * 6u * 12u; // 旧 fluid_nx*ny*nz 相当 (一気に投入)
   src->step_count         = -1;
   engine.addEmitter(src);
 
@@ -102,9 +98,7 @@ TEST_CASE("PBF Foam - no generation when kTa=kWc=0") {
   ctx.init();
 
   FluidConfig cfg;
-  cfg.fluid_nx            = 12;
-  cfg.fluid_ny             = 6;
-  cfg.fluid_nz             = 12;
+  cfg.particleRadius       = (10.0f / 12.0f) / 2.0f;
   cfg.domainSize           = glm::vec3(10.0f);
   cfg.cellSize             = 10.0f / 16.0f;
   cfg.max_boundary         = 0;
@@ -126,7 +120,7 @@ TEST_CASE("PBF Foam - no generation when kTa=kWc=0") {
   src->center             = glm::vec3(5.0f, 5.0f, 8.0f);
   src->size               = glm::vec3(3.0f, 3.0f, 1.5f);
   src->vel                = glm::vec3(0.0f, 0.0f, -15.0f);
-  src->particles_per_step = cfg.fluidCount();
+  src->particles_per_step = 12u * 6u * 12u; // 旧 fluid_nx*ny*nz 相当 (一気に投入)
   src->step_count         = -1;
   engine.addEmitter(src);
 
@@ -151,9 +145,7 @@ TEST_CASE("PBF Foam - lifetime expiry returns slot to graveyard") {
   ctx.init();
 
   FluidConfig cfg;
-  cfg.fluid_nx            = 2;
-  cfg.fluid_ny             = 1;
-  cfg.fluid_nz             = 2;
+  cfg.particleRadius       = (10.0f / 2.0f) / 2.0f;
   cfg.domainSize           = glm::vec3(10.0f);
   cfg.cellSize             = 10.0f / 4.0f;
   cfg.max_boundary         = 1; // 流体粒子ゼロでも step() 本体を実行させるためのダミー境界粒子用
@@ -194,9 +186,7 @@ TEST_CASE("PBF Foam - disabled foam does not affect base fluid behavior") {
   ctx.init();
 
   FluidConfig cfg;
-  cfg.fluid_nx            = 4;
-  cfg.fluid_ny             = 4;
-  cfg.fluid_nz             = 4;
+  cfg.particleRadius       = (10.0f / 4.0f) / 2.0f;
   cfg.domainSize           = glm::vec3(10.0f);
   cfg.cellSize             = 10.0f / 8.0f;
   cfg.max_boundary         = 0;
@@ -212,7 +202,7 @@ TEST_CASE("PBF Foam - disabled foam does not affect base fluid behavior") {
   auto src                = std::make_shared<AABBEmitter>();
   src->center             = glm::vec3(5.0f, 5.0f, 8.0f);
   src->size               = glm::vec3(2.0f, 2.0f, 2.0f);
-  src->particles_per_step = cfg.fluidCount();
+  src->particles_per_step = 4u * 4u * 4u; // 旧 fluid_nx*ny*nz 相当 (一気に投入)
   src->step_count         = -1;
   engine.addEmitter(src);
 

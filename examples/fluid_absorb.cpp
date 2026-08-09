@@ -104,11 +104,9 @@ public:
     base_.screenshotDir = args.screenshot_dir;
 
     FluidConfig cfg;
-    cfg.fluid_nx     = 26;
-    cfg.fluid_ny     = 26;
-    cfg.fluid_nz     = 2;
+    cfg.particleRadius = (kWorldSize / 26.0f) / 2.0f; // spacing=20/26≈0.77m (旧 fluid_nx=26 相当)
     cfg.domainSize   = glm::vec3(kWorldSize, kWorldSize, kWorldSize);
-    cfg.cellSize     = kWorldSize / 13.0f; // ≈1.54m, h/d≈2.0 ✓ (spacing=20/26≈0.77m)
+    cfg.cellSize     = kWorldSize / 13.0f; // ≈1.54m, h/d≈2.0 ✓
     cfg.max_boundary = 5000;
 
     base_.initWindow("Vulkan Sim – Fluid Absorb");
@@ -179,7 +177,7 @@ private:
     src->semiA              = 5.0f;
     src->semiB              = 3.0f;
     src->vel                = glm::vec3(0.0f);
-    src->particles_per_step = cfg.fluidCount();
+    src->particles_per_step = 26u * 26u * 2u; // 旧 fluid_nx*ny*nz 相当 (一発投入)
     src->step_count         = -1; // 初回 1 回のみ
     engine_.addEmitter(src);
 

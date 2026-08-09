@@ -56,13 +56,13 @@ public:
     bSpacing_           = args.boundary_spacing;
 
     FluidConfig cfg;
-    cfg.fluid_nx            = (uint32_t)args.fluid_nx;
-    cfg.fluid_ny            = (uint32_t)args.fluid_ny;
-    cfg.fluid_nz            = (uint32_t)args.fluid_nz;
+    cfg.particleRadius      = (args.domain_size_x / float(args.fluid_nx)) / 2.0f;
     cfg.domainSize          = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
     cfg.cellSize            = args.cell_size;
     cfg.max_boundary        = (uint32_t)args.max_boundary;
     cfg.maxDiffuseParticles = (uint32_t)args.max_diffuse;
+    // 旧 fluid_nx*ny*nz 相当の粒子数 (シナリオ側の噴出量に使用)
+    const uint32_t initialParticleCount = (uint32_t)args.fluid_nx * (uint32_t)args.fluid_ny * (uint32_t)args.fluid_nz;
 
     base_.initWindow("Vulkan Sim – PBF Fluid");
     initVulkan(cfg, args.boundary_obj, args.rho0);
@@ -70,7 +70,7 @@ public:
     engine_.cfmEpsilon    = args.cfm_eps;
     engine_.scorrK        = args.scorr_k;
     engine_.linearDamping = args.damping;
-    setupScenario(args.scenario, cfg);
+    setupScenario(args.scenario, cfg, initialParticleCount);
     mainLoop(args.n_shots);
     cleanup();
   }
@@ -93,7 +93,7 @@ private:
   float nextDiagTime_                  = 0.0f;
   static constexpr float DIAG_INTERVAL = 1.0f;
 
-  void setupScenario(const std::string& scenario, const FluidConfig& cfg) {
+  void setupScenario(const std::string& scenario, const FluidConfig& cfg, uint32_t initialParticleCount) {
     const glm::vec3 w = cfg.domainSize;
     const float m     = cfg.cellSize * 0.5f; // margin
 
@@ -105,7 +105,7 @@ private:
       src->size               = glm::vec3(w.x * 0.07f, w.y * 0.35f, w.z * 0.35f);
       src->center_vel         = glm::vec3(w.x * 0.10f, 0.0f, 0.0f); // 10% domain/s で右移動
       src->vel                = glm::vec3(w.x * 0.08f, 0.0f, 0.0f); // 放出粒子に右向き初速
-      src->particles_per_step = std::max(1u, cfg.fluidCount() / 400u);
+      src->particles_per_step = std::max(1u, initialParticleCount / 400u);
       src->step_count         = 0; // 無限
       engine_.addEmitter(src);
     } else {
@@ -114,7 +114,7 @@ private:
       src->center             = glm::vec3(w.x * 0.25f, w.y * 0.5f, w.z * 0.75f);
       src->size               = glm::vec3(w.x * 0.5f - 2.0f * m, w.y - 2.0f * m, w.z * 0.5f - 2.0f * m);
       src->vel                = glm::vec3(0.0f);
-      src->particles_per_step = cfg.fluidCount(); // 全粒子を一気に
+      src->particles_per_step = initialParticleCount; // 全粒子を一気に
       src->step_count         = -1;               // 1回のみ
       engine_.addEmitter(src);
     }

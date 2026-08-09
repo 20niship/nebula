@@ -321,10 +321,9 @@ TEST_CASE("TC6: fluid block settles at bottom, does not fill box") {
 // h >= 2d が成立しない場合、隣接粒子数が激減し密度≈0 → lambda爆発 → 全充填。
 // FluidConfig デフォルト値でチェック。
 TEST_CASE("TC7: SPH kernel radius satisfies h >= 2 * particle_spacing") {
-  // h = cellSize (全軸共通), d = domainSize.x / fluid_nx
-  // h >= 2d  ⟺  cellSize >= 2 * domainSize.x / fluid_nx
+  // h = cellSize (全軸共通), d = particleSpacing()
+  // h >= 2d  ⟺  cellSize >= 2 * particleSpacing()
   FluidConfig cfg{};
-  CHECK(cfg.cellSize >= 2.0f * cfg.domainSize.x / float(cfg.fluid_nx));
   CHECK(cfg.particleSpacing() * 2.0f <= cfg.cellSize + 1e-5f);
 }
 
@@ -392,17 +391,15 @@ TEST_CASE("TC9: fluid capacity grows dynamically beyond initial fluidCount() via
   ctx.init();
 
   FluidConfig cfg;
-  cfg.fluid_nx     = 4;
-  cfg.fluid_ny     = 1;
-  cfg.fluid_nz     = 4; // fluidCount() = 16 (小さい初期容量)
-  cfg.domainSize   = glm::vec3(10.0f, 10.0f, 10.0f);
-  cfg.cellSize     = 10.0f / 4.0f;
-  cfg.max_boundary = 0;
+  cfg.particleRadius = (10.0f / 4.0f) / 2.0f; // 旧 fluid_nx/ny/nz=4,1,4 相当の spacing
+  cfg.domainSize      = glm::vec3(10.0f, 10.0f, 10.0f);
+  cfg.cellSize        = 10.0f / 4.0f;
+  cfg.max_boundary    = 0;
 
   FluidEngine engine;
   engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
 
-  CHECK(cfg.fluidCount() == 16);
+  CHECK(cfg.fluidCount() == 64); // domainSize^3 / spacing^3 = 1000 / 15.625 (小さい初期容量)
 
   auto src                = std::make_shared<AABBEmitter>();
   src->center             = glm::vec3(5.0f, 5.0f, 5.0f);
@@ -436,12 +433,10 @@ TEST_CASE("TC10: boundary particle data survives fluid capacity growth") {
   ctx.init();
 
   FluidConfig cfg;
-  cfg.fluid_nx     = 4;
-  cfg.fluid_ny     = 1;
-  cfg.fluid_nz     = 4; // fluidCount() = 16
-  cfg.domainSize   = glm::vec3(10.0f, 10.0f, 10.0f);
-  cfg.cellSize     = 10.0f / 4.0f;
-  cfg.max_boundary = 8;
+  cfg.particleRadius = (10.0f / 4.0f) / 2.0f; // fluidCount() = 64
+  cfg.domainSize      = glm::vec3(10.0f, 10.0f, 10.0f);
+  cfg.cellSize        = 10.0f / 4.0f;
+  cfg.max_boundary    = 8;
 
   FluidEngine engine;
   engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
@@ -493,12 +488,10 @@ TEST_CASE("TC11: rectangular (non-cube) domain clamps particles to the short axi
   ctx.init();
 
   FluidConfig cfg;
-  cfg.fluid_nx     = 4;
-  cfg.fluid_ny     = 4;
-  cfg.fluid_nz     = 4;
-  cfg.domainSize   = glm::vec3(20.0f, 5.0f, 20.0f); // Y 軸だけ短い偏平ドメイン
-  cfg.cellSize     = 1.25f;
-  cfg.max_boundary = 0;
+  cfg.particleRadius = (20.0f / 4.0f) / 2.0f; // 旧 fluid_nx/ny/nz=4 相当の spacing
+  cfg.domainSize      = glm::vec3(20.0f, 5.0f, 20.0f); // Y 軸だけ短い偏平ドメイン
+  cfg.cellSize        = 1.25f;
+  cfg.max_boundary    = 0;
 
   FluidEngine engine;
   engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);

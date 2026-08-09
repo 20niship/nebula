@@ -17,6 +17,7 @@ https://github.com/user-attachments/assets/fc7bfe51-39a6-4694-a515-f3288ba808cb
 | `fluid_pbf` | FluidEngine | Position Based Fluids with vorticity confinement and XSPH viscosity. `dam-break` / `source-flow` scenarios, dynamic loading of arbitrary OBJ boundaries |
 | `fluid_sphere` | FluidEngine | PBF fluid confined inside a sphere-shaped OBJ boundary |
 | `fluid_absorb` | FluidEngine | An elliptical puddle absorbed by a cylindrical "absorber port" that sweeps across it along X |
+| `fluid_milk_crown` | FluidEngine | Surface tension (Akinci cohesion) demo: a puddle emitter plus a falling droplet emitter, verifying the droplet stays cohesive as it falls and lands |
 | `screw_fluid` | FluidEngine | A procedurally generated 4-blade propeller rotating inside PBF fluid, stirring it |
 | `smoke` | FluidEngine (repurposed) | Particle-based smoke driven by buoyancy + vorticity confinement (no incompressibility constraint) |
 | `multi_physics` | MultiPhysicsEngine | Cloth and PBF fluid sharing one world, with bidirectional coupling toggled on/off |

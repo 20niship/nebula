@@ -44,12 +44,11 @@ public:
     base_.screenshotDir = args.screenshot_dir;
 
     // FluidConfig: 煙専用の小さな設定。cellSize は cellSize >= 2*spacing を満たすよう調整。
+    const uint32_t nx = uint32_t(std::cbrt(double(args.max_particles)));
     FluidConfig cfg;
-    cfg.fluid_nx     = uint32_t(std::cbrt(double(args.max_particles)));
-    cfg.fluid_ny     = cfg.fluid_nx;
-    cfg.fluid_nz     = cfg.fluid_nx;
+    cfg.particleRadius = (args.domain_size_x / float(nx)) / 2.0f;
     cfg.domainSize   = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
-    cfg.cellSize     = args.domain_size_x / float(std::max(16u, cfg.fluid_nx / 2u));
+    cfg.cellSize     = args.domain_size_x / float(std::max(16u, nx / 2u));
     cfg.max_boundary = 0;
 
     base_.initWindow("Vulkan Sim – Smoke");

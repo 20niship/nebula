@@ -43,9 +43,7 @@ public:
     base_.screenshotDir = args.screenshot_dir;
 
     FluidConfig cfg;
-    cfg.fluid_nx     = (uint32_t)args.fluid_nx;
-    cfg.fluid_ny     = (uint32_t)args.fluid_ny;
-    cfg.fluid_nz     = (uint32_t)args.fluid_nz;
+    cfg.particleRadius = (args.domain_size_x / float(args.fluid_nx)) / 2.0f;
     cfg.domainSize   = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
     cfg.cellSize     = args.cell_size;
     cfg.max_boundary = (uint32_t)args.max_boundary;

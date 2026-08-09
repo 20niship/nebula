@@ -9,6 +9,17 @@
 
 layout(local_size_x = 256) in;
 
+// Akinci et al. 2013 "Versatile Surface Tension and Adhesion for SPH Fluids" の
+// cohesion カーネル C(r)。0<r<=h でのみ非ゼロ、r=h/2 付近にピークを持つ短距離引力。
+float cohesionKernel(float r, float h) {
+    float coeff = 32.0 / (3.14159265 * pow(h, 9.0));
+    float hr    = h - r;
+    float term  = hr * hr * hr * r * r * r;
+    if (2.0 * r > h) return coeff * term; // 遠距離: 単純な三次項
+    float h6 = h * h * h * h * h * h;
+    return coeff * (2.0 * term - h6 / 64.0); // 近距離: r→0での消失を防ぐ補正項
+}
+
 void main() {
     uint i = gl_GlobalInvocationID.x;
     if (i >= pc.particleCount) return;
@@ -35,7 +46,9 @@ void main() {
     float hr2_dq = h2 - dq2;
     float W_dq   = poly6_coeff * hr2_dq * hr2_dq * hr2_dq;
 
-    vec3 deltaP = vec3(0.0);
+    vec3 deltaP  = vec3(0.0);
+    vec3 cohesion = vec3(pc.surfaceTension * 0.0001, 0.0, 0.0); // DEBUG TEMP
+    float rho_i  = readFloat(pc.densityIdx, idx);
 
     ivec3 gi = ivec3(clamp((pi - pc.worldMin) / pc.cellSize,
                            vec3(0.0), vec3(pc.gridRes) - vec3(1.0)));
@@ -82,10 +95,19 @@ void main() {
             float s_corr = -k_corr * ratio * ratio * ratio * ratio;
 
             deltaP += (lambda_i + lambda_j + s_corr) * grad_w;
+
+            // 表面張力: 流体粒子同士のみ (境界/粉体には適用しない)
+            if (pc.surfaceTension > 0.0 && fj == 1u) {
+                float rho_j = readFloat(pc.densityIdx, j);
+                float k_ij  = 2.0 * rho0 / max(rho_i + rho_j, 1e-6);
+                float Cr    = cohesionKernel(rlen, h);
+                cohesion   += -pc.surfaceTension * k_ij * Cr * (r / rlen);
+            }
         }
     }
 
     deltaP /= rho0;
+    deltaP += cohesion;
 
     // Clamp deltaP to h/4 per iteration to prevent violent explosions from
     // underdense corner particles (which have only ~7 neighbors instead of 26)

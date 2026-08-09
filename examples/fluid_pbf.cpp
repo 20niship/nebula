@@ -41,6 +41,7 @@ struct FluidArgs : public argparse::Args {
   float& viscosity            = kwarg("viscosity", "XSPH viscosity c").set_default(0);
   float& cfm_eps              = kwarg("cfm-eps", "CFM relaxation epsilon").set_default(3000.0f);
   float& scorr_k              = kwarg("scorr-k", "artificial pressure k").set_default(0.0f);
+  float& surface_tension      = kwarg("surface-tension", "surface tension cohesion sigma").set_default(0.0f);
   float& damping              = kwarg("damping", "linear velocity damping 1/s").set_default(0.6f);
   std::string& scenario       = kwarg("scenario", "dam-break | source-flow").set_default(std::string("dam-break"));
   int& max_diffuse            = kwarg("max-diffuse", "max spray/foam/bubble diffuse particle count (0=disabled, issue #47)").set_default(0);
@@ -69,6 +70,7 @@ public:
     engine_.viscosityC    = args.viscosity;
     engine_.cfmEpsilon    = args.cfm_eps;
     engine_.scorrK        = args.scorr_k;
+    engine_.surfaceTension = args.surface_tension;
     engine_.linearDamping = args.damping;
     setupScenario(args.scenario, cfg);
     mainLoop(args.n_shots);

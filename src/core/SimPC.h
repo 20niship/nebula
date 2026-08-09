@@ -90,8 +90,11 @@ struct SimPC {
   uint32_t foamParamsIdx;       // FoamParams (16 floats) の bindless index
   uint32_t maxDiffuseParticles; // 泡バッファの固定容量 (0=無効)。pbf_foam_advect の境界チェックに使用
                                  // (pc.particleCount は同 substep 内で別用途のため流用不可)
+
+  // ── 表面張力 (pbf_delta_p 専用; Akinci 2013 cohesion。他シェーダーは宣言のみで不使用) ──
+  float surfaceTension; // 表面張力係数 σ (0=無効)
 };
-static_assert(sizeof(SimPC) == 220, "SimPC must be 220 bytes"); // issue #46 直方体ドメイン対応 (200B) + issue #47 泡 (foamPosIdx等5フィールド, +20B)
+static_assert(sizeof(SimPC) == 224, "SimPC must be 224 bytes"); // issue #46 直方体ドメイン対応 (200B) + issue #47 泡 (foamPosIdx等5フィールド, +20B) + 表面張力 (+4B)
 static_assert(offsetof(SimPC, cellCountIdx) == 20, "hash compat offset");
 static_assert(offsetof(SimPC, cellOffsetIdx) == 24, "hash compat offset");
 static_assert(offsetof(SimPC, hashCells) == 36, "hash compat offset");

@@ -233,6 +233,9 @@ add_sim_example(fluid_absorb examples/fluid_absorb.cpp)
 # ── fluid_sphere: 球体容器内 PBF 流体 (UI なし自動スポーン) ──────────────────
 add_sim_example(fluid_sphere examples/fluid_sphere.cpp)
 
+# ── fluid_milk_crown: 表面張力デモ (水たまり + 落下水滴; issue #75) ──────────
+add_sim_example(fluid_milk_crown examples/fluid_milk_crown.cpp)
+
 # ── smoke: 煙パーティクルシミュレーション ─────────────────────────────────────
 add_sim_example(smoke examples/smoke.cpp)
 

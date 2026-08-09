@@ -112,6 +112,7 @@ public:
   // 発散したため一旦この既定に戻している。チューニングは ImGui または CLI 引数で行う。
   float cfmEpsilon       = 3000.0f; // CFM 緩和 ε (式11)。元のハードコード値
   float scorrK           = 0.001f;  // 人工圧力 k (式13; 0=無効)
+  float surfaceTension   = 0.0f;    // 表面張力係数 σ (Akinci 2013 cohesion; 0=無効)
   float vorticityEpsilon = 0.1f;    // 渦度閉じ込め ε (式16)
   float linearDamping    = 0.02f;   // 速度減衰 [1/s]。元のハードコード値
   bool vorticityEnabled  = false;   // 渦度閉じ込めの ON/OFF

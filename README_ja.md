@@ -17,6 +17,7 @@ https://github.com/user-attachments/assets/fc7bfe51-39a6-4694-a515-f3288ba808cb
 | `fluid_pbf` | FluidEngine | Position Based Fluids（渦度保存・XSPH粘性・CFM緩和）。dam-break / source-flow の2シナリオ、任意OBJ境界の動的ロード対応 |
 | `fluid_sphere` | FluidEngine | 球体OBJを境界として読み込み、内部にPBF流体を閉じ込める |
 | `fluid_absorb` | FluidEngine | 楕円形の水たまりを、X方向に移動する円柱型「吸収ポート」が通過して吸収していくデモ |
+| `fluid_milk_crown` | FluidEngine | 表面張力 (Akinci cohesion) デモ。水たまりエミッタ + 落下水滴エミッタで、水滴が塊のまま落下・着水することを確認する |
 | `screw_fluid` | FluidEngine | 手続き生成した4枚羽根プロペラを回転させ、PBF流体を撹拌するスクリューデモ |
 | `smoke` | FluidEngine（流用） | 浮力＋渦度閉じ込めによる粒子ベースの煙（非圧縮拘束なし） |
 | `multi_physics` | MultiPhysicsEngine | 布とPBF流体を同一ワールドに配置し、双方向連成をON/OFF可能 |

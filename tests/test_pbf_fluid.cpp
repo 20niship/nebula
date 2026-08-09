@@ -530,3 +530,55 @@ TEST_CASE("TC11: rectangular (non-cube) domain clamps particles to the short axi
   engine.cleanup();
   ctx.cleanup();
 }
+
+// ── TC12: 表面張力 (Akinci cohesion) が近傍流体粒子を引き寄せる ────────────────
+// 重力ゼロで2粒子をカーネル半径h以内に配置し、surfaceTension>0のときのみ
+// 粒子間距離が縮むことを検証する。cfmEpsilonを極端に大きくして密度拘束由来の
+// λ (2粒子だけでは常に極端な低密度=強い引力になってしまう) をほぼ無効化し、
+// cohesion項の効果だけを分離して見る (対照群 sigma=0 では距離がほぼ不変)。
+TEST_CASE("TC12: surface tension cohesion pulls neighboring fluid particles together") {
+  auto runAndGetFinalDist = [](float sigma) {
+    HeadlessCtx ctx;
+    ctx.init();
+
+    PBFHarness::Config cfg;
+    cfg.N              = 2;
+    cfg.worldMin       = 0.0f;
+    cfg.worldMax       = 10.0f;
+    cfg.gridRes        = 8; // h = 10/8 = 1.25m
+    cfg.gravity        = 0.0f;
+    cfg.rho0           = 3.0f; // この2粒子だけの疎な配置での自然密度(~1.5x2)に近い値。
+                                // rho0を実際の局所密度からかけ離れた値にするとk_ij=2*rho0/(rho_i+rho_j)が
+                                // 異常増幅し、クランプ飽和による振動でテストが意味をなさなくなるため。
+    cfg.viscosityC     = 0.0f;
+    cfg.pbfIterations  = 4;
+    cfg.numSubsteps    = 4;
+    cfg.cfmEpsilon     = 1e9f; // 密度拘束由来のλをほぼゼロに抑え、cohesion項だけ見る
+    cfg.surfaceTension = sigma;
+
+    const float gap = 0.8f; // h(1.25) 以内、h/2(0.625) 超の距離
+    std::vector<glm::vec4> pos  = {glm::vec4(4.0f, 5.0f, 5.0f, 1.0f), glm::vec4(4.0f + gap, 5.0f, 5.0f, 1.0f)};
+    std::vector<glm::vec4> invM = {glm::vec4(1.0f, 0.0f, 0.0f, 0.0f), glm::vec4(1.0f, 0.0f, 0.0f, 0.0f)};
+
+    PBFHarness sim;
+    sim.init(ctx, cfg, SHADERS, pos, invM);
+
+    const float dt = 1.0f / 60.0f;
+    for(int f = 0; f < 60; ++f) sim.step(dt); // 1秒
+
+    glm::vec4 p0 = sim.readPos(0);
+    glm::vec4 p1 = sim.readPos(1);
+    float dist   = glm::length(glm::vec3(p1) - glm::vec3(p0));
+
+    sim.cleanup();
+    ctx.cleanup();
+    return dist;
+  };
+
+  const float gap = 0.8f;
+  float distWithTension    = runAndGetFinalDist(1.0f);
+  float distWithoutTension = runAndGetFinalDist(0.0f);
+
+  CHECK(distWithTension < gap); // 表面張力ありは引き寄せられ初期距離より縮む
+  CHECK(distWithoutTension >= gap * 0.95f); // 対照群 (力なし) はほぼ不変
+}

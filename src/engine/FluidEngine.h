@@ -30,6 +30,16 @@ struct FluidConfig {
   // 0 = 無効（バッファ確保・パイプラインdispatchとも完全スキップ、既存挙動に影響なし）
   uint32_t maxDiffuseParticles = 0;
 
+  // 初期流体パーティクル容量の明示指定 (0=無効、既定は fluidCount() をそのまま使う)。
+  // fluidCount() はドメイン体積を粒子間隔の立方体で埋め尽くした場合の理論上限であり、
+  // ドメインの一部しか流体で満たさないシナリオ(例: 広く微細な解像度のドメインに
+  // 薄い水たまりだけを置く場合)ではこの理論値が実使用量よりはるかに大きくなり、
+  // GPU側で不要に巨大なバッファを確保してしまう(Bindless配列の各バッファサイズが
+  // 膨らむことでMoltenVK等のドライバ側resident化コストが増大する要因になる)。
+  // 実使用量に近い値をここで指定すれば、初期確保はその値になり、それを超えた分は
+  // 既存の動的拡張(growFluidCapacity, issue #13)がフォローする。
+  uint32_t initialCapacityHint = 0;
+
   float particleSpacing() const { return particleRadius * 2.0f; }
   // domain体積を粒子スペーシングの立方体で埋め尽くした場合の粒子数 (GPUバッファ確保上限)
   uint32_t fluidCount() const {
@@ -74,6 +84,12 @@ public:
 
   void step(VkCommandBuffer cmd, float dt);
   void resetParticles(); // 粒子を初期位置・速度にリセット（バッファ/パイプラインは再生成しない）
+
+#ifdef NEBULA_GPU_PROFILING
+  // ── GPUパス単位プロファイリング(診断用; PyroEngineと同じ仕組み) ────────────
+  void enableGpuProfiling(VkPhysicalDevice physicalDevice);
+  void printGpuProfile();
+#endif
 
   void addEmitter(std::shared_ptr<Emitter> emitter);
   void clearEmitters();
@@ -273,4 +289,18 @@ private:
   void reclaimDeadSlots_();          // slotDeath_<=simTime_ の生存スロットを空きへ回収する
 
   void computeBarrier(VkCommandBuffer cmd);
+
+  // ── GPUパス単位プロファイリング(診断用) ─────────────────────────────────
+  // dispatch直前/直後にタイムスタンプを書き、labelごとに合計してprintGpuProfile()で表示する。
+  // NEBULA_GPU_PROFILING 未定義時は呼び出し箇所を汚さないよう空実装になる(PyroEngineと同じ方針)。
+  void profBegin(VkCommandBuffer cmd);
+  void profEnd(VkCommandBuffer cmd, const char* label);
+#ifdef NEBULA_GPU_PROFILING
+  VkQueryPool profPool_       = VK_NULL_HANDLE;
+  bool profEnabled_           = false;
+  double profTsPeriodNs_      = 1.0;
+  static constexpr uint32_t kProfMaxQueries = 256;
+  std::vector<std::string> profLabels_;
+  uint32_t profQueryIndex_ = 0;
+#endif
 };

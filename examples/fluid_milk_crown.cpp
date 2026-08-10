@@ -1,7 +1,6 @@
 #include "App.h"
 #include "core/Emitter.h"
 #include "core/Force.h"
-#include "core/Profiling.h"
 #include "engine/FluidEngine.h"
 #include "graphics/GraphicsPipeline.h"
 #include "utils.hpp"
@@ -280,13 +279,8 @@ private:
   }
 
   void drawFrame(int nShots) {
-    ZoneScoped;
-    FrameMark;
     auto& f = base_.frames[base_.currentFrame];
-    {
-      ZoneScopedN("waitForFences");
-      vkWaitForFences(base_.ctx.device, 1, &f.inFlightFence, VK_TRUE, UINT64_MAX);
-    }
+    vkWaitForFences(base_.ctx.device, 1, &f.inFlightFence, VK_TRUE, UINT64_MAX);
 
     uint32_t imageIdx;
     VkResult result = vkAcquireNextImageKHR(base_.ctx.device, base_.ctx.swapchain, UINT64_MAX, f.imageAvailable, VK_NULL_HANDLE, &imageIdx);
@@ -316,10 +310,7 @@ private:
 
     f.timelineValue++;
     vkResetCommandBuffer(f.computeCmd, 0);
-    {
-      ZoneScopedN("recordComputeCmd");
-      recordComputeCmd(f.computeCmd);
-    }
+    recordComputeCmd(f.computeCmd);
 
     VkTimelineSemaphoreSubmitInfo tsSig{};
     tsSig.sType                     = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
@@ -336,10 +327,7 @@ private:
     vkQueueSubmit(base_.ctx.computeQueue, 1, &compSub, VK_NULL_HANDLE);
 
     vkResetCommandBuffer(f.graphicsCmd, 0);
-    {
-      ZoneScopedN("recordGraphicsCmd");
-      recordGraphicsCmd(f.graphicsCmd, imageIdx);
-    }
+    recordGraphicsCmd(f.graphicsCmd, imageIdx);
 
     std::array<uint64_t, 2> waitVals = {0, f.timelineValue};
     VkTimelineSemaphoreSubmitInfo tsWait{};
@@ -370,15 +358,9 @@ private:
     present.pSwapchains        = &base_.ctx.swapchain;
     present.pImageIndices      = &imageIdx;
 
-    if(nShots > 0) {
-      ZoneScopedN("saveScreenshot");
-      base_.saveScreenshot(imageIdx, nShots);
-    }
+    if(nShots > 0) base_.saveScreenshot(imageIdx, nShots);
 
-    {
-      ZoneScopedN("vkQueuePresentKHR");
-      result = vkQueuePresentKHR(base_.ctx.graphicsQueue, &present);
-    }
+    result = vkQueuePresentKHR(base_.ctx.graphicsQueue, &present);
     if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || base_.framebufferResized) {
       base_.framebufferResized = false;
       base_.ctx.recreateSwapchain();

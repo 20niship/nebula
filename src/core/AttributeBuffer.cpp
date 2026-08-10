@@ -65,23 +65,6 @@ uint32_t AttributeBuffer::addAttribute(const std::string& name, VkDeviceSize ele
   return attr.bindlessIndex;
 }
 
-void AttributeBuffer::submitAndWait(VkCommandPool cmdPool, VkQueue queue, VkCommandBuffer cmd) {
-  VkSubmitInfo si{};
-  si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-  si.commandBufferCount = 1;
-  si.pCommandBuffers    = &cmd;
-
-  VkFenceCreateInfo fenceInfo{};
-  fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-  VkFence fence    = VK_NULL_HANDLE;
-  vkCreateFence(device_, &fenceInfo, nullptr, &fence);
-
-  vkQueueSubmit(queue, 1, &si, fence);
-  vkWaitForFences(device_, 1, &fence, VK_TRUE, UINT64_MAX);
-  vkDestroyFence(device_, fence, nullptr);
-  vkFreeCommandBuffers(device_, cmdPool, 1, &cmd);
-}
-
 void AttributeBuffer::upload(const std::string& name, const void* data, VkDeviceSize byteSize, VkCommandPool cmdPool, VkQueue queue) {
   auto it = attributes_.find(name);
   if(it == attributes_.end()) throw std::runtime_error("Attribute not found: " + name);
@@ -123,7 +106,14 @@ void AttributeBuffer::upload(const std::string& name, const void* data, VkDevice
   vkCmdCopyBuffer(cmd, stageBuf, it->second.buffer, 1, &region);
 
   vkEndCommandBuffer(cmd);
-  submitAndWait(cmdPool, queue, cmd);
+
+  VkSubmitInfo si{};
+  si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+  si.commandBufferCount = 1;
+  si.pCommandBuffers    = &cmd;
+  vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE);
+  vkQueueWaitIdle(queue);
+  vkFreeCommandBuffers(device_, cmdPool, 1, &cmd);
 
   vmaDestroyBuffer(allocator_, stageBuf, stageAlloc);
 }
@@ -169,7 +159,14 @@ void AttributeBuffer::uploadAt(const std::string& name, const void* data, VkDevi
   vkCmdCopyBuffer(cmd, stageBuf, it->second.buffer, 1, &region);
 
   vkEndCommandBuffer(cmd);
-  submitAndWait(cmdPool, queue, cmd);
+
+  VkSubmitInfo si{};
+  si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+  si.commandBufferCount = 1;
+  si.pCommandBuffers    = &cmd;
+  vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE);
+  vkQueueWaitIdle(queue);
+  vkFreeCommandBuffers(device_, cmdPool, 1, &cmd);
   vmaDestroyBuffer(allocator_, stageBuf, stageAlloc);
 }
 
@@ -229,7 +226,14 @@ void AttributeBuffer::uploadScattered(const std::string& name, const void* packe
   }
   vkCmdCopyBuffer(cmd, stageBuf, it->second.buffer, static_cast<uint32_t>(regions.size()), regions.data());
   vkEndCommandBuffer(cmd);
-  submitAndWait(cmdPool, queue, cmd);
+
+  VkSubmitInfo si{};
+  si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+  si.commandBufferCount = 1;
+  si.pCommandBuffers    = &cmd;
+  vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE);
+  vkQueueWaitIdle(queue);
+  vkFreeCommandBuffers(device_, cmdPool, 1, &cmd);
   vmaDestroyBuffer(allocator_, stageBuf, stageAlloc);
 }
 
@@ -276,7 +280,14 @@ void AttributeBuffer::resizeAttribute(const std::string& name, uint32_t newCount
     vkCmdCopyBuffer(cmd, attr.buffer, newBuffer, 1, &region);
 
     vkEndCommandBuffer(cmd);
-    submitAndWait(cmdPool, queue, cmd);
+
+    VkSubmitInfo si{};
+    si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers    = &cmd;
+    vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE);
+    vkQueueWaitIdle(queue);
+    vkFreeCommandBuffers(device_, cmdPool, 1, &cmd);
   }
 
   if(attr.buffer != VK_NULL_HANDLE) vmaDestroyBuffer(allocator_, attr.buffer, attr.allocation);

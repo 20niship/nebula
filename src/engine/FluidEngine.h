@@ -11,6 +11,7 @@
 
 #include "../core/Domain.h"
 #include "../core/Emitter.h"
+#include "../core/GpuProfiler.h"
 #include "ComputePipeline.h"
 #include "EngineBase.h"
 #include "SimPC.h"
@@ -290,17 +291,8 @@ private:
 
   void computeBarrier(VkCommandBuffer cmd);
 
-  // ── GPUパス単位プロファイリング(診断用) ─────────────────────────────────
-  // dispatch直前/直後にタイムスタンプを書き、labelごとに合計してprintGpuProfile()で表示する。
-  // NEBULA_GPU_PROFILING 未定義時は呼び出し箇所を汚さないよう空実装になる(PyroEngineと同じ方針)。
-  void profBegin(VkCommandBuffer cmd);
-  void profEnd(VkCommandBuffer cmd, const char* label);
-#ifdef NEBULA_GPU_PROFILING
-  VkQueryPool profPool_       = VK_NULL_HANDLE;
-  bool profEnabled_           = false;
-  double profTsPeriodNs_      = 1.0;
-  static constexpr uint32_t kProfMaxQueries = 256;
-  std::vector<std::string> profLabels_;
-  uint32_t profQueryIndex_ = 0;
-#endif
+  // ── GPUパス単位プロファイリング(診断用; GpuProfiler(core/GpuProfiler.h)に委譲) ──
+  // NEBULA_GPU_PROFILING 未定義/enableGpuProfiling未呼び出し時は GpuProfiler 自体が
+  // no-opになるため、step() 側の呼び出し箇所は常にそのままでよい。
+  GpuProfiler profiler_;
 };

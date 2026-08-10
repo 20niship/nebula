@@ -6,6 +6,7 @@ add_library(nebula STATIC
     core/VulkanContext.cpp
     core/AttributeBuffer.cpp
     core/ComputePipeline.cpp
+    core/GpuProfiler.cpp
     core/ForceShaderCompiler.cpp
     core/DefineShaderCompiler.cpp
     graphics/GraphicsPipeline.cpp

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "GpuProfiler.h"
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -42,6 +44,15 @@ public:
   VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
   VkDescriptorSet descriptorSet             = VK_NULL_HANDLE;
 
+  // ── GPU転送(vkCmdCopyBuffer)プロファイリング(診断用) ─────────────────────
+  // upload/uploadAt/uploadScattered/resizeAttribute は呼び出しごとに独立した
+  // single-time command bufferを使うため、FluidEngineのGpuProfilerのような
+  // per-frame reset方式ではなく、呼び出し単位でreset+計測しGpuProfiler::takeLastNs()
+  // で即座に読み出して自前のマップへ累積する(呼び出し側は既にvkQueueWaitIdleで
+  // GPU完了を保証済みのため追加の待ちは不要)。
+  void enableGpuProfiling(VkDevice device, VkPhysicalDevice physicalDevice);
+  void printGpuProfile();
+
 private:
   struct Attribute {
     VkBuffer buffer          = VK_NULL_HANDLE;
@@ -60,4 +71,12 @@ private:
   void createDescriptorSetLayout();
   void createDescriptorSet(VkDescriptorPool pool);
   void registerBuffer(uint32_t index, VkBuffer buffer);
+
+  // 転送コマンド(cmd)をsubmitAndWait_で完了保証したうえで、直前の
+  // xferProfiler_.begin/end 1回分のGPU時間をlabelごとに累積する。
+  void recordTransfer_(const std::string& label, VkCommandPool cmdPool, VkQueue queue, VkCommandBuffer cmd);
+
+  GpuProfiler xferProfiler_;
+  std::map<std::string, double> xferSumMs_;
+  std::map<std::string, int> xferCounts_;
 };

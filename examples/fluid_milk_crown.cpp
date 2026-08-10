@@ -1,6 +1,7 @@
 #include "App.h"
 #include "core/Emitter.h"
 #include "core/Force.h"
+#include "core/Profiling.h"
 #include "engine/FluidEngine.h"
 #include "graphics/GraphicsPipeline.h"
 #include "utils.hpp"

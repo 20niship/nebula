@@ -469,21 +469,8 @@ void VulkanContext::endSingleTimeCommands(VkCommandPool pool, VkCommandBuffer cm
   si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
   si.commandBufferCount = 1;
   si.pCommandBuffers    = &cmd;
-
-  // vkQueueWaitIdle(queue) はキュー全体のアイドル待ちで、MoltenVK上では
-  // このコマンドバッファと無関係な既存の作業まで巻き込んで同期する分、
-  // 単一コマンドバッファ用のフェンス待ちに比べて著しく重い(実測: スクリーン
-  // ショット保存1回で数百msの固定コストになっていた、issue参照)。
-  // このコマンドバッファ自身の完了だけを待つフェンスに置き換える。
-  VkFenceCreateInfo fenceInfo{};
-  fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-  VkFence fence    = VK_NULL_HANDLE;
-  vkCreateFence(device, &fenceInfo, nullptr, &fence);
-
-  vkQueueSubmit(queue, 1, &si, fence);
-  vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX);
-  vkDestroyFence(device, fence, nullptr);
-
+  vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE);
+  vkQueueWaitIdle(queue);
   vkFreeCommandBuffers(device, pool, 1, &cmd);
 }
 

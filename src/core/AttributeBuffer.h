@@ -60,9 +60,4 @@ private:
   void createDescriptorSetLayout();
   void createDescriptorSet(VkDescriptorPool pool);
   void registerBuffer(uint32_t index, VkBuffer buffer);
-  // cmd を submit し、このコマンドバッファ単体の完了だけをフェンスで待って解放する。
-  // vkQueueWaitIdle(queue) はキュー全体のアイドル待ちで、他の未完了作業まで巻き込む分
-  // 著しく重いため使わない (実測: 連続Emitterのある流体シミュレーションで
-  // uploadScattered が毎フレーム複数回呼ばれ、フレーム時間の大半を占めていた)。
-  void submitAndWait(VkCommandPool cmdPool, VkQueue queue, VkCommandBuffer cmd);
 };

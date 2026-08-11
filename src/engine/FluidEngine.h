@@ -40,6 +40,11 @@ struct FluidConfig {
   // 既存の動的拡張(growFluidCapacity, issue #13)がフォローする。
   uint32_t initialCapacityHint = 0;
 
+  // --large実験用: P/v/predP/invMass/omega/foamPos/foamVelをpackHalf2x16詰め
+  // (8 bytes/vec4)にしてメモリ帯域幅を半減する。通常モード(worldSize=20m)は
+  // common.glsl記載の過去の発散知見があるため既定false のまま変更しないこと。
+  bool halfVec4 = false;
+
   float particleSpacing() const { return particleRadius * 2.0f; }
   // domain体積を粒子スペーシングの立方体で埋め尽くした場合の粒子数 (GPUバッファ確保上限)
   uint32_t fluidCount() const {
@@ -303,4 +308,10 @@ private:
   std::vector<std::string> profLabels_;
   uint32_t profQueryIndex_ = 0;
 #endif
+
+  // ── cfg_.halfVec4 対応アップロードラッパー (P/v/predP/invMass/foamPos/foamVel用) ──
+  // halfVec4==trueならglm::packHalf2x16で2×uint32/vec4に詰めてからuploadする。
+  void uploadVec4_(const std::string& name, const glm::vec4* data, uint32_t n, VkCommandPool cmdPool, VkQueue queue);
+  void uploadVec4At_(const std::string& name, const glm::vec4& v, uint32_t slot, VkCommandPool cmdPool, VkQueue queue);
+  void uploadVec4Scattered_(const std::string& name, const std::vector<glm::vec4>& data, const std::vector<uint32_t>& dstIndices, VkCommandPool cmdPool, VkQueue queue);
 };

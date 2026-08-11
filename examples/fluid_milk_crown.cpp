@@ -1,6 +1,7 @@
 #include "App.h"
 #include "core/Emitter.h"
 #include "core/Force.h"
+#include "core/DefineShaderCompiler.h"
 #include "engine/FluidEngine.h"
 #include "graphics/GraphicsPipeline.h"
 #include "utils.hpp"
@@ -61,6 +62,7 @@ struct MilkCrownArgs : public argparse::Args {
   bool& large                 = flag("large", "2m四方ドメイン・1cm前後解像度・水たまり+連続降雨シナリオ");
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
+  bool& no_half = flag("no-half", "計測用: --large時のhalfVec4を強制的に無効化する");
 };
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -79,6 +81,10 @@ public:
       // 水たまり分 + 連続降雨の当面の蓄積分として2倍の余裕を初期容量に持たせる。
       // それでも足りなくなったら growFluidCapacity() (issue #13) が自動で追い足す。
       cfg.initialCapacityHint = largePoolParticleCount() * 2u;
+      // perf検証(issue: --largeのhalf float化): worldSize=2m・粒子間隔1cmの--largeは
+      // common.glslに記載の通常モード(worldSize=20m)発散知見のスケールと異なるため、
+      // ここでのみHALF_VEC4を有効化する。通常モードはFP32のまま変更しない。
+      cfg.halfVec4 = !args.no_half; // 計測用: --no-halfで強制無効化
     } else {
       cfg.particleRadius = (kWorldSize / 32.0f) / 2.0f; // spacing=20/32=0.625m (旧 fluid_nx=32 相当)
       cfg.domainSize     = glm::vec3(kWorldSize, kWorldSize, kWorldSize);
@@ -138,7 +144,15 @@ private:
       engine_.scorrK     = 0.0f;
     }
 
-    graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/fluid_particle.vert.spv", SHADER_DIR_STR + "/fluid.frag.spv");
+    if(large_) {
+      // fluid_particle.vertはposIdx/velIdxをreadVec4するため、cfg.halfVec4==trueのバッファ
+      // (packHalf2x16詰め、8 bytes/vec4)を静的.spv(FP32、16 bytes/vec4想定)のまま読むと
+      // ストライド不一致でバッファ範囲外読み出しになる。HALF_VEC4を注入した実行時コンパイルに切り替える。
+      std::vector<uint32_t> vertSpirv = DefineShaderCompiler::compile("fluid_particle.vert", {{"HALF_VEC4", "1"}}, /*isVertexShader=*/true);
+      graphicsPipe_.initVertFromSpirv(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, vertSpirv, SHADER_DIR_STR + "/fluid.frag.spv");
+    } else {
+      graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/fluid_particle.vert.spv", SHADER_DIR_STR + "/fluid.frag.spv");
+    }
 
     base_.createFrameData();
     base_.initImGui();

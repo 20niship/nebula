@@ -22,9 +22,32 @@ VkShaderModule GraphicsPipeline::loadShader(const std::string& path) {
   return mod;
 }
 
+VkShaderModule GraphicsPipeline::loadShaderFromSpirv(const std::vector<uint32_t>& code) {
+  VkShaderModuleCreateInfo info{};
+  info.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+  info.codeSize = code.size() * sizeof(uint32_t);
+  info.pCode    = code.data();
+
+  VkShaderModule mod;
+  if(vkCreateShaderModule(device_, &info, nullptr, &mod) != VK_SUCCESS) throw std::runtime_error("Failed to create shader module from spirv");
+  return mod;
+}
+
 void GraphicsPipeline::init(VkDevice device, VkRenderPass renderPass, VkDescriptorSetLayout bindlessLayout, const std::string& vertPath, const std::string& fragPath, VkPrimitiveTopology topology, bool enableBlend) {
   device_ = device;
+  VkShaderModule vertMod = loadShader(vertPath);
+  VkShaderModule fragMod = loadShader(fragPath);
+  buildPipeline(renderPass, bindlessLayout, vertMod, fragMod, topology, enableBlend);
+}
 
+void GraphicsPipeline::initVertFromSpirv(VkDevice device, VkRenderPass renderPass, VkDescriptorSetLayout bindlessLayout, const std::vector<uint32_t>& vertSpirv, const std::string& fragPath, VkPrimitiveTopology topology, bool enableBlend) {
+  device_ = device;
+  VkShaderModule vertMod = loadShaderFromSpirv(vertSpirv);
+  VkShaderModule fragMod = loadShader(fragPath);
+  buildPipeline(renderPass, bindlessLayout, vertMod, fragMod, topology, enableBlend);
+}
+
+void GraphicsPipeline::buildPipeline(VkRenderPass renderPass, VkDescriptorSetLayout bindlessLayout, VkShaderModule vertMod, VkShaderModule fragMod, VkPrimitiveTopology topology, bool enableBlend) {
   // Pipeline layout
   VkPushConstantRange pcRange{};
   pcRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -39,10 +62,6 @@ void GraphicsPipeline::init(VkDevice device, VkRenderPass renderPass, VkDescript
   layoutInfo.pPushConstantRanges    = &pcRange;
 
   if(vkCreatePipelineLayout(device_, &layoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) throw std::runtime_error("Failed to create graphics pipeline layout");
-
-  // Shaders
-  VkShaderModule vertMod = loadShader(vertPath);
-  VkShaderModule fragMod = loadShader(fragPath);
 
   std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
   stages[0].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;

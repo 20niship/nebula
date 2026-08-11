@@ -73,8 +73,23 @@ layout(push_constant) uniform PC {
 } pc;
 
 // ── vec4 読み書き（FP32, MoltenVK 関数化バグ回避のためマクロ）────
-// FP16 は worldSize=20m で位置精度 ~2cm となり PBF 補正量と同オーダーになって
-// シミュレーションが発散するため FP32 を維持する
+// FP16 は worldSize=20m(通常モード)で位置精度 ~2cm となり PBF 補正量と同オーダーに
+// なってシミュレーションが発散するため、通常モードは FP32 を維持する。
+// --large モード(worldSize=2m・粒子間隔1cm)は絶対誤差スケールが異なるため、
+// HALF_VEC4 が実行時コンパイルで注入された場合のみ packHalf2x16 詰め(8 bytes/vec4)
+// に切り替える(拡張機能不要。ストレージは相変わらず uint[] のまま2要素に短縮)。
+// この#defineを注入するのは FluidEngine の --large 用シェーダーのみで、他エンジン
+// (MPM/Cloth/SoftBody/Pyro)は影響を受けない。
+#ifdef HALF_VEC4
+#define readVec4(bufIdx, i) vec4( \
+    unpackHalf2x16(buffers[(bufIdx)].data[(i) * 2u]), \
+    unpackHalf2x16(buffers[(bufIdx)].data[(i) * 2u + 1u]))
+
+#define writeVec4(bufIdx, i, v) { \
+    uint _wb = (i) * 2u; \
+    buffers[(bufIdx)].data[_wb     ] = packHalf2x16((v).xy); \
+    buffers[(bufIdx)].data[_wb + 1u] = packHalf2x16((v).zw); }
+#else
 #define readVec4(bufIdx, i) vec4( \
     uintBitsToFloat(buffers[(bufIdx)].data[(i) * 4u     ]), \
     uintBitsToFloat(buffers[(bufIdx)].data[(i) * 4u + 1u]), \
@@ -87,6 +102,7 @@ layout(push_constant) uniform PC {
     buffers[(bufIdx)].data[_wb + 1u] = floatBitsToUint((v).y); \
     buffers[(bufIdx)].data[_wb + 2u] = floatBitsToUint((v).z); \
     buffers[(bufIdx)].data[_wb + 3u] = floatBitsToUint((v).w); }
+#endif
 
 #define readUint(bufIdx, i)      buffers[(bufIdx)].data[(i)]
 #define writeUint(bufIdx, i, v)  buffers[(bufIdx)].data[(i)] = (v)

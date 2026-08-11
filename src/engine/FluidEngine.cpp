@@ -10,10 +10,51 @@
 #include <limits>
 #include <cstdlib>
 #include <glm/glm.hpp>
+#include <glm/gtc/packing.hpp>
 #include <map>
 #include <random>
 #include <stdexcept>
 #include <vector>
+
+// ── cfg_.halfVec4 用 packHalf2x16 詰めヘルパー ────────────────────────────────
+// shaders/common.glsl の HALF_VEC4 readVec4/writeVec4 マクロと対になるCPU側変換。
+namespace {
+std::vector<uint32_t> packVec4Array(const glm::vec4* data, size_t n) {
+  std::vector<uint32_t> out(n * 2);
+  for(size_t i = 0; i < n; ++i) {
+    out[i * 2]     = glm::packHalf2x16(glm::vec2(data[i].x, data[i].y));
+    out[i * 2 + 1] = glm::packHalf2x16(glm::vec2(data[i].z, data[i].w));
+  }
+  return out;
+}
+} // namespace
+
+void FluidEngine::uploadVec4_(const std::string& name, const glm::vec4* data, uint32_t n, VkCommandPool cmdPool, VkQueue queue) {
+  if(cfg_.halfVec4) {
+    std::vector<uint32_t> packed = packVec4Array(data, n);
+    attrBuf_.upload(name, packed.data(), sizeof(uint32_t) * packed.size(), cmdPool, queue);
+  } else {
+    attrBuf_.upload(name, data, sizeof(glm::vec4) * n, cmdPool, queue);
+  }
+}
+
+void FluidEngine::uploadVec4At_(const std::string& name, const glm::vec4& v, uint32_t slot, VkCommandPool cmdPool, VkQueue queue) {
+  if(cfg_.halfVec4) {
+    uint32_t packed[2] = {glm::packHalf2x16(glm::vec2(v.x, v.y)), glm::packHalf2x16(glm::vec2(v.z, v.w))};
+    attrBuf_.uploadAt(name, packed, sizeof(packed), (VkDeviceSize)slot * sizeof(packed), cmdPool, queue);
+  } else {
+    attrBuf_.uploadAt(name, &v, sizeof(glm::vec4), (VkDeviceSize)slot * sizeof(glm::vec4), cmdPool, queue);
+  }
+}
+
+void FluidEngine::uploadVec4Scattered_(const std::string& name, const std::vector<glm::vec4>& data, const std::vector<uint32_t>& dstIndices, VkCommandPool cmdPool, VkQueue queue) {
+  if(cfg_.halfVec4) {
+    std::vector<uint32_t> packed = packVec4Array(data.data(), data.size());
+    attrBuf_.uploadScattered(name, packed.data(), sizeof(uint32_t) * 2, dstIndices, cmdPool, queue);
+  } else {
+    attrBuf_.uploadScattered(name, data.data(), sizeof(glm::vec4), dstIndices, cmdPool, queue);
+  }
+}
 
 // ── バリアヘルパー ───────────────────────────────────────────────────────────
 
@@ -42,18 +83,22 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   const uint32_t totalCap = totalBufferCapacity();
 
   // 全パーティクル用バッファを [0,max_boundary)=境界固定 + [max_boundary,..)=流体可変長 で確保
-  // vec4 系は FP16 packed（8 bytes/粒子）でメモリ帯域幅を半減
-  posIdx          = attrBuf_.addAttribute("P", sizeof(glm::vec4), totalCap);
-  velIdx          = attrBuf_.addAttribute("v", sizeof(glm::vec4), totalCap);
-  predPIdx        = attrBuf_.addAttribute("predP", sizeof(glm::vec4), totalCap);
-  invMassIdx      = attrBuf_.addAttribute("invMass", sizeof(glm::vec4), totalCap);
+  // cfg_.halfVec4==true (--large実験) の場合、vec4系はpackHalf2x16詰め(8 bytes/粒子)で
+  // メモリ帯域幅を半減する(shaders/common.glslのHALF_VEC4マクロ切り替えと対)。
+  // density/lambdaPbf/life等スカラーfloatは1要素=1uint32のままでhalf化してもメモリ削減
+  // 効果が無いため対象外(skip: 必要になったら2要素1uint32のペア詰めを検討)。
+  const VkDeviceSize vec4ElemSize = cfg_.halfVec4 ? sizeof(uint32_t) * 2 : sizeof(glm::vec4);
+  posIdx          = attrBuf_.addAttribute("P", vec4ElemSize, totalCap);
+  velIdx          = attrBuf_.addAttribute("v", vec4ElemSize, totalCap);
+  predPIdx        = attrBuf_.addAttribute("predP", vec4ElemSize, totalCap);
+  invMassIdx      = attrBuf_.addAttribute("invMass", vec4ElemSize, totalCap);
   typeFlagIdx     = attrBuf_.addAttribute("typeFlag", sizeof(uint32_t), totalCap);
   cellCountIdx_   = attrBuf_.addAttribute("cellCnt", sizeof(uint32_t), cfg_.totalCells());
   cellOffsetIdx_  = attrBuf_.addAttribute("cellOff", sizeof(uint32_t), cfg_.totalCells() + N_GROUPS);
   sortedIdxIdx_   = attrBuf_.addAttribute("sorted", sizeof(uint32_t), totalCap);
   densityIdx_     = attrBuf_.addAttribute("density", sizeof(float), totalCap);
   lambdaPbfIdx_   = attrBuf_.addAttribute("lambdaPbf", sizeof(float), totalCap);
-  omegaIdx_       = attrBuf_.addAttribute("omega", sizeof(glm::vec4), totalCap);
+  omegaIdx_       = attrBuf_.addAttribute("omega", vec4ElemSize, totalCap);
   lifeIdx_        = attrBuf_.addAttribute("life", sizeof(float), totalCap);
   emitterIdxIdx_  = attrBuf_.addAttribute("emitterIdx", sizeof(uint32_t), totalCap);
   absorberBufIdx_ = attrBuf_.addAttribute("absorbers", sizeof(float), MAX_ABSORBERS * 8u);
@@ -62,8 +107,8 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   // maxDiffuseParticles==0 でも常に確保し、setFoamParams() をいつでも安全に呼べるようにする。
   foamParamsIdx_ = attrBuf_.addAttribute("foamParams", sizeof(float), 16u);
   if(cfg_.maxDiffuseParticles > 0) {
-    foamPosIdx_  = attrBuf_.addAttribute("foamPos", sizeof(glm::vec4), cfg_.maxDiffuseParticles);
-    foamVelIdx_  = attrBuf_.addAttribute("foamVel", sizeof(glm::vec4), cfg_.maxDiffuseParticles);
+    foamPosIdx_  = attrBuf_.addAttribute("foamPos", vec4ElemSize, cfg_.maxDiffuseParticles);
+    foamVelIdx_  = attrBuf_.addAttribute("foamVel", vec4ElemSize, cfg_.maxDiffuseParticles);
     foamKindIdx_ = attrBuf_.addAttribute("foamKind", sizeof(uint32_t), cfg_.maxDiffuseParticles + 1u); // 末尾1要素=生成カーソル
 
     // 全スロットを 死(kind=0) + 生成カーソル=0 で zero-init する。
@@ -79,8 +124,8 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   if(cfg_.max_boundary > 0) {
     std::vector<glm::vec4> zeroVec(cfg_.max_boundary, glm::vec4(0.0f));
     std::vector<uint32_t> zeroFlags(cfg_.max_boundary, 6u);
-    attrBuf_.upload("P", zeroVec.data(), sizeof(glm::vec4) * cfg_.max_boundary, cmdPool, queue);
-    attrBuf_.upload("predP", zeroVec.data(), sizeof(glm::vec4) * cfg_.max_boundary, cmdPool, queue);
+    uploadVec4_("P", zeroVec.data(), cfg_.max_boundary, cmdPool, queue);
+    uploadVec4_("predP", zeroVec.data(), cfg_.max_boundary, cmdPool, queue);
     attrBuf_.upload("typeFlag", zeroFlags.data(), sizeof(uint32_t) * cfg_.max_boundary, cmdPool, queue);
   }
 
@@ -88,18 +133,13 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   emitters_.clear();
   emitterStepsDone_.clear();
 
+  // cfg_.halfVec4==true のとき、predict_sdf.comp(forceTargetPipeline()経由でinitForces()が
+  // ForceShaderCompiler::compileへ渡す)にもHALF_VEC4を注入する。initForces()より前に設定必須。
+  if(cfg_.halfVec4) extraForceDefines_ = {{"HALF_VEC4", "1"}};
+
   // Force (issue #30): 既定では空リスト。重力が必要な場合は呼び出し側が
   // addForce(GravityForce::FromDirection(...)) 等で登録する。
   initForces();
-
-  auto load = [&](ComputePipeline& k, const char* name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
-  load(kSdfVelocity_, "sdf_collision_velocity.comp"); // issue #66: kSdfCollision_+kUpdateVelocity_ 統合
-  load(kHashScanLocal_, "hash_scan_local.comp");
-  load(kHashScanGlobal_, "hash_scan_global.comp");
-  load(kHashAddBase_, "hash_add_base.comp");
-  load(kZeroCells_, "zero_cells.comp");
-  load(kAbsorb_, "fluid_absorb.comp");
-  load(kLifetime_, "fluid_lifetime.comp");
 
   // 空間ハッシュ近傍探索を使うシェーダー (cellId()/mortonAxisTriples() を common.glsl
   // から呼ぶもの) は、アダプティブ(直方体)Morton定数をドメイン形状(gridRes)から
@@ -107,17 +147,26 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   // ドメインごとに異なるこれらの定数を焼き込めないため)。src/core/Domain.h の
   // AdaptiveMortonParams / shaders/common.glsl の ADAPTIVE_* フォールバック定義と対。
   const domain::AdaptiveMortonParams morton = domain::computeAdaptiveMortonParams(cfg_.gridRes());
-  const std::vector<std::pair<std::string, std::string>> mortonDefines = {
+  std::vector<std::pair<std::string, std::string>> mortonDefines = {
       {"ADAPTIVE_MASK", std::to_string(morton.mask) + "u"},
       {"ADAPTIVE_COMMON_BITS", std::to_string(morton.commonBits) + "u"},
       {"ADAPTIVE_SHIFT_X", std::to_string(morton.shiftX) + "u"},
       {"ADAPTIVE_SHIFT_Y", std::to_string(morton.shiftY) + "u"},
       {"ADAPTIVE_SHIFT_Z", std::to_string(morton.shiftZ) + "u"},
   };
+  // cfg_.halfVec4==true のとき、P/v/predP/invMass/omega/foamPos/foamVelを読み書きする
+  // 全シェーダーにHALF_VEC4を注入する(shaders/common.glslのreadVec4/writeVec4切り替え)。
+  if(cfg_.halfVec4) mortonDefines.emplace_back("HALF_VEC4", "1");
   auto loadAdaptive = [&](ComputePipeline& k, const std::string& name) {
     std::vector<uint32_t> spirv = DefineShaderCompiler::compile(name, mortonDefines);
     k.initFromSpirv(device, attrBuf_.descriptorSetLayout, spirv);
   };
+  // sdf_collision_velocity/fluid_absorb/fluid_lifetimeもP/v/predP/invMassを読み書きするため、
+  // 静的.spvロードではなくloadAdaptive経由にしてHALF_VEC4を注入できるようにする
+  // (ADAPTIVE_MASK系はこれらのシェーダーでは未使用だが、注入しても無害なフォールバック値のため問題ない)。
+  loadAdaptive(kSdfVelocity_, "sdf_collision_velocity.comp"); // issue #66: kSdfCollision_+kUpdateVelocity_ 統合
+  loadAdaptive(kAbsorb_, "fluid_absorb.comp");
+  loadAdaptive(kLifetime_, "fluid_lifetime.comp");
   loadAdaptive(kHashCount_, "hash_count.comp");
   loadAdaptive(kHashSort_, "hash_sort.comp");
   loadAdaptive(kPbfDensity_, "pbf_density.comp");
@@ -127,6 +176,12 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   loadAdaptive(kVorticityForce_, "pbf_vorticity_force.comp");
   loadAdaptive(kFoamGenerate_, "pbf_foam_generate.comp");
   loadAdaptive(kFoamAdvect_, "pbf_foam_advect.comp");
+
+  auto load = [&](ComputePipeline& k, const char* name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
+  load(kHashScanLocal_, "hash_scan_local.comp");
+  load(kHashScanGlobal_, "hash_scan_global.comp");
+  load(kHashAddBase_, "hash_add_base.comp");
+  load(kZeroCells_, "zero_cells.comp");
 
   descriptorSetLayout = attrBuf_.descriptorSetLayout;
   descriptorSet       = attrBuf_.descriptorSet;
@@ -151,16 +206,16 @@ void FluidEngine::loadBoundary(const std::string& objPath, float spacing) {
   uint32_t n = static_cast<uint32_t>(std::min(pts.size(), size_t(cfg_.max_boundary)));
 
   // 境界パーティクルは常に buffer index 0 から書き込む（固定領域）
-  attrBuf_.upload("P", pts.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
-  attrBuf_.upload("predP", pts.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
+  uploadVec4_("P", pts.data(), n, cmdPool_, queue_);
+  uploadVec4_("predP", pts.data(), n, cmdPool_, queue_);
 
   // invMass = 0 (固定)
   std::vector<glm::vec4> zeroMass(n, glm::vec4(0.0f));
-  attrBuf_.upload("invMass", zeroMass.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
+  uploadVec4_("invMass", zeroMass.data(), n, cmdPool_, queue_);
 
   // 速度 = 0
   std::vector<glm::vec4> zeroVel(n, glm::vec4(0.0f));
-  attrBuf_.upload("v", zeroVel.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
+  uploadVec4_("v", zeroVel.data(), n, cmdPool_, queue_);
 
   // typeFlag = 3 (境界粒子)
   std::vector<uint32_t> flags(n, 3u);
@@ -179,16 +234,16 @@ void FluidEngine::loadBoundary(const std::string& objPath, float spacing, float 
   uint32_t n = static_cast<uint32_t>(std::min(mesh.particles.size(), size_t(cfg_.max_boundary)));
 
   // 境界パーティクルは常に buffer index 0 から書き込む（固定領域）
-  attrBuf_.upload("P", mesh.particles.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
-  attrBuf_.upload("predP", mesh.particles.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
+  uploadVec4_("P", mesh.particles.data(), n, cmdPool_, queue_);
+  uploadVec4_("predP", mesh.particles.data(), n, cmdPool_, queue_);
 
   // invMass = 0 (固定)
   std::vector<glm::vec4> zeroMass(n, glm::vec4(0.0f));
-  attrBuf_.upload("invMass", zeroMass.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
+  uploadVec4_("invMass", zeroMass.data(), n, cmdPool_, queue_);
 
   // 速度 = 0
   std::vector<glm::vec4> zeroVel(n, glm::vec4(0.0f));
-  attrBuf_.upload("v", zeroVel.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
+  uploadVec4_("v", zeroVel.data(), n, cmdPool_, queue_);
 
   // typeFlag = 3 (境界粒子)
   std::vector<uint32_t> flags(n, 3u);
@@ -204,14 +259,14 @@ void FluidEngine::loadBoundaryParticles(const std::vector<glm::vec4>& pts) {
   uint32_t n = static_cast<uint32_t>(std::min(pts.size(), size_t(cfg_.max_boundary)));
 
   // 境界パーティクルは常に buffer index 0 から書き込む（固定領域）
-  attrBuf_.upload("P", pts.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
-  attrBuf_.upload("predP", pts.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
+  uploadVec4_("P", pts.data(), n, cmdPool_, queue_);
+  uploadVec4_("predP", pts.data(), n, cmdPool_, queue_);
 
   std::vector<glm::vec4> zeroMass(n, glm::vec4(0.0f));
-  attrBuf_.upload("invMass", zeroMass.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
+  uploadVec4_("invMass", zeroMass.data(), n, cmdPool_, queue_);
 
   std::vector<glm::vec4> zeroVel(n, glm::vec4(0.0f));
-  attrBuf_.upload("v", zeroVel.data(), sizeof(glm::vec4) * n, cmdPool_, queue_);
+  uploadVec4_("v", zeroVel.data(), n, cmdPool_, queue_);
 
   std::vector<uint32_t> flags(n, 3u);
   attrBuf_.upload("typeFlag", flags.data(), sizeof(uint32_t) * n, cmdPool_, queue_);
@@ -242,8 +297,8 @@ void FluidEngine::setFoamParams(const FoamParams& params) {
 }
 
 void FluidEngine::debugSetFoamSlot(uint32_t slot, glm::vec4 pos, glm::vec4 vel, uint32_t kind) {
-  attrBuf_.uploadAt("foamPos", &pos, sizeof(glm::vec4), slot * sizeof(glm::vec4), cmdPool_, queue_);
-  attrBuf_.uploadAt("foamVel", &vel, sizeof(glm::vec4), slot * sizeof(glm::vec4), cmdPool_, queue_);
+  uploadVec4At_("foamPos", pos, slot, cmdPool_, queue_);
+  uploadVec4At_("foamVel", vel, slot, cmdPool_, queue_);
   attrBuf_.uploadAt("foamKind", &kind, sizeof(uint32_t), slot * sizeof(uint32_t), cmdPool_, queue_);
 }
 
@@ -320,10 +375,10 @@ void FluidEngine::emitFromEmitters(float dt) {
       absIdx[j]          = cfg_.max_boundary + dst[j];
     }
 
-    attrBuf_.uploadScattered("P", pos.data(), sizeof(glm::vec4), absIdx, cmdPool_, queue_);
-    attrBuf_.uploadScattered("predP", pos.data(), sizeof(glm::vec4), absIdx, cmdPool_, queue_);
-    attrBuf_.uploadScattered("v", vel.data(), sizeof(glm::vec4), absIdx, cmdPool_, queue_);
-    attrBuf_.uploadScattered("invMass", invM.data(), sizeof(glm::vec4), absIdx, cmdPool_, queue_);
+    uploadVec4Scattered_("P", pos, absIdx, cmdPool_, queue_);
+    uploadVec4Scattered_("predP", pos, absIdx, cmdPool_, queue_);
+    uploadVec4Scattered_("v", vel, absIdx, cmdPool_, queue_);
+    uploadVec4Scattered_("invMass", invM, absIdx, cmdPool_, queue_);
     attrBuf_.uploadScattered("typeFlag", flags.data(), sizeof(uint32_t), absIdx, cmdPool_, queue_);
     attrBuf_.uploadScattered("life", life.data(), sizeof(float), absIdx, cmdPool_, queue_);
     attrBuf_.uploadScattered("emitterIdx", eidx.data(), sizeof(uint32_t), absIdx, cmdPool_, queue_);

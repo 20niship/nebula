@@ -34,6 +34,10 @@ void main() {
     float h2  = h * h;
     float rho0 = pc.stretchCompliance;
     float lambda_i = readFloat(pc.lambdaPbfIdx, idx);
+    // issue #87 perf実験: 自分自身のソート後位置(下位24bit)とnbrCount(上位8bit)を1語から取り出す
+    uint packedSelf = readUint(pc.invSortedIdxIdx, idx);
+    uint kSelf = packedSelf & 0xFFFFFFu;
+    uint nbrN  = packedSelf >> 24;
 
     float spiky_coeff = 45.0 / (3.14159265 * h2 * h2 * h2);
     float poly6_coeff = 315.0 / (64.0 * 3.14159265 * h2 * h2 * h2 * h2 * h);
@@ -50,17 +54,18 @@ void main() {
     vec3 cohesion = vec3(pc.surfaceTension * 0.0001, 0.0, 0.0); // DEBUG TEMP
     float rho_i  = readFloat(pc.densityIdx, idx);
 
-    // issue #87 perf実験: 27セル探索は pbf_density が同フレーム同イテレーション内で
-    // 済ませており(predPはdensity→deltaPの間で変化しない)、ここでは nbrList を読むだけ。
+    // issue #87 perf実験: 27セル探索は pbf_density が同イテレーション内で済ませており、
+    // nbrList には(元indexではなく)sorted位置kを格納しているのでソート済みコピーを直接読む。
+    // nbrListに入る候補は既にpbf_density側で流体・境界・粉体のみに絞り込み済みなので
+    // ここでの型フィルタは不要 (typeFlagはpredPSorted.wにビット格納)。
     uint nbrBase = idx * MAX_NBR;
-    uint nbrN    = min(readUint(pc.nbrCountIdx, idx), MAX_NBR);
 
-    for (uint k = 0u; k < nbrN; ++k) {
-        uint j  = readUint(pc.nbrListIdx, nbrBase + k);
-        uint fj = readUint(pc.typeFlagIdx, j);
-        if (fj != 1u && fj != 3u && fj != 5u) continue; // 流体・境界・粉体
+    for (uint kk = 0u; kk < nbrN; ++kk) {
+        uint k   = readUint(pc.nbrListIdx, nbrBase + kk);
+        vec4 pjv = readVec4(pc.predPSortedIdx, k);
+        uint fj  = floatBitsToUint(pjv.w);
 
-        vec3 pj = readVec4(pc.predPIdx, j).xyz;
+        vec3 pj = pjv.xyz;
         vec3 r  = pi - pj;
         float r2 = dot(r, r);
         if (r2 >= h2 || r2 < 1e-12) continue;
@@ -72,7 +77,7 @@ void main() {
         vec3 grad_w = -(spiky_coeff * hr * hr / rlen) * r;
 
         // 境界粒子の λ_j = 0 (固定)。粉体は流体と同様に λ を使用。
-        float lambda_j = (fj == 1u || fj == 5u) ? readFloat(pc.lambdaPbfIdx, j) : 0.0;
+        float lambda_j = (fj == 1u || fj == 5u) ? readFloat(pc.lambdaPbfSortedIdx, k) : 0.0;
 
         // 人工圧力 s_corr = -k * (W(r)/W(Δq))^4
         float hr2  = h2 - r2;
@@ -84,7 +89,7 @@ void main() {
 
         // 表面張力: 流体粒子同士のみ (境界/粉体には適用しない)
         if (pc.surfaceTension > 0.0 && fj == 1u) {
-            float rho_j = readFloat(pc.densityIdx, j);
+            float rho_j = readFloat(pc.densitySortedIdx, k);
             float k_ij  = 2.0 * rho0 / max(rho_i + rho_j, 1e-6);
             float Cr    = cohesionKernel(rlen, h);
             cohesion   += -pc.surfaceTension * k_ij * Cr * (r / rlen);
@@ -102,4 +107,6 @@ void main() {
 
     vec4 newP = vec4(pi + deltaP, pi4.w);
     writeVec4(pc.predPIdx, idx, newP);
+    // issue #87 perf実験: 次iterationのdensityが読む。predPSorted.wはtypeFlagのビット格納用なのでpi4.wでなくfiを詰める
+    writeVec4(pc.predPSortedIdx, kSelf, vec4(pi + deltaP, uintBitsToFloat(fi)));
 }

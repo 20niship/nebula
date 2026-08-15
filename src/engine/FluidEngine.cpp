@@ -112,7 +112,10 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   lambdaPbfIdx_   = attrBuf_.addAttribute("lambdaPbf", sizeof(float), totalCap);
   omegaIdx_       = attrBuf_.addAttribute("omega", vec4ElemSizeVel, totalCap);
   nbrListIdx_     = attrBuf_.addAttribute("nbrList", sizeof(uint32_t) * kMaxNeighbors, totalCap); // issue #87 perf実験
-  nbrCountIdx_    = attrBuf_.addAttribute("nbrCount", sizeof(uint32_t), totalCap);
+  predPSortedIdx_     = attrBuf_.addAttribute("predPSorted", vec4ElemSize, totalCap); // issue #87 perf実験
+  densitySortedIdx_   = attrBuf_.addAttribute("densitySorted", sizeof(float), totalCap);
+  lambdaPbfSortedIdx_ = attrBuf_.addAttribute("lambdaPbfSorted", sizeof(float), totalCap);
+  invSortedIdxIdx_    = attrBuf_.addAttribute("invSortedIdx", sizeof(uint32_t), totalCap);
   // lifeIdx_廃止: lifeはv.wに格納 (task2)
   emitterIdxIdx_  = attrBuf_.addAttribute("emitterIdx", sizeof(uint32_t), totalCap);
   absorberBufIdx_ = attrBuf_.addAttribute("absorbers", sizeof(float), MAX_ABSORBERS * 8u);
@@ -415,7 +418,10 @@ void FluidEngine::growFluidCapacity(uint32_t minRequired) {
   attrBuf_.resizeAttribute("omega", newTotal, cmdPool_, queue_);
   attrBuf_.resizeAttribute("emitterIdx", newTotal, cmdPool_, queue_);
   attrBuf_.resizeAttribute("nbrList", newTotal, cmdPool_, queue_);
-  attrBuf_.resizeAttribute("nbrCount", newTotal, cmdPool_, queue_);
+  attrBuf_.resizeAttribute("predPSorted", newTotal, cmdPool_, queue_);
+  attrBuf_.resizeAttribute("densitySorted", newTotal, cmdPool_, queue_);
+  attrBuf_.resizeAttribute("lambdaPbfSorted", newTotal, cmdPool_, queue_);
+  attrBuf_.resizeAttribute("invSortedIdx", newTotal, cmdPool_, queue_);
   slotDeath_.resize(fluidCapacity_, std::numeric_limits<float>::infinity());
   slotAlive_.resize(fluidCapacity_, 0u);
 }
@@ -651,7 +657,10 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     pc.densityIdx        = densityIdx_;
     pc.lambdaPbfIdx      = lambdaPbfIdx_;
     pc.nbrListIdx        = nbrListIdx_;
-    pc.nbrCountIdx       = nbrCountIdx_;
+    pc.predPSortedIdx     = predPSortedIdx_;
+    pc.densitySortedIdx   = densitySortedIdx_;
+    pc.lambdaPbfSortedIdx = lambdaPbfSortedIdx_;
+    pc.invSortedIdxIdx    = invSortedIdxIdx_;
     pc.fluidStart        = cfg_.max_boundary;
     // PBF 論文準拠パラメータ
     pc.cfmEpsilon       = cfmEpsilon;

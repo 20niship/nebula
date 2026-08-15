@@ -18,7 +18,7 @@ void main() {
     vec4 p = readVec4(pc.posIdx, i);
 
     // 速度の大きさをフラグメントシェーダへ渡す
-    vec4 vel = readVec4(pc.velIdx, i);
+    vec4 vel = readVec4Vel(pc.velIdx, i);
     outSpeed = length(vel.xyz);
 
     // Z-up 座標系。fluid_particle.vert (screw_fluid/fluid_pbf 等共通) をベースに、

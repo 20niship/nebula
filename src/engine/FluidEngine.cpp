@@ -111,6 +111,8 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   densityIdx_     = attrBuf_.addAttribute("density", sizeof(float), totalCap);
   lambdaPbfIdx_   = attrBuf_.addAttribute("lambdaPbf", sizeof(float), totalCap);
   omegaIdx_       = attrBuf_.addAttribute("omega", vec4ElemSizeVel, totalCap);
+  nbrListIdx_     = attrBuf_.addAttribute("nbrList", sizeof(uint32_t) * kMaxNeighbors, totalCap); // issue #87 perf実験
+  nbrCountIdx_    = attrBuf_.addAttribute("nbrCount", sizeof(uint32_t), totalCap);
   // lifeIdx_廃止: lifeはv.wに格納 (task2)
   emitterIdxIdx_  = attrBuf_.addAttribute("emitterIdx", sizeof(uint32_t), totalCap);
   absorberBufIdx_ = attrBuf_.addAttribute("absorbers", sizeof(float), MAX_ABSORBERS * 8u);
@@ -164,6 +166,7 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   } else if(cfg_.halfVec4Vel) {
     mortonDefines.emplace_back("HALF_VEC4_V", "1");
   }
+  mortonDefines.emplace_back("MAX_NBR", std::to_string(kMaxNeighbors) + "u"); // issue #87 perf実験
   auto loadAdaptive = [&](ComputePipeline& k, const std::string& name) {
     std::vector<uint32_t> spirv = DefineShaderCompiler::compile(name, mortonDefines);
     k.initFromSpirv(device, attrBuf_.descriptorSetLayout, spirv);
@@ -411,6 +414,8 @@ void FluidEngine::growFluidCapacity(uint32_t minRequired) {
   attrBuf_.resizeAttribute("lambdaPbf", newTotal, cmdPool_, queue_);
   attrBuf_.resizeAttribute("omega", newTotal, cmdPool_, queue_);
   attrBuf_.resizeAttribute("emitterIdx", newTotal, cmdPool_, queue_);
+  attrBuf_.resizeAttribute("nbrList", newTotal, cmdPool_, queue_);
+  attrBuf_.resizeAttribute("nbrCount", newTotal, cmdPool_, queue_);
   slotDeath_.resize(fluidCapacity_, std::numeric_limits<float>::infinity());
   slotAlive_.resize(fluidCapacity_, 0u);
 }
@@ -645,6 +650,8 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     pc.forceCount        = (uint32_t)forces_.size();
     pc.densityIdx        = densityIdx_;
     pc.lambdaPbfIdx      = lambdaPbfIdx_;
+    pc.nbrListIdx        = nbrListIdx_;
+    pc.nbrCountIdx       = nbrCountIdx_;
     pc.fluidStart        = cfg_.max_boundary;
     // PBF 論文準拠パラメータ
     pc.cfmEpsilon       = cfmEpsilon;

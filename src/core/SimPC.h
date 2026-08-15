@@ -93,8 +93,12 @@ struct SimPC {
 
   // ── 表面張力 (pbf_delta_p 専用; Akinci 2013 cohesion。他シェーダーは宣言のみで不使用) ──
   float surfaceTension; // 表面張力係数 σ (0=無効)
+
+  // ── 近傍リストキャッシュ (pbf_density/pbf_delta_p 専用; issue #87 perf実験。他シェーダーは宣言のみで不使用) ──
+  uint32_t nbrListIdx;  // uint × N × MAX_NBR。pbf_densityが27セル探索中に書き、pbf_deltaPが読む
+  uint32_t nbrCountIdx; // uint × N。各粒子の有効近傍数 (<=MAX_NBR)
 };
-static_assert(sizeof(SimPC) == 224, "SimPC must be 224 bytes"); // issue #46 直方体ドメイン対応 (200B) + issue #47 泡 (foamPosIdx等5フィールド, +20B) + 表面張力 (+4B)
+static_assert(sizeof(SimPC) == 232, "SimPC must be 232 bytes"); // 224B(issue#46/#47/表面張力) + 近傍リストキャッシュ(issue #87, +8B)
 static_assert(offsetof(SimPC, cellCountIdx) == 20, "hash compat offset");
 static_assert(offsetof(SimPC, cellOffsetIdx) == 24, "hash compat offset");
 static_assert(offsetof(SimPC, hashCells) == 36, "hash compat offset");

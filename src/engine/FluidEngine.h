@@ -206,6 +206,10 @@ private:
   uint32_t densityIdx_    = 0;
   uint32_t lambdaPbfIdx_  = 0;
   uint32_t omegaIdx_      = 0; // 渦度 ω バッファ (vec4 × N)
+  // 近傍リストキャッシュ (issue #87 perf実験): kMaxNeighbors超過分は切り捨て
+  static constexpr uint32_t kMaxNeighbors = 48;
+  uint32_t nbrListIdx_  = 0; // uint × N × kMaxNeighbors
+  uint32_t nbrCountIdx_ = 0; // uint × N
   // lifeIdx_ は廃止: 寿命はv.w(velIdx)に格納 (task2: バッファ統合)
   uint32_t emitterIdxIdx_ = 0; // 放出元エミッタindex (uint × N)
   bool lifetimeEnabled_   = false; // lifetime>0のEmitterが登録されたら有効(lifetimeパスを実行)

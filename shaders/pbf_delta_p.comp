@@ -50,59 +50,44 @@ void main() {
     vec3 cohesion = vec3(pc.surfaceTension * 0.0001, 0.0, 0.0); // DEBUG TEMP
     float rho_i  = readFloat(pc.densityIdx, idx);
 
-    ivec3 gi = ivec3(clamp((pi - pc.worldMin) / pc.cellSize,
-                           vec3(0.0), vec3(pc.gridRes) - vec3(1.0)));
+    // issue #87 perf実験: 27セル探索は pbf_density が同フレーム同イテレーション内で
+    // 済ませており(predPはdensity→deltaPの間で変化しない)、ここでは nbrList を読むだけ。
+    uint nbrBase = idx * MAX_NBR;
+    uint nbrN    = min(readUint(pc.nbrCountIdx, idx), MAX_NBR);
 
-    // 27近傍セルのMorton符号を軸ごとに事前計算し、ループ内での重複計算を避ける
-    uint mx[3], my[3], mz[3];
-    mortonAxisTriples(gi, mx, my, mz);
+    for (uint k = 0u; k < nbrN; ++k) {
+        uint j  = readUint(pc.nbrListIdx, nbrBase + k);
+        uint fj = readUint(pc.typeFlagIdx, j);
+        if (fj != 1u && fj != 3u && fj != 5u) continue; // 流体・境界・粉体
 
-    for (int dz = -1; dz <= 1; ++dz)
-    for (int dy = -1; dy <= 1; ++dy)
-    for (int dx = -1; dx <= 1; ++dx) {
-        ivec3 nc = gi + ivec3(dx, dy, dz);
-        if (any(lessThan(nc, ivec3(0))) ||
-            any(greaterThanEqual(nc, ivec3(pc.gridRes)))) continue;
+        vec3 pj = readVec4(pc.predPIdx, j).xyz;
+        vec3 r  = pi - pj;
+        float r2 = dot(r, r);
+        if (r2 >= h2 || r2 < 1e-12) continue;
 
-        uint cid   = mx[dx + 1] | my[dy + 1] | mz[dz + 1];
-        uint cnt   = readUint(pc.cellCountIdx, cid);
-        uint start = readUint(pc.cellOffsetIdx, cid) - cnt;
+        float rlen = sqrt(r2);
+        float hr   = h - rlen;
+        // Spiky グラジエント: ∇_{p_i} W = -45/(π h^6) (h-r)^2 r̂_{ji}
+        // r = pi - pj (j→i 方向)、負符号でグラジエントは i→j 方向になる
+        vec3 grad_w = -(spiky_coeff * hr * hr / rlen) * r;
 
-        for (uint k = start; k < start + cnt; ++k) {
-            uint j  = readUint(pc.sortedIdxIdx, k);
-            if (j == idx) continue;
-            uint fj = readUint(pc.typeFlagIdx, j);
-            if (fj != 1u && fj != 3u && fj != 5u) continue; // 流体・境界・粉体
+        // 境界粒子の λ_j = 0 (固定)。粉体は流体と同様に λ を使用。
+        float lambda_j = (fj == 1u || fj == 5u) ? readFloat(pc.lambdaPbfIdx, j) : 0.0;
 
-            vec3 pj = readVec4(pc.predPIdx, j).xyz;
-            vec3 r  = pi - pj;
-            float r2 = dot(r, r);
-            if (r2 >= h2 || r2 < 1e-12) continue;
+        // 人工圧力 s_corr = -k * (W(r)/W(Δq))^4
+        float hr2  = h2 - r2;
+        float W_ij = poly6_coeff * hr2 * hr2 * hr2;
+        float ratio = (W_dq > 1e-30) ? (W_ij / W_dq) : 0.0;
+        float s_corr = -k_corr * ratio * ratio * ratio * ratio;
 
-            float rlen = sqrt(r2);
-            float hr   = h - rlen;
-            // Spiky グラジエント: ∇_{p_i} W = -45/(π h^6) (h-r)^2 r̂_{ji}
-            // r = pi - pj (j→i 方向)、負符号でグラジエントは i→j 方向になる
-            vec3 grad_w = -(spiky_coeff * hr * hr / rlen) * r;
+        deltaP += (lambda_i + lambda_j + s_corr) * grad_w;
 
-            // 境界粒子の λ_j = 0 (固定)。粉体は流体と同様に λ を使用。
-            float lambda_j = (fj == 1u || fj == 5u) ? readFloat(pc.lambdaPbfIdx, j) : 0.0;
-
-            // 人工圧力 s_corr = -k * (W(r)/W(Δq))^4
-            float hr2  = h2 - r2;
-            float W_ij = poly6_coeff * hr2 * hr2 * hr2;
-            float ratio = (W_dq > 1e-30) ? (W_ij / W_dq) : 0.0;
-            float s_corr = -k_corr * ratio * ratio * ratio * ratio;
-
-            deltaP += (lambda_i + lambda_j + s_corr) * grad_w;
-
-            // 表面張力: 流体粒子同士のみ (境界/粉体には適用しない)
-            if (pc.surfaceTension > 0.0 && fj == 1u) {
-                float rho_j = readFloat(pc.densityIdx, j);
-                float k_ij  = 2.0 * rho0 / max(rho_i + rho_j, 1e-6);
-                float Cr    = cohesionKernel(rlen, h);
-                cohesion   += -pc.surfaceTension * k_ij * Cr * (r / rlen);
-            }
+        // 表面張力: 流体粒子同士のみ (境界/粉体には適用しない)
+        if (pc.surfaceTension > 0.0 && fj == 1u) {
+            float rho_j = readFloat(pc.densityIdx, j);
+            float k_ij  = 2.0 * rho0 / max(rho_i + rho_j, 1e-6);
+            float Cr    = cohesionKernel(rlen, h);
+            cohesion   += -pc.surfaceTension * k_ij * Cr * (r / rlen);
         }
     }
 

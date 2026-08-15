@@ -66,7 +66,14 @@ layout(push_constant) uniform PC {
     uint  maxDiffuseParticles;
     // 表面張力 (pbf_delta_p 専用; Akinci 2013 cohesion。他シェーダーは宣言のみで不使用)
     float surfaceTension;
+    // 近傍リストキャッシュ (pbf_density/pbf_delta_p 専用; issue #87 perf実験)
+    uint  nbrListIdx;
+    uint  nbrCountIdx;
 } pc;
+
+#ifndef MAX_NBR
+#define MAX_NBR 48u
+#endif
 
 // HALF_VEC4: FluidEngine --large 専用。小ドメインのみ安全 (大ドメインは位置精度不足で発散)。
 #ifdef HALF_VEC4

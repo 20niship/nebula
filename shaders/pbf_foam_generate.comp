@@ -38,7 +38,7 @@ void main() {
     if (rho_i > rho0 * surfaceDensityRatio) return; // 表面近傍(低密度)の粒子のみ対象
 
     vec3 pi = readVec4(pc.posIdx, idx).xyz;
-    vec3 vi = readVec4(pc.velIdx, idx).xyz;
+    vec3 vi = readVec4Vel(pc.velIdx, idx).xyz;
 
     float h  = pc.cellSize;
     float h2 = h * h;
@@ -81,7 +81,7 @@ void main() {
             float hr2 = h2 - r2;
             float w   = poly6_coeff * hr2 * hr2 * hr2;
 
-            vec3 vj = readVec4(pc.velIdx, j).xyz;
+            vec3 vj = readVec4Vel(pc.velIdx, j).xyz;
             vec3 vij = vi - vj;
             float vijLen = length(vij);
             if (vijLen > 1e-6) {

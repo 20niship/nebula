@@ -40,10 +40,15 @@ struct FluidConfig {
   // 既存の動的拡張(growFluidCapacity, issue #13)がフォローする。
   uint32_t initialCapacityHint = 0;
 
-  // --large実験用: P/v/predP/invMass/omega/foamPos/foamVelをpackHalf2x16詰め
-  // (8 bytes/vec4)にしてメモリ帯域幅を半減する。通常モード(worldSize=20m)は
-  // common.glsl記載の過去の発散知見があるため既定false のまま変更しないこと。
+  // 全vec4バッファhalf-float(milk_crown --large等、小ドメイン専用):
+  // P/v/predP/omega/foamPos/foamVelをpackHalf2x16詰め(8 bytes/vec4)にする。
+  // worldSize=20mのような大ドメインでは精度不足で発散するため使用不可。
   bool halfVec4 = false;
+
+  // 速度バッファのみhalf-float(wave_foam --half等、大ドメインでも安定):
+  // vとomegaのみ8 bytes/vec4。P/predP/foamPos/foamVelはFP32のまま位置精度を保持。
+  // halfVec4=trueの場合はそちらが優先される(velも全バッファhalf扱い)。
+  bool halfVec4Vel = false;
 
   float particleSpacing() const { return particleRadius * 2.0f; }
   // domain体積を粒子スペーシングの立方体で埋め尽くした場合の粒子数 (GPUバッファ確保上限)
@@ -240,7 +245,7 @@ private:
   uint32_t densityIdx_    = 0;
   uint32_t lambdaPbfIdx_  = 0;
   uint32_t omegaIdx_      = 0; // 渦度 ω バッファ (vec4 × N)
-  uint32_t lifeIdx_       = 0; // 残り寿命 (float × N; <0=無限)
+  // lifeIdx_ は廃止: 寿命はv.w(velIdx)に格納 (task2: バッファ統合)
   uint32_t emitterIdxIdx_ = 0; // 放出元エミッタindex (uint × N)
   bool lifetimeEnabled_   = false; // lifetime>0のEmitterが登録されたら有効(lifetimeパスを実行)
 
@@ -314,4 +319,7 @@ private:
   void uploadVec4_(const std::string& name, const glm::vec4* data, uint32_t n, VkCommandPool cmdPool, VkQueue queue);
   void uploadVec4At_(const std::string& name, const glm::vec4& v, uint32_t slot, VkCommandPool cmdPool, VkQueue queue);
   void uploadVec4Scattered_(const std::string& name, const std::vector<glm::vec4>& data, const std::vector<uint32_t>& dstIndices, VkCommandPool cmdPool, VkQueue queue);
+  // task2: velocity/omega 用 (halfVec4 OR halfVec4Vel で half-float pack)
+  void uploadVec4Vel_(const std::string& name, const glm::vec4* data, uint32_t n, VkCommandPool cmdPool, VkQueue queue);
+  void uploadVec4VelScattered_(const std::string& name, const std::vector<glm::vec4>& data, const std::vector<uint32_t>& dstIndices, VkCommandPool cmdPool, VkQueue queue);
 };

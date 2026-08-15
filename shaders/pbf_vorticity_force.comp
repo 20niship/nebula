@@ -72,7 +72,7 @@ void main() {
     vec3 N = eta / etaLen;
     vec3 f = pc.vorticityEpsilon * cross(N, omega_i);
 
-    vec4 vi4 = readVec4(pc.velIdx, idx);
+    vec4 vi4 = readVec4Vel(pc.velIdx, idx);
     vi4.xyz += f * pc.dt;
-    writeVec4(pc.velIdx, idx, vi4);
+    writeVec4Vel(pc.velIdx, idx, vi4);
 }

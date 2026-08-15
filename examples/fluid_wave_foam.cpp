@@ -2,6 +2,7 @@
 // ドメイン左側で単振動(SHM)する壁パドルが波を起こし、右側に並べた複数の Bunny
 // メッシュへ波が衝突して泡を生成する。海面のリアルなレンダリング検証を想定。
 #include "App.h"
+#include "core/DefineShaderCompiler.h"
 #include "core/Emitter.h"
 #include "core/Force.h"
 #include "engine/BoundaryParticles.h"
@@ -65,11 +66,13 @@ struct WaveFoamArgs : public argparse::Args {
   // 超過し(7.16m)、境界付近で粒子が異常密集して性能が10倍以上悪化する不具合が
   // 判明したため10に戻す。粒子数の追加調整は kExtraParticleMultiplier
   // (下記 particles_per_step 算出箇所) で行い、水深とは切り離す。
-  int& fluid_nz               = kwarg("nz", "fluid particle grid Z / 水深基準").set_default(10);
-  float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 60.0f);
+  int& fluid_nz               = kwarg("nz", "fluid particle grid Z / 水深基準").set_default(11);
+  float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 120.0f);
   float& paddle_amp           = kwarg("paddle-amp", "波発生パドル SHM 振幅 [m]").set_default(3.0f);
   float& paddle_omega         = kwarg("paddle-omega", "波発生パドル SHM 角振動数 [rad/s]").set_default(1.2f);
   int& max_diffuse            = kwarg("max-diffuse", "泡(spray/foam/bubble)の最大パーティクル数 (0=無効)").set_default(20000);
+  bool& large                 = flag("large", "高解像度プリセット: nx×2, nz×2, grid_res=nx, max-diffuse×4");
+  bool& half                  = flag("half", "v/omegaをpackHalf2x16詰め(8 bytes/vec4)にしてメモリ帯域を削減 (P/predPはFP32維持; 大ドメイン安定版)");
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
 };
@@ -140,21 +143,28 @@ public:
     dt_                 = args.dt;
     base_.screenshotDir = args.screenshot_dir;
 
+    // --large: 粒子間隔を半分(nx×2, nz×2)、泡数を4倍にする高解像度プリセット
+    const int fluid_nx = args.large ? args.fluid_nx * 2 : args.fluid_nx;
+    const int fluid_nz = args.large ? args.fluid_nz * 2 : args.fluid_nz;
+    const int grid_res = args.large ? fluid_nx / 2 : args.grid_res;
+    const int max_diff = args.large ? args.max_diffuse * 4 : args.max_diffuse;
+
     const float domainSizeY = HALF_Y * 2.0f + Y_MARGIN * 2.0f;
     const float domainSizeZ = args.world_size / 6.0f; // Z方向の高さは world_size の1/6 (旧1/3から半減)
 
     FluidConfig cfg;
-    cfg.particleRadius      = (args.world_size / float(args.fluid_nx)) / 2.0f;
+    cfg.particleRadius      = (args.world_size / float(fluid_nx)) / 2.0f;
     cfg.domainSize          = glm::vec3(args.world_size, domainSizeY, domainSizeZ);
-    cfg.cellSize            = args.world_size / float(args.grid_res);
+    cfg.halfVec4Vel         = args.half; // task1: --half は v/omega のみ half (大ドメイン安定用)
+    cfg.cellSize            = args.world_size / float(grid_res);
     cfg.max_boundary        = 20000;
-    cfg.maxDiffuseParticles = uint32_t(args.max_diffuse);
+    cfg.maxDiffuseParticles = uint32_t(max_diff);
 
     paddle_.amplitude = args.paddle_amp;
     paddle_.omega     = args.paddle_omega;
 
-    base_.initWindow("Vulkan Sim - Wave Paddle + Bunny + Foam (issue #47)");
-    initVulkan(cfg, args.fluid_nz);
+    base_.initWindow(args.large ? "Vulkan Sim - Wave Paddle + Foam (Large)" : "Vulkan Sim - Wave Paddle + Bunny + Foam (issue #47)");
+    initVulkan(cfg, fluid_nz);
     mainLoop(args.n_shots);
     cleanup();
   }
@@ -185,8 +195,8 @@ private:
     engine_.linearDamping    = 0.003f;
     engine_.vorticityEnabled = false;
     engine_.vorticityEpsilon = 0.15f;
-    engine_.pbfIterations    = 6;
-    engine_.numSubsteps      = 4;
+    engine_.pbfIterations    = 3;
+    engine_.numSubsteps      = 2;
 
     gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f); // Z-up
 
@@ -301,8 +311,18 @@ private:
     // (共有版より約2倍近く、Z軸まわりにさらに斜めから見下ろす) を使う複製シェーダー。
     // 共有シェーダーを直接変更すると screw_fluid 等 他の全シーンのカメラも
     // 変わってしまうため、複製して差し替えている。
-    graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/fluid_particle_wave.vert.spv", SHADER_DIR_STR + "/fluid.frag.spv");
-    foamGraphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/foam_particle_wave.vert.spv", SHADER_DIR_STR + "/foam.frag.spv", VK_PRIMITIVE_TOPOLOGY_POINT_LIST, /*enableBlend=*/true);
+    if(cfg.halfVec4) {
+      // P/v/foamPos/foamVelがpackHalf2x16詰め(8 bytes/vec4)のため、静的SPV(FP32想定)のまま
+      // では readVec4 がストライド不一致でゴミ値を読む。HALF_VEC4を注入した実行時コンパイルへ切替。
+      const std::vector<std::pair<std::string, std::string>> halfDefines = {{"HALF_VEC4", "1"}};
+      auto fluidVert = DefineShaderCompiler::compile("fluid_particle_wave.vert", halfDefines, /*isVertexShader=*/true);
+      auto foamVert  = DefineShaderCompiler::compile("foam_particle_wave.vert",  halfDefines, /*isVertexShader=*/true);
+      graphicsPipe_.initVertFromSpirv(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, fluidVert, SHADER_DIR_STR + "/fluid.frag.spv");
+      foamGraphicsPipe_.initVertFromSpirv(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, foamVert, SHADER_DIR_STR + "/foam.frag.spv", VK_PRIMITIVE_TOPOLOGY_POINT_LIST, /*enableBlend=*/true);
+    } else {
+      graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/fluid_particle_wave.vert.spv", SHADER_DIR_STR + "/fluid.frag.spv");
+      foamGraphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/foam_particle_wave.vert.spv", SHADER_DIR_STR + "/foam.frag.spv", VK_PRIMITIVE_TOPOLOGY_POINT_LIST, /*enableBlend=*/true);
+    }
 
     base_.createFrameData();
     base_.initImGui();

@@ -104,6 +104,22 @@ layout(push_constant) uniform PC {
     buffers[(bufIdx)].data[_wb + 3u] = floatBitsToUint((v).w); }
 #endif
 
+// HALF_VEC4_V: v/omega専用half-float。P/predPはFP32のまま(大ドメインでも位置精度を保持)。
+// HALF_VEC4が定義済み(全バッファhalf、milk_crown --large等)の場合はvelも同様にhalf扱い。
+// FluidEngine::halfVec4Velが有効な場合のみHALF_VEC4_Vが注入される。
+#if defined(HALF_VEC4) || defined(HALF_VEC4_V)
+#define readVec4Vel(bufIdx, i) vec4( \
+    unpackHalf2x16(buffers[(bufIdx)].data[(i) * 2u]), \
+    unpackHalf2x16(buffers[(bufIdx)].data[(i) * 2u + 1u]))
+#define writeVec4Vel(bufIdx, i, v) { \
+    uint _wv = (i) * 2u; \
+    buffers[(bufIdx)].data[_wv     ] = packHalf2x16((v).xy); \
+    buffers[(bufIdx)].data[_wv + 1u] = packHalf2x16((v).zw); }
+#else
+#define readVec4Vel(bufIdx, i)      readVec4(bufIdx, i)
+#define writeVec4Vel(bufIdx, i, v)  writeVec4(bufIdx, i, v)
+#endif
+
 #define readUint(bufIdx, i)      buffers[(bufIdx)].data[(i)]
 #define writeUint(bufIdx, i, v)  buffers[(bufIdx)].data[(i)] = (v)
 

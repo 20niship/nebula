@@ -25,20 +25,21 @@ void main() {
 
     vec4 p     = readVec4(pc.posIdx,   idx);
     vec4 predP = readVec4(pc.predPIdx, idx);
+    float life = readVec4Vel(pc.velIdx, idx).w; // v.w=lifeを保持 (task2: v.wにlifeを格納)
 
     float r = pc.particleRadius;
     vec3 lo = pc.worldMin + vec3(r);
     vec3 hi = pc.worldMax - vec3(r);
     predP.xyz = clamp(predP.xyz, lo, hi);
 
-    // PBD 速度更新: v = (predP - P) / dt (境界補正後の predP を使うため反射も自然に反映される)
-    vec4 v = (predP - p) / pc.dt;
+    // PBD 速度更新: v.xyz = (predP.xyz - P.xyz) / dt
+    // v.wはP.w(invMass)との差分にならないようxyzのみ計算しlifeを復元する
+    vec3 vxyz = (predP.xyz - p.xyz) / pc.dt;
 
-    // フレームレート非依存の線形ダンピング。煙粒子(typeFlag==4)は smokeDamping を使用。
     uint flag  = readUint(pc.typeFlagIdx, idx);
     float damp = (flag == 4u) ? pc.smokeDamping : pc.linearDamping;
-    v.xyz *= exp(-damp * pc.dt);
+    vxyz *= exp(-damp * pc.dt);
 
-    writeVec4(pc.posIdx,   idx, predP);
-    writeVec4(pc.velIdx,   idx, v);
+    writeVec4(pc.posIdx,   idx, predP); // P.w = predP.w = invMass(predict_sdfで伝播済み)
+    writeVec4Vel(pc.velIdx, idx, vec4(vxyz, life)); // v.w=lifeを復元
 }

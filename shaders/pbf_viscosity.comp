@@ -20,7 +20,7 @@ void main() {
     // update_velocity 後: posIdx = 最終位置、velIdx = 更新済み速度
     vec4 pi4 = readVec4(pc.posIdx, idx);
     vec3 pi  = pi4.xyz;
-    vec4 vi4 = readVec4(pc.velIdx, idx);
+    vec4 vi4 = readVec4Vel(pc.velIdx, idx);
     vec3 vi  = vi4.xyz;
 
     float h  = pc.cellSize;
@@ -61,12 +61,12 @@ void main() {
 
             float hr2 = h2 - r2;
             float w   = poly6_coeff * hr2 * hr2 * hr2;
-            vec3 vj   = readVec4(pc.velIdx, j).xyz;
+            vec3 vj   = readVec4Vel(pc.velIdx, j).xyz;
             vel_corr += (vj - vi) * w;
         }
     }
 
     // ρ₀ で割って正規化: Σ W_ij ≈ ρ₀ のため、c の意味が正しい XSPH 係数になる
     vi4.xyz = vi + c * vel_corr / pc.stretchCompliance;
-    writeVec4(pc.velIdx, idx, vi4);
+    writeVec4Vel(pc.velIdx, idx, vi4); // vi4.w=lifeを保持したまま書き戻す
 }

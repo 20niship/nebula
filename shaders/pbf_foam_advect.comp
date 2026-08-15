@@ -74,7 +74,7 @@ void main() {
             if (r2 >= h2) continue;
 
             nNeighbors += 1u;
-            sumV += readVec4(pc.velIdx, j).xyz;
+            sumV += readVec4Vel(pc.velIdx, j).xyz;
         }
     }
 

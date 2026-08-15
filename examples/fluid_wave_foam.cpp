@@ -52,26 +52,17 @@ struct WaveFoamArgs : public argparse::Args {
   // 効いてくるため、実測で ~2.6倍 遅くなることを確認した (issue #47 検証時)。
   // セル総数(hashCells)は grid_res を上げると増えるが、そちらのクリア/構築
   // コストより1セルあたりの粒子数超過の方が支配的だった。
-  // 粒子数 ~10万 (nx=200,nz=24 で海の体積から逆算) を優先する設定。
-  // grid_res は h=2d 推奨 (nx/2=100) を維持。~14fps程度になることを確認済み
-  // (issue #47 検証, Apple M2 Pro)。フレームレートより粒子解像度を優先する。
-  // 粒子間距離 d=world_size/nx (=粒子半径相当) を旧値の1.5倍にするため、nx を
-  // 旧200から1/1.5倍の134に変更 (d: 0.12m→0.179m、約1.49倍)。grid_res は
-  // h=2d 推奨を維持するため nx/2=67 に連動して下げている。
-  int& grid_res = kwarg("grid-res", "spatial hash grid resolution").set_default(67);
-  int& fluid_nx = kwarg("nx", "fluid particle grid X (密度基準)").set_default(134);
-  // nz は水深方向の層数にほぼ等しい (waterDepth = fluid_nz * d より layers=waterDepth/d=fluid_nz)。
-  // 層数を10程度にするため旧4から10へ変更 (副次的に粒子数も約2.5倍になる)。
-  // 一時的に40まで上げたが、waterDepth(=nz*d)が domainSizeZ(world_size/6=4m) を
-  // 超過し(7.16m)、境界付近で粒子が異常密集して性能が10倍以上悪化する不具合が
-  // 判明したため10に戻す。粒子数の追加調整は kExtraParticleMultiplier
-  // (下記 particles_per_step 算出箇所) で行い、水深とは切り離す。
-  int& fluid_nz               = kwarg("nz", "fluid particle grid Z / 水深基準").set_default(11);
+  // 旧 --nx=134, --nz=11, --grid-res=67 を物理単位に統合:
+  //   particleRadius = world_size / (nx*2)  → デフォルト 24/(134*2) = 0.0896 m
+  //   waterDepth     = nz * spacing         → デフォルト 11 * 0.179  = 1.97  m
+  //   cellSize       = 4 * particleRadius   → h=2d 推奨(自動導出); grid_res 不要
+  float& particle_radius = kwarg("particle-radius", "流体粒子半径 [m] (cellSize=4r 自動設定)").set_default(24.0f / (134.0f * 2.0f));
+  float& water_depth     = kwarg("water-depth",     "初期水深 [m]").set_default(11.0f * (24.0f / 134.0f));
   float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 120.0f);
   float& paddle_amp           = kwarg("paddle-amp", "波発生パドル SHM 振幅 [m]").set_default(3.0f);
   float& paddle_omega         = kwarg("paddle-omega", "波発生パドル SHM 角振動数 [rad/s]").set_default(1.2f);
   int& max_diffuse            = kwarg("max-diffuse", "泡(spray/foam/bubble)の最大パーティクル数 (0=無効)").set_default(20000);
-  bool& large                 = flag("large", "高解像度プリセット: nx×2, nz×2, grid_res=nx, max-diffuse×4");
+  bool& large                 = flag("large", "高解像度プリセット: particle-radius÷2, max-diffuse×4");
   bool& half                  = flag("half", "v/omegaをpackHalf2x16詰め(8 bytes/vec4)にしてメモリ帯域を削減 (P/predPはFP32維持; 大ドメイン安定版)");
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
@@ -143,20 +134,19 @@ public:
     dt_                 = args.dt;
     base_.screenshotDir = args.screenshot_dir;
 
-    // --large: 粒子間隔を半分(nx×2, nz×2)、泡数を4倍にする高解像度プリセット
-    const int fluid_nx = args.large ? args.fluid_nx * 2 : args.fluid_nx;
-    const int fluid_nz = args.large ? args.fluid_nz * 2 : args.fluid_nz;
-    const int grid_res = args.large ? fluid_nx / 2 : args.grid_res;
-    const int max_diff = args.large ? args.max_diffuse * 4 : args.max_diffuse;
+    // --large: 粒子半径を半分(解像度2倍)、泡数を4倍にする高解像度プリセット
+    // waterDepth は radius に反比例しないため --large でも変わらない
+    const float particleRadius = args.large ? args.particle_radius * 0.5f : args.particle_radius;
+    const int   max_diff       = args.large ? args.max_diffuse * 4 : args.max_diffuse;
 
     const float domainSizeY = HALF_Y * 2.0f + Y_MARGIN * 2.0f;
-    const float domainSizeZ = args.world_size / 6.0f; // Z方向の高さは world_size の1/6 (旧1/3から半減)
+    const float domainSizeZ = args.world_size / 6.0f;
 
     FluidConfig cfg;
-    cfg.particleRadius      = (args.world_size / float(fluid_nx)) / 2.0f;
+    cfg.particleRadius      = particleRadius;
+    cfg.cellSize            = particleRadius * 4.0f; // h=2d 推奨 (d=spacing=2r)
     cfg.domainSize          = glm::vec3(args.world_size, domainSizeY, domainSizeZ);
-    cfg.halfVec4Vel         = args.half; // task1: --half は v/omega のみ half (大ドメイン安定用)
-    cfg.cellSize            = args.world_size / float(grid_res);
+    cfg.halfVec4Vel         = args.half;
     cfg.max_boundary        = 20000;
     cfg.maxDiffuseParticles = uint32_t(max_diff);
 
@@ -164,7 +154,7 @@ public:
     paddle_.omega     = args.paddle_omega;
 
     base_.initWindow(args.large ? "Vulkan Sim - Wave Paddle + Foam (Large)" : "Vulkan Sim - Wave Paddle + Bunny + Foam (issue #47)");
-    initVulkan(cfg, fluid_nz);
+    initVulkan(cfg, args.water_depth);
     mainLoop(args.n_shots);
     cleanup();
   }
@@ -184,7 +174,7 @@ private:
   float dt_      = 1.0f / 60.0f;
   float simTime_ = 0.0f;
 
-  void initVulkan(const FluidConfig& cfg, int fluidNz) {
+  void initVulkan(const FluidConfig& cfg, float waterDepth) {
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
@@ -202,10 +192,9 @@ private:
 
     engine_.addForce(gravity_);
 
-    const float w           = cfg.domainSize.x;      // ドメイン X/Z サイズ (world_size)
-    const float d           = cfg.particleSpacing(); // 流体粒子間隔（密度の基準）
-    const float waterDepth  = float(fluidNz) * d;
-    const float domainSizeY = cfg.domainSize.y; // run() で HALF_Y*2+Y_MARGIN*2 に設定済み
+    const float w           = cfg.domainSize.x;
+    const float d           = cfg.particleSpacing();
+    const float domainSizeY = cfg.domainSize.y;
     const float centerY     = domainSizeY * 0.5f;
 
     // ── 波発生パドル (ドメイン左側、X方向に単振動) ────────────────────────────

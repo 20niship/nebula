@@ -15,10 +15,6 @@
 #include "EngineBase.h"
 #include "SimPC.h"
 
-// issue #46: ドメインは domainSize(vec3, 物理サイズ[m]) + cellSize(float, 全軸共通の
-// セルサイズ[m]) で指定する。h = cellSize, 粒子間隔 d = particleSpacing() = 2*particleRadius
-// 推奨: h >= 2d → cellSize >= 2 * particleSpacing()
-// issue #78: 粒子サイズの知識源を particleRadius 一本に統合(旧 fluid_nx/ny/nz は廃止)。
 struct FluidConfig {
   float particleRadius = 20.0f / 192.0f / 2.0f; // 唯一のサイズ知識源 (spacing = 2*radius)
 
@@ -26,29 +22,13 @@ struct FluidConfig {
   float cellSize = 20.0f / 64.0f;            // 全軸共通のセルサイズ [m] (旧 grid_res の逆算値)
   uint32_t max_boundary = 50000;
 
-  // 泡 (spray/foam/bubble) 二次パーティクルの固定容量 (issue #47)。
-  // 0 = 無効（バッファ確保・パイプラインdispatchとも完全スキップ、既存挙動に影響なし）
-  uint32_t maxDiffuseParticles = 0;
+  uint32_t maxDiffuseParticles = 0; // 0=無効 (バッファ・dispatch 完全スキップ)
 
-  // 初期流体パーティクル容量の明示指定 (0=無効、既定は fluidCount() をそのまま使う)。
-  // fluidCount() はドメイン体積を粒子間隔の立方体で埋め尽くした場合の理論上限であり、
-  // ドメインの一部しか流体で満たさないシナリオ(例: 広く微細な解像度のドメインに
-  // 薄い水たまりだけを置く場合)ではこの理論値が実使用量よりはるかに大きくなり、
-  // GPU側で不要に巨大なバッファを確保してしまう(Bindless配列の各バッファサイズが
-  // 膨らむことでMoltenVK等のドライバ側resident化コストが増大する要因になる)。
-  // 実使用量に近い値をここで指定すれば、初期確保はその値になり、それを超えた分は
-  // 既存の動的拡張(growFluidCapacity, issue #13)がフォローする。
+  // fluidCount() の理論値は大ドメインで実使用量を大幅に超えるため、実量に近い値を指定して初期確保を抑える。
   uint32_t initialCapacityHint = 0;
 
-  // 全vec4バッファhalf-float(milk_crown --large等、小ドメイン専用):
-  // P/v/predP/omega/foamPos/foamVelをpackHalf2x16詰め(8 bytes/vec4)にする。
-  // worldSize=20mのような大ドメインでは精度不足で発散するため使用不可。
-  bool halfVec4 = false;
-
-  // 速度バッファのみhalf-float(wave_foam --half等、大ドメインでも安定):
-  // vとomegaのみ8 bytes/vec4。P/predP/foamPos/foamVelはFP32のまま位置精度を保持。
-  // halfVec4=trueの場合はそちらが優先される(velも全バッファhalf扱い)。
-  bool halfVec4Vel = false;
+  bool halfVec4    = false; // 全 vec4 half (小ドメイン専用; 大ドメインでは位置精度不足で発散)
+  bool halfVec4Vel = false; // v/omega のみ half (大ドメインでも安定; P/predP は FP32 維持)
 
   float particleSpacing() const { return particleRadius * 2.0f; }
   // domain体積を粒子スペーシングの立方体で埋め尽くした場合の粒子数 (GPUバッファ確保上限)
@@ -83,8 +63,6 @@ struct FluidConfig {
   }
 };
 
-// 重力は addForce() で GravityForce を登録すること (issue #30 レビュー対応:
-// gravity の public メンバは廃止)。
 class FluidEngine : public EngineBase {
 public:
   void init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const FluidConfig& cfg = {});
@@ -105,10 +83,7 @@ public:
   void clearEmitters();
   uint32_t nFluid() const { return nFluid_; }
 
-  // 現在確保済みの全パーティクル用バッファ容量（境界固定領域 + 流体可変長領域 +
-  // ディスパッチ端数パディング）。growFluidCapacity() による動的拡張（Issue #13）で
-  // 増加し得るため、呼び出し側（CPU側の readback 先バッファ等）は cfg().fluidCount() 等の
-  // 静的な初期値ではなく、毎フレームこれを見てサイズを追従させること。
+  // growFluidCapacity() で増加するため呼び出し側は毎フレーム参照すること。
   uint32_t totalParticleCapacity() const { return totalBufferCapacity(); }
 
   void loadBoundary(const std::string& objPath, float spacing);
@@ -133,9 +108,6 @@ public:
   int pbfIterations = 2;
   int numSubsteps   = 2;
 
-  // ── PBF 論文準拠の追加パラメータ ──────────────────────────────────────────
-  // ε=3000 / damping=0.6 は元のハードコード値。論文忠実化(ε↓・人工圧力有効化)は
-  // 発散したため一旦この既定に戻している。チューニングは ImGui または CLI 引数で行う。
   float cfmEpsilon       = 3000.0f; // CFM 緩和 ε (式11)。元のハードコード値
   float scorrK           = 0.001f;  // 人工圧力 k (式13; 0=無効)
   float surfaceTension   = 0.0f;    // 表面張力係数 σ (Akinci 2013 cohesion; 0=無効)
@@ -169,11 +141,7 @@ public:
   // 吸収形状を登録（毎フレーム step() の前に呼ぶ; absorbers が空なら吸収パスをスキップ）
   void setAbsorbers(const std::vector<AbsorberDesc>& absorbers);
 
-  // ── 泡 (spray/foam/bubble) 二次パーティクル (issue #47) ───────────────────
-  // Ihmsen et al. 2012 "Unified Spray, Foam, and Bubbles" のポテンシャル関数を
-  // 簡略化して用いる。生成数 n = dt*(kTa*Ψ(Ita,taLo,taHi) + kWc*Ψ(Iwc,wcLo,wcHi))
-  //                              * Ψ(Ike,keLo,keHi)   (Ψ = クランプ付き線形正規化)
-  struct FoamParams {
+  struct FoamParams { // Ihmsen 2012 ポテンシャル関数ベース
     float kTa = 4000.0f, kWc = 4000.0f;                // 生成係数 (trapped-air / wave-crest)
     float taLo = 5.0f, taHi = 20.0f;                    // trapped-air 正規化範囲
     float wcLo = 1.0f, wcHi = 5.0f;                     // wave-crest 正規化範囲
@@ -189,16 +157,12 @@ public:
 
   // 泡パラメータを登録（毎フレーム呼ぶ必要はない。setAbsorbers と同様 upload のみ）
   void setFoamParams(const FoamParams& params);
-  // ランタイムON/OFF。false のとき kFoamGenerate_/kFoamAdvect_ は完全にdispatchされない
-  // (maxDiffuseParticles==0 の場合と異なりバッファは確保済みのまま保持される)
-  bool foamEnabled = false;
+  bool foamEnabled = false; // false のとき dispatch スキップ (バッファは保持)
 
   uint32_t foamPosIdx() const { return foamPosIdx_; }   // 描画側から参照 (vec4: xyz=pos, w=残り寿命)
   uint32_t foamVelIdx() const { return foamVelIdx_; }   // vec4: xyz=vel, w=初期寿命
   uint32_t foamKindIdx() const { return foamKindIdx_; } // uint: 0=死/未使用,1=spray,2=foam,3=bubble
 
-  // テスト/デバッグ用: kFoamGenerate_ を経由せず特定スロットへ直接書き込む
-  // (advect パス単体テスト等で使用; issue #47)
   void debugSetFoamSlot(uint32_t slot, glm::vec4 pos, glm::vec4 vel, uint32_t kind);
 
   VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
@@ -231,9 +195,6 @@ public:
 private:
   FluidConfig cfg_;
 
-  // ── 動的粒子数確保 (Issue #13) ──────────────────────────────────────────
-  // バッファレイアウト: [0, max_boundary) 境界(固定) | [max_boundary, max_boundary+fluidCapacity_) 流体(可変長)
-  //                     | 末尾 kDispatchPad 要素は端数ワークグループの安全マージン
   uint32_t fluidCapacity_                = 0;   // 現在確保済みの流体パーティクル容量 (>= nFluid_)
   static constexpr uint32_t kDispatchPad = 256; // ローカルワークグループサイズと同じ
   uint32_t totalBufferCapacity() const { return cfg_.max_boundary + fluidCapacity_ + kDispatchPad; }
@@ -300,9 +261,6 @@ private:
 
   void computeBarrier(VkCommandBuffer cmd);
 
-  // ── GPUパス単位プロファイリング(診断用) ─────────────────────────────────
-  // dispatch直前/直後にタイムスタンプを書き、labelごとに合計してprintGpuProfile()で表示する。
-  // NEBULA_GPU_PROFILING 未定義時は呼び出し箇所を汚さないよう空実装になる(PyroEngineと同じ方針)。
   void profBegin(VkCommandBuffer cmd);
   void profEnd(VkCommandBuffer cmd, const char* label);
 #ifdef NEBULA_GPU_PROFILING
@@ -314,12 +272,9 @@ private:
   uint32_t profQueryIndex_ = 0;
 #endif
 
-  // ── cfg_.halfVec4 対応アップロードラッパー (P/v/predP/invMass/foamPos/foamVel用) ──
-  // halfVec4==trueならglm::packHalf2x16で2×uint32/vec4に詰めてからuploadする。
   void uploadVec4_(const std::string& name, const glm::vec4* data, uint32_t n, VkCommandPool cmdPool, VkQueue queue);
   void uploadVec4At_(const std::string& name, const glm::vec4& v, uint32_t slot, VkCommandPool cmdPool, VkQueue queue);
   void uploadVec4Scattered_(const std::string& name, const std::vector<glm::vec4>& data, const std::vector<uint32_t>& dstIndices, VkCommandPool cmdPool, VkQueue queue);
-  // task2: velocity/omega 用 (halfVec4 OR halfVec4Vel で half-float pack)
   void uploadVec4Vel_(const std::string& name, const glm::vec4* data, uint32_t n, VkCommandPool cmdPool, VkQueue queue);
   void uploadVec4VelScattered_(const std::string& name, const std::vector<glm::vec4>& data, const std::vector<uint32_t>& dstIndices, VkCommandPool cmdPool, VkQueue queue);
 };

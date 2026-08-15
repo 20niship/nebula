@@ -36,14 +36,14 @@ constexpr float BOUNDARY_SPACING_RATIO = 0.75f;
 
 struct WaveFoamArgs : public argparse::Args {
   float& world_size           = kwarg("world-size", "simulation domain size [m] (X/Z)").set_default(24.0f);
-  float& particle_radius      = kwarg("particle-radius", "流体粒子半径 [m] (cellSize=4r 自動設定)").set_default(24.0f / (134.0f * 2.0f));
+  float& particle_radius      = kwarg("particle-radius", "流体粒子半径 [m]").set_default(24.0f / (134.0f * 2.0f));
   float& water_depth          = kwarg("water-depth", "初期水深 [m]").set_default(11.0f * (24.0f / 134.0f));
   float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 120.0f);
-  float& paddle_amp           = kwarg("paddle-amp", "波発生パドル SHM 振幅 [m]").set_default(3.0f);
-  float& paddle_omega         = kwarg("paddle-omega", "波発生パドル SHM 角振動数 [rad/s]").set_default(1.2f);
-  int& max_diffuse            = kwarg("max-diffuse", "泡(spray/foam/bubble)の最大パーティクル数 (0=無効)").set_default(20000);
+  float& paddle_amp           = kwarg("paddle-amp", "波発生パドル 振幅 [m]").set_default(3.0f);
+  float& paddle_omega         = kwarg("paddle-omega", "波発生パドル 角振動数 [rad/s]").set_default(1.2f);
+  int& max_diffuse            = kwarg("max-diffuse", "泡の最大パーティクル数").set_default(20000);
   bool& large                 = flag("large", "高解像度プリセット: particle-radius÷2, max-diffuse×4");
-  bool& half                  = flag("half", "v/omegaをpackHalf2x16詰め(8 bytes/vec4)にしてメモリ帯域を削減 (P/predPはFP32維持; 大ドメイン安定版)");
+  bool& half                  = flag("half", "half floatにしてメモリ帯域を削減");
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
 };
@@ -233,12 +233,13 @@ private:
     engine_.setFoamParams(foamParams_);
 
     // fluid_particle_wave.vert / foam_particle_wave.vert は本シーン専用のカメラ
-    if(cfg.halfVec4) {
-      // P/v/foamPos/foamVelがpackHalf2x16詰め(8 bytes/vec4)のため、静的SPV(FP32想定)のまま
-      // では readVec4 がストライド不一致でゴミ値を読む。HALF_VEC4を注入した実行時コンパイルへ切替。
-      const std::vector<std::pair<std::string, std::string>> halfDefines = {{"HALF_VEC4", "1"}};
-      auto fluidVert                                                     = DefineShaderCompiler::compile("fluid_particle_wave.vert", halfDefines, /*isVertexShader=*/true);
-      auto foamVert                                                      = DefineShaderCompiler::compile("foam_particle_wave.vert", halfDefines, /*isVertexShader=*/true);
+    if(cfg.halfVec4 || cfg.halfVec4Vel) {
+      // vがpackHalf2x16詰めのため、静的SPV(FP32想定)のままだとストライド不一致でゴミ値を読む。FluidEngine::init()のextraForceDefines_と同じ判定。
+      const std::vector<std::pair<std::string, std::string>> halfDefines =
+          cfg.halfVec4 ? std::vector<std::pair<std::string, std::string>>{{"HALF_VEC4", "1"}, {"HALF_VEC4_V", "1"}}
+                       : std::vector<std::pair<std::string, std::string>>{{"HALF_VEC4_V", "1"}};
+      auto fluidVert = DefineShaderCompiler::compile("fluid_particle_wave.vert", halfDefines, /*isVertexShader=*/true);
+      auto foamVert  = DefineShaderCompiler::compile("foam_particle_wave.vert", halfDefines, /*isVertexShader=*/true);
       graphicsPipe_.initVertFromSpirv(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, fluidVert, SHADER_DIR_STR + "/fluid.frag.spv");
       foamGraphicsPipe_.initVertFromSpirv(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, foamVert, SHADER_DIR_STR + "/foam.frag.spv", VK_PRIMITIVE_TOPOLOGY_POINT_LIST, /*enableBlend=*/true);
     } else {

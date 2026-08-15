@@ -38,6 +38,11 @@ void main() {
     uint mx[3], my[3], mz[3];
     mortonAxisTriples(gi, mx, my, mz);
 
+    // issue #87 perf実験: ここで見つけたカーネル半径内の近傍を nbrList に書き出し、
+    // pbf_delta_p が同じ27セル探索をやり直さず読むだけで済むようにする (MAX_NBR超過分は切り捨て)。
+    uint nbrBase = idx * MAX_NBR;
+    uint nbrN    = 0u;
+
     for (int dz = -1; dz <= 1; ++dz)
     for (int dy = -1; dy <= 1; ++dy)
     for (int dx = -1; dx <= 1; ++dx) {
@@ -60,6 +65,12 @@ void main() {
             float r2 = dot(r, r);
             if (r2 >= h2) continue;
 
+            // issue #87 perf実験: pbf_delta_p が使う近傍(自分自身・重複位置を除く)を書き出す
+            if (j != idx && r2 >= 1e-12 && nbrN < MAX_NBR) {
+                writeUint(pc.nbrListIdx, nbrBase + nbrN, j);
+                ++nbrN;
+            }
+
             // Poly6 カーネルで密度に加算
             float hr2 = h2 - r2;
             rho += poly6_coeff * hr2 * hr2 * hr2;
@@ -78,6 +89,8 @@ void main() {
             sum_grad_sq += dot(grad_w, grad_w) / (rho0 * rho0);
         }
     }
+
+    writeUint(pc.nbrCountIdx, idx, nbrN); // issue #87 perf実験
 
     // 密度制約 C_i = ρ_i/ρ_0 - 1
     float C = rho / rho0 - 1.0;

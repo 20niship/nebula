@@ -95,10 +95,15 @@ struct SimPC {
   float surfaceTension; // 表面張力係数 σ (0=無効)
 
   // ── 近傍リストキャッシュ (pbf_density/pbf_delta_p 専用; issue #87 perf実験。他シェーダーは宣言のみで不使用) ──
-  uint32_t nbrListIdx;  // uint × N × MAX_NBR。pbf_densityが27セル探索中に書き、pbf_deltaPが読む
-  uint32_t nbrCountIdx; // uint × N。各粒子の有効近傍数 (<=MAX_NBR)
+  uint32_t nbrListIdx; // uint × N × MAX_NBR。pbf_densityが27セル探索中に書き、pbf_deltaPが読む
+
+  // ── 粒子バッファの物理ソート済みコピー (pbf_density/pbf_delta_p 専用; issue #87 perf実験。近傍gatherをkで直接コアレス読みするため) ──
+  uint32_t predPSortedIdx;     // vec4 × N。typeFlagはビット格納した.wに同居 (専用バッファ節約)
+  uint32_t densitySortedIdx;   // float × N (pbf_densityが毎iteration更新)
+  uint32_t lambdaPbfSortedIdx; // float × N (pbf_densityが毎iteration更新)
+  uint32_t invSortedIdxIdx;    // uint × N。元idx→ソート後位置k(下位24bit)+nbrCount(上位8bit)。hash_sortが書きpbf_densityが更新
 };
-static_assert(sizeof(SimPC) == 232, "SimPC must be 232 bytes"); // 224B(issue#46/#47/表面張力) + 近傍リストキャッシュ(issue #87, +8B)
+static_assert(sizeof(SimPC) == 244, "SimPC must be 244 bytes"); // 232B(issue#87 近傍リストまで) + ソート済みコピー(issue #87, +12B)
 static_assert(offsetof(SimPC, cellCountIdx) == 20, "hash compat offset");
 static_assert(offsetof(SimPC, cellOffsetIdx) == 24, "hash compat offset");
 static_assert(offsetof(SimPC, hashCells) == 36, "hash compat offset");

@@ -68,7 +68,11 @@ layout(push_constant) uniform PC {
     float surfaceTension;
     // 近傍リストキャッシュ (pbf_density/pbf_delta_p 専用; issue #87 perf実験)
     uint  nbrListIdx;
-    uint  nbrCountIdx;
+    // 粒子バッファの物理ソート済みコピー (pbf_density/pbf_delta_p 専用; issue #87 perf実験)
+    uint  predPSortedIdx;
+    uint  densitySortedIdx;
+    uint  lambdaPbfSortedIdx;
+    uint  invSortedIdxIdx;
 } pc;
 
 #ifndef MAX_NBR

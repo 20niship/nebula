@@ -208,8 +208,12 @@ private:
   uint32_t omegaIdx_      = 0; // 渦度 ω バッファ (vec4 × N)
   // 近傍リストキャッシュ (issue #87 perf実験): kMaxNeighbors超過分は切り捨て
   static constexpr uint32_t kMaxNeighbors = 48;
-  uint32_t nbrListIdx_  = 0; // uint × N × kMaxNeighbors
-  uint32_t nbrCountIdx_ = 0; // uint × N
+  uint32_t nbrListIdx_ = 0; // uint × N × kMaxNeighbors
+  // 粒子バッファのソート済みコピー (issue #87 perf実験): typeFlag/nbrCountはビット同居で専用バッファを節約
+  uint32_t predPSortedIdx_     = 0; // vec4 × N
+  uint32_t densitySortedIdx_   = 0; // float × N
+  uint32_t lambdaPbfSortedIdx_ = 0; // float × N
+  uint32_t invSortedIdxIdx_    = 0; // uint × N (下位24bit=ソート後位置k, 上位8bit=nbrCount)
   // lifeIdx_ は廃止: 寿命はv.w(velIdx)に格納 (task2: バッファ統合)
   uint32_t emitterIdxIdx_ = 0; // 放出元エミッタindex (uint × N)
   bool lifetimeEnabled_   = false; // lifetime>0のEmitterが登録されたら有効(lifetimeパスを実行)

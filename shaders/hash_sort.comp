@@ -13,11 +13,18 @@ void main() {
 
     // hash_count.comp と対称に未使用スロット（typeFlag=6=TYPE_FLAG_UNUSED）を除外する
     // （cellCount と数を揃える必要がある）。
-    if (readUint(pc.typeFlagIdx, i) == 6u) return;
+    uint fi = readUint(pc.typeFlagIdx, i);
+    if (fi == 6u) return;
 
     vec4 predP = readVec4(pc.predPIdx, i);
     uint cid   = cellId(predP.xyz);
 
     uint slot = atomicAdd(buffers[pc.cellOffsetIdx].data[cid], 1u);
     buffers[pc.sortedIdxIdx].data[slot] = i;
+
+    // issue #87 perf実験: 逆写像とソート済みコピーを同じpassで書く (density/delta_pの近傍gather
+    // がsortedIdx経由の間接参照なしにkで直接コアレス読みできるようにする)。typeFlagは
+    // predPSorted.wにビット格納し専用バッファを節約 (predP.wはこの用途では未使用のため)。
+    writeUint(pc.invSortedIdxIdx, i, slot);
+    writeVec4(pc.predPSortedIdx, slot, vec4(predP.xyz, uintBitsToFloat(fi)));
 }

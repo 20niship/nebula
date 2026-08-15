@@ -2,19 +2,8 @@
 #extension GL_EXT_nonuniform_qualifier : enable
 #include "common.glsl"
 
-// issue #66: SDF境界再衝突(旧⑤ sdf_collision.comp)と速度更新(旧⑥ update_velocity.comp)を
-// 1ディスパッチに統合し、FluidEngine::step() のディスパッチ/バリア数を削減する。
-//
-// FluidEngine::restitution/friction は「衝突は位置投影のみ」のため未使用
-// (FluidEngine.h のコメント参照)であり、sdf_collision.comp がこの呼び出し文脈で行っていた
-// 速度反射(v.x=abs(v.x)*restitution 等)は、直後の update_velocity.comp の
-// v=(predP-pos)/dt 再計算で常に上書きされ最終出力に影響しない。そのため本シェーダーは
-// 境界クランプ(位置のみ)を行った上で、最初から PBD 標準式で速度を直接計算する
-// (境界補正後の predP を使うため反射効果は自然に反映され、数値的に従来と同一結果になる)。
-// 本シェーダーは FluidEngine::step() 専用の追加ファイルであり、sdf_collision.comp/
-// update_velocity.comp 自体は変更していないため、他エンジン(ClothSceneEngine/
-// MultiPhysicsEngine/PBFHarness等、restitution/frictionが実際に意味を持つ文脈)には
-// 一切影響しない。
+// SDF境界再衝突+速度更新を1ディスパッチに統合 (issue #66)。
+// restitution/friction は PBF 流体では位置投影のみで未使用。他エンジンには影響しない。
 
 layout(local_size_x = 256) in;
 

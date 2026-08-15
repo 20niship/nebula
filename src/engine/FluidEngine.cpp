@@ -16,8 +16,6 @@
 #include <stdexcept>
 #include <vector>
 
-// ── cfg_.halfVec4 用 packHalf2x16 詰めヘルパー ────────────────────────────────
-// shaders/common.glsl の HALF_VEC4 readVec4/writeVec4 マクロと対になるCPU側変換。
 namespace {
 std::vector<uint32_t> packVec4Array(const glm::vec4* data, size_t n) {
   std::vector<uint32_t> out(n * 2);
@@ -100,9 +98,6 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   fluidCapacity_          = cfg_.initialCapacityHint > 0 ? cfg_.initialCapacityHint : cfg_.fluidCount();
   const uint32_t totalCap = totalBufferCapacity();
 
-  // 全パーティクル用バッファを [0,max_boundary)=境界固定 + [max_boundary,..)=流体可変長 で確保
-  // task2: invMassはP.wに、lifeはv.wに格納するためそれぞれ別バッファを廃止。
-  // task1: halfVec4=全バッファhalf(小ドメイン) / halfVec4Vel=v/omegaのみhalf(大ドメイン安定用)。
   const VkDeviceSize vec4ElemSize    = cfg_.halfVec4 ? sizeof(uint32_t) * 2 : sizeof(glm::vec4);
   const VkDeviceSize vec4ElemSizeVel = (cfg_.halfVec4 || cfg_.halfVec4Vel) ? sizeof(uint32_t) * 2 : sizeof(glm::vec4);
   posIdx          = attrBuf_.addAttribute("P", vec4ElemSize, totalCap);       // P.w = invMass
@@ -120,8 +115,7 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   emitterIdxIdx_  = attrBuf_.addAttribute("emitterIdx", sizeof(uint32_t), totalCap);
   absorberBufIdx_ = attrBuf_.addAttribute("absorbers", sizeof(float), MAX_ABSORBERS * 8u);
 
-  // 泡 (spray/foam/bubble) 二次パーティクル (issue #47)。foamParams は小さいため
-  // maxDiffuseParticles==0 でも常に確保し、setFoamParams() をいつでも安全に呼べるようにする。
+  // foamParams は maxDiffuseParticles==0 でも常に確保し setFoamParams() を常時安全に呼べるようにする
   foamParamsIdx_ = attrBuf_.addAttribute("foamParams", sizeof(float), 16u);
   if(cfg_.maxDiffuseParticles > 0) {
     foamPosIdx_  = attrBuf_.addAttribute("foamPos", vec4ElemSize, cfg_.maxDiffuseParticles);    // foamPos.w=残り寿命(既存)
@@ -133,11 +127,7 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
     attrBuf_.upload("foamKind", zeroKind.data(), sizeof(uint32_t) * zeroKind.size(), cmdPool, queue);
   }
 
-  // 境界パーティクル用固定領域 [0, max_boundary) を zero-init する。
-  // hash_count/hash_sort は常にこの領域全体をディスパッチ対象に含むため、
-  // 境界未ロード時のスロットも typeFlag=6=TYPE_FLAG_UNUSED（近傍探索の全フィルタで除外される）
-  // かつ predP が有限値である必要がある。
-  // typeFlag=0 は XPBD エンジン側で「砂」として使われるため未使用スロットには使えない。
+  // 未使用スロットは typeFlag=6 (TYPE_FLAG_UNUSED) で初期化。0 は XPBD の「砂」に予約済みのため使用不可。
   if(cfg_.max_boundary > 0) {
     std::vector<glm::vec4> zeroVec(cfg_.max_boundary, glm::vec4(0.0f));
     std::vector<uint32_t> zeroFlags(cfg_.max_boundary, 6u);
@@ -157,15 +147,9 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
     extraForceDefines_ = {{"HALF_VEC4_V", "1"}};
   }
 
-  // Force (issue #30): 既定では空リスト。重力が必要な場合は呼び出し側が
-  // addForce(GravityForce::FromDirection(...)) 等で登録する。
   initForces();
 
-  // 空間ハッシュ近傍探索を使うシェーダー (cellId()/mortonAxisTriples() を common.glsl
-  // から呼ぶもの) は、アダプティブ(直方体)Morton定数をドメイン形状(gridRes)から
-  // 一度だけ算出し、#define として実行時コンパイルで注入する (静的.spvロードでは
-  // ドメインごとに異なるこれらの定数を焼き込めないため)。src/core/Domain.h の
-  // AdaptiveMortonParams / shaders/common.glsl の ADAPTIVE_* フォールバック定義と対。
+  // Morton 定数はドメインごとに異なるため静的 SPV に焼けず、実行時コンパイルで #define 注入する。
   const domain::AdaptiveMortonParams morton = domain::computeAdaptiveMortonParams(cfg_.gridRes());
   std::vector<std::pair<std::string, std::string>> mortonDefines = {
       {"ADAPTIVE_MASK", std::to_string(morton.mask) + "u"},
@@ -174,8 +158,6 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
       {"ADAPTIVE_SHIFT_Y", std::to_string(morton.shiftY) + "u"},
       {"ADAPTIVE_SHIFT_Z", std::to_string(morton.shiftZ) + "u"},
   };
-  // halfVec4: P/predP/omega/foamPos/foamVel含む全vec4をhalf(HALF_VEC4 + HALF_VEC4_V両方)
-  // halfVec4Vel: v/omegaのみhalf(HALF_VEC4_V)、P/predPはFP32のまま
   if(cfg_.halfVec4) {
     mortonDefines.emplace_back("HALF_VEC4", "1");
     mortonDefines.emplace_back("HALF_VEC4_V", "1");
@@ -186,9 +168,7 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
     std::vector<uint32_t> spirv = DefineShaderCompiler::compile(name, mortonDefines);
     k.initFromSpirv(device, attrBuf_.descriptorSetLayout, spirv);
   };
-  // sdf_collision_velocity/fluid_absorb/fluid_lifetimeもP/v/predP/invMassを読み書きするため、
-  // 静的.spvロードではなくloadAdaptive経由にしてHALF_VEC4を注入できるようにする
-  // (ADAPTIVE_MASK系はこれらのシェーダーでは未使用だが、注入しても無害なフォールバック値のため問題ない)。
+  // sdf_collision_velocity/absorb/lifetime もハーフフロート対応のため loadAdaptive 経由でコンパイル
   loadAdaptive(kSdfVelocity_, "sdf_collision_velocity.comp"); // issue #66: kSdfCollision_+kUpdateVelocity_ 統合
   loadAdaptive(kAbsorb_, "fluid_absorb.comp");
   loadAdaptive(kLifetime_, "fluid_lifetime.comp");
@@ -230,14 +210,11 @@ void FluidEngine::loadBoundary(const std::string& objPath, float spacing) {
 
   uint32_t n = static_cast<uint32_t>(std::min(pts.size(), size_t(cfg_.max_boundary)));
 
-  // 境界パーティクルは常に buffer index 0 から書き込む（固定領域）
-  // task2: P.w=invMass。境界粒子は固定(invMass=0)なので .w を強制 0 に設定
   std::vector<glm::vec4> ptsFixed(pts.begin(), pts.begin() + n);
-  for(auto& p : ptsFixed) p.w = 0.0f;
+  for(auto& p : ptsFixed) p.w = 0.0f; // P.w=invMass=0 (固定境界)
   uploadVec4_("P", ptsFixed.data(), n, cmdPool_, queue_);
   uploadVec4_("predP", ptsFixed.data(), n, cmdPool_, queue_);
 
-  // v.w=life: 境界粒子は lifetime 管理対象外だが -1 (無限) でゼロ初期化
   std::vector<glm::vec4> zeroVel(n, glm::vec4(0.0f, 0.0f, 0.0f, -1.0f));
   uploadVec4Vel_("v", zeroVel.data(), n, cmdPool_, queue_);
 
@@ -256,8 +233,6 @@ void FluidEngine::loadBoundary(const std::string& objPath, float spacing, float 
 
   uint32_t n = static_cast<uint32_t>(std::min(mesh.particles.size(), size_t(cfg_.max_boundary)));
 
-  // 境界パーティクルは常に buffer index 0 から書き込む（固定領域）
-  // task2: P.w=invMass=0 (境界固定)
   std::vector<glm::vec4> ptsFixed(mesh.particles.begin(), mesh.particles.begin() + n);
   for(auto& p : ptsFixed) p.w = 0.0f;
   uploadVec4_("P", ptsFixed.data(), n, cmdPool_, queue_);
@@ -278,8 +253,6 @@ void FluidEngine::loadBoundaryParticles(const std::vector<glm::vec4>& pts) {
 
   uint32_t n = static_cast<uint32_t>(std::min(pts.size(), size_t(cfg_.max_boundary)));
 
-  // 境界パーティクルは常に buffer index 0 から書き込む（固定領域）
-  // task2: P.w=invMass=0 (境界固定)
   std::vector<glm::vec4> ptsFixed(pts.begin(), pts.begin() + n);
   for(auto& p : ptsFixed) p.w = 0.0f;
   uploadVec4_("P", ptsFixed.data(), n, cmdPool_, queue_);
@@ -621,11 +594,7 @@ void FluidEngine::cleanupKinematicBoundaryStaging() {
 void FluidEngine::step(VkCommandBuffer cmd, float dt) {
   ZoneScoped;
   FrameMark;
-  // emitFromEmitters() は呼び出し側が事前に(このフレームのコマンドバッファへ
-  // FluidEngine の VkBuffer ハンドルを焼き込む前に)呼び出す想定。ここでは呼ばない
-  // (容量拡張でバッファが再確保されると、先に記録済みのコマンドが古いハンドルを
-  // 参照したままになり GPU 実行時にクラッシュするため)。
-
+  // emitFromEmitters() はコマンドバッファ記録前に呼ぶこと。バッファ再確保で古いハンドルが残るとクラッシュする。
   if(nFluid_ == 0 && nBoundary == 0) return;
 
   auto ds = attrBuf_.descriptorSet;
@@ -698,16 +667,13 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     pc.maxDiffuseParticles = cfg_.maxDiffuseParticles;
     // pc.powderFriction → SimPC では pinnedTargetIdx に転用。FluidEngine では未使用 (0のまま)。
 
-    // ① Predict + SDF 壁衝突 (merged: 1 dispatch instead of 2)
-    // 境界粒子は invMass==0 で predP=pos のまま変化しないため nFluid_ のみ
+    // ① Predict + SDF 壁衝突 (1 dispatch; 境界は invMass==0 固定なので nFluid_ のみ)
     profBegin(cmd);
     kPredictSdf_.dispatch(cmd, ds, pc, nFluid_);
-    // kPredictSdf_ は predP を書く。kZeroCells_ は cellCount を書く（predP 不使用）
-    // → 依存関係なしのためバリア不要。MoltenVK encoder switch を 1 回削減。
+    // predP と cellCount は書き込み先が異なるためバリア不要 (MoltenVK encoder switch 削減)
     profEnd(cmd, "PredictSdf");
 
-    // ② 空間ハッシュ構築 (全粒子: 流体 + 境界)
-    // compute シェーダーでゼロクリア (blit エンコーダー遷移を排除)
+    // ② 空間ハッシュ構築 (compute ゼロクリアで blit エンコーダー遷移を排除)
     profBegin(cmd);
     kZeroCells_.dispatch(cmd, ds, pc, cfg_.totalCells());
     computeBarrier(cmd); // kHashCount_ が cellCount を読むため必要
@@ -762,9 +728,7 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
       profEnd(cmd, "PbfDeltaP");
     }
 
-    // ⑤+⑥ SDF 再適用 + 速度更新 (issue #66: 1ディスパッチに統合。境界粒子は固定位置の
-    // ため除外。sdf_collision_velocity.comp 冒頭のコメント参照: restitution/friction は
-    // 元々このステップでは無効化されていたため統合しても数値的に同一結果)
+    // ⑤+⑥ SDF 再適用 + 速度更新 (1 dispatch; 境界固定のため nFluid_ のみ)
     profBegin(cmd);
     kSdfVelocity_.dispatch(cmd, ds, pc, nFluid_);
     computeBarrier(cmd);
@@ -795,8 +759,7 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
       profEnd(cmd, "Absorb");
     }
 
-    // ⑩ 泡 (spray/foam/bubble) 二次パーティクル（issue #47; foamEnabled==false または
-    //    maxDiffuseParticles==0 のとき完全スキップ）
+    // ⑩ 泡 (foamEnabled==false または maxDiffuseParticles==0 のとき完全スキップ)
     if(foamEnabled && cfg_.maxDiffuseParticles > 0) {
       computeBarrier(cmd); // kFoamGenerate_ が直前の viscosity/absorb 更新後の pos/vel/density を読む
       profBegin(cmd);
@@ -808,8 +771,7 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
       profEnd(cmd, "FoamAdvect");
     }
 
-    // ⑪ 寿命パス（lifetimeEnabled_ のとき; subDt減算し寿命切れを墓場送りにする=吸収と同一パターン）
-    // task2: life は v.w に統合済み。fluid_lifetime.comp は pc.velIdx の .w を直接読み書きする。
+    // ⑪ 寿命パス (life は v.w; 寿命切れを墓場送り)
     if(lifetimeEnabled_ && nFluid_ > 0) {
       computeBarrier(cmd);
       profBegin(cmd);

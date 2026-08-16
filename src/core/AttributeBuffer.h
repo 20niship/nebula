@@ -6,8 +6,8 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
-// MoltenVK上限31に対し、FluidEngineのfoam有効時最大24スロット(issue #87)を確保。
-static constexpr uint32_t MAX_BINDLESS_BUFFERS = 24;
+// MoltenVK上限31に対し、FluidEngineのfoam有効時最大27スロット(issue #87)を確保。
+static constexpr uint32_t MAX_BINDLESS_BUFFERS = 27;
 
 // SoAバッファマネージャ。addAttribute()でVMAバッファを確保し、
 // Bindlessディスクリプタ配列へ自動登録してインデックスを返す。
@@ -18,6 +18,12 @@ public:
 
   // 属性バッファを追加。返値がBindlessインデックス
   uint32_t addAttribute(const std::string& name, VkDeviceSize elementSize, uint32_t count);
+
+  // GPU書き込み・CPU読み取り用の常時mapped属性バッファを追加(GPU_TO_CPU)。vkQueueWaitIdle無しでCPU側から読める。
+  uint32_t addHostVisibleAttribute(const std::string& name, VkDeviceSize elementSize, uint32_t count, void** outMappedPtr);
+
+  // addHostVisibleAttributeで得たmappedポインタをCPUから読む前にキャッシュを無効化する(コヒーレント保証がない環境向け)。
+  void invalidateHostVisible(const std::string& name) const;
 
   // データをGPUへ転送（ステージング経由）
   void upload(const std::string& name, const void* data, VkDeviceSize byteSize, VkCommandPool cmdPool, VkQueue queue);
@@ -47,6 +53,7 @@ private:
     uint32_t count           = 0;
     uint32_t bindlessIndex   = 0;
     VkDeviceSize elementSize = 0;
+    void* mapped             = nullptr; // addHostVisibleAttribute専用。VMAが破棄時に自動unmapする
   };
 
   VkDevice device_        = VK_NULL_HANDLE;

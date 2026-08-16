@@ -25,8 +25,8 @@ struct SimPC {
   // ── パーティクル / グリッド定数 (16 bytes) ───────────────────────
   uint32_t particleCount;
   uint32_t hashCells; // 空間ハッシュバッファの実要素数 (= domain::hashCells(gridRes)) ← hash compat ★
-  uint32_t stretchEdgesIdx; // エッジバッファ (uint×E×3: p,q,restLen)
-  uint32_t lambdasIdx;      // XPBD λ (float × E、毎フレームゼロクリア)
+  uint32_t stretchEdgesIdx; // エッジバッファ (uint×E×3: p,q,restLen)。FluidEngine圧縮パス専用ローカルpcではemitterIdxIdxとして転用
+  uint32_t lambdasIdx;      // XPBD λ (float × E、毎フレームゼロクリア)。同上ローカルpcではdestSlotIdxとして転用
 
   // ── ワールド / 時間 (16 bytes) ───────────────────────────────────
   float dt;
@@ -42,7 +42,7 @@ struct SimPC {
   uint32_t forceBufIdx; // Force配列 (ForceGPU×forceCount) の bindless index (0=無効)
 
   glm::vec3 worldMax; // ドメイン上限座標 [m] (= worldMin + domainSize)
-  uint32_t couplingForceIdx; // vec4×N 流体→布 連成力バッファ (Phase 5; Phase3/4は0)
+  uint32_t couplingForceIdx; // vec4×N 流体→布 連成力バッファ (Phase 5; Phase3/4は0)。FluidEngine圧縮パス専用ローカルpcではscratchRowIdxとして転用
 
   // ── Phase 3: 布拘束 (16 bytes) ──────────────────────────────────
   uint32_t clothVertexCount; // 布頂点数 (= gridN × gridN)
@@ -69,7 +69,7 @@ struct SimPC {
 
   float smokeRiseAccel;     // 煙の浮力加速度 [m/s²] (typeFlag==4 に適用)
   float smokeDamping;       // 煙の速度減衰係数 [1/s] (typeFlag==4 に適用)
-  uint32_t pinnedTargetIdx; // アニメーションピン目標位置バッファ (vec4 × N; ClothSceneEngine 専用)
+  uint32_t pinnedTargetIdx; // アニメーションピン目標位置バッファ (vec4 × N; ClothSceneEngine 専用)。FluidEngine圧縮パス専用ローカルpcではaliveCountBufIdxとして転用
 
   // ── 吸収ポート (fluid_absorb 専用; 他シェーダーは宣言のみで不使用) ──────
   uint32_t absorberBufIdx; // 吸収形状バッファの bindless index (8 floats × absorberCount)
@@ -103,11 +103,10 @@ struct SimPC {
   uint32_t lambdaPbfSortedIdx; // float × N (pbf_densityが毎iteration更新)
   uint32_t invSortedIdxIdx;    // uint × N。元idx→ソート後位置k(下位24bit)+nbrCount(上位8bit)。hash_sortが書きpbf_densityが更新
 
-  // ── 最終pos/velのソート済みコピー (pbf_viscosity 専用; issue #87 perf実験 続き。他シェーダーは宣言のみで不使用) ──
-  uint32_t posSortedIdx; // vec4 × N。typeFlagはビット格納した.wに同居。sdf_collision_velocityが書く
+  // 最終velのソート済みコピー (pbf_viscosity専用、issue #87続き)。位置はpredPSortedIdx上書き再利用のため専用フィールド不要
   uint32_t velSortedIdx; // vec4 × N。sdf_collision_velocityが書く
 };
-static_assert(sizeof(SimPC) == 252, "SimPC must be 252 bytes"); // 244B(issue#87近傍+ソート済みコピー) + pos/velソート済みコピー(issue #87続き, +8B)
+static_assert(sizeof(SimPC) == 248, "SimPC must be 248 bytes"); // 244B(issue#87近傍+ソート済みコピー) + velソート済みコピー(issue #87続き, +4B)
 static_assert(offsetof(SimPC, cellCountIdx) == 20, "hash compat offset");
 static_assert(offsetof(SimPC, cellOffsetIdx) == 24, "hash compat offset");
 static_assert(offsetof(SimPC, hashCells) == 36, "hash compat offset");

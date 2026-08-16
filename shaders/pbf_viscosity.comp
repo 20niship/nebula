@@ -51,9 +51,9 @@ void main() {
 
         for (uint k = start; k < start + cnt; ++k) {
             // issue #87 perf実験 続き: sortedIdx経由のgatherをやめ、sdf_collision_velocityが
-            // 書いたソート済みコピーをkで直接コアレス読みする。typeFlagはposSorted.wに同居。
+            // 書いたソート済みコピー(predPSortedを最終posで上書き再利用)をkで直接コアレス読みする。
             if (k == kSelf) continue;
-            vec4 pjv = readVec4(pc.posSortedIdx, k);
+            vec4 pjv = readVec4(pc.predPSortedIdx, k);
             uint fj  = floatBitsToUint(pjv.w);
             if (fj != 1u && fj != 3u) continue; // 流体 + 運動学的境界 (TC8)
 

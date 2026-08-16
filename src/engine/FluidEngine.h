@@ -214,9 +214,16 @@ private:
   uint32_t densitySortedIdx_   = 0; // float × N
   uint32_t lambdaPbfSortedIdx_ = 0; // float × N
   uint32_t invSortedIdxIdx_    = 0; // uint × N (下位24bit=ソート後位置k, 上位8bit=nbrCount)
-  // 最終pos/velのソート済みコピー (issue #87 perf実験 続き): sdf_collision_velocityが書き、pbf_viscosityが読む
-  uint32_t posSortedIdx_ = 0; // vec4 × N
+  // 最終velのソート済みコピー (issue #87 perf実験 続き): 位置はpredPSortedIdx_を上書き再利用
   uint32_t velSortedIdx_ = 0; // vec4 × N
+
+  // 流体領域コンパクション (issue #87続き): 毎フレーム死亡粒子を末尾へ・生存粒子をcellId順へ並べ替え(predPは直後にpredict_sdfが全域書き直すため運搬不要)
+  uint32_t posScratchIdx_             = 0; // vec4 × fluidCapacity_
+  uint32_t velScratchIdx_             = 0; // vec4 × fluidCapacity_
+  uint32_t typeFlagEmitterScratchIdx_ = 0; // uint × fluidCapacity_ (下位8bit=typeFlag, 上位24bit=emitterIdx)
+  uint32_t aliveCountIdx_             = 0; // host-visible readback (要素数1)
+  void* aliveCountMapped_             = nullptr;
+  void compactFluidRegion(VkCommandBuffer cmd); // step()冒頭で呼ぶ
   // lifeIdx_ は廃止: 寿命はv.w(velIdx)に格納 (task2: バッファ統合)
   uint32_t emitterIdxIdx_ = 0; // 放出元エミッタindex (uint × N)
   bool lifetimeEnabled_   = false; // lifetime>0のEmitterが登録されたら有効(lifetimeパスを実行)
@@ -248,6 +255,8 @@ private:
   ComputePipeline kFoamGenerate_; // 泡生成パス（pbf_foam_generate.comp; foamEnabled かつ maxDiffuseParticles>0 のときのみ使用）
   ComputePipeline kFoamAdvect_;   // 泡移流・分類パス（pbf_foam_advect.comp; 同上）
   ComputePipeline kLifetime_;     // 寿命パス（fluid_lifetime.comp; lifetimeEnabled_ のときのみ使用）
+  ComputePipeline kCompactScatter_; // 流体領域コンパクション: 分類+行き先確定+スクレッチへコピー (compact_scatter.comp)
+  ComputePipeline kCompactUnpack_;  // 同: スクレッチ→canonical書き戻し (compact_unpack.comp)
 
   // ── kinematic staging (TC8) ──────────────────────────────────────────────
   static constexpr uint32_t MAX_CONCURRENT_FRAMES       = 2;
@@ -263,12 +272,7 @@ private:
   uint32_t nFluid_ = 0;
   std::mt19937 emitterRng_{12345};
 
-  // スロット再利用: 死亡予定時刻(sample_lifetime既知)をCPUで持ちreadback無しで寿命切れの穴を新規放出で埋め、バッファを有界化する。
-  float simTime_ = 0.0f;             // 累積シミュレーション時刻 [s] (emitFromEmitters で dt 加算)
-  std::vector<float> slotDeath_;     // fluidスロットの死亡予定sim時刻 (無限寿命=+inf)
-  std::vector<uint8_t> slotAlive_;   // 1=生存(再利用不可) 0=空き(再利用可)
-  std::vector<uint32_t> freeSlots_;  // 再利用可能な空きスロットindex
-  void reclaimDeadSlots_();          // slotDeath_<=simTime_ の生存スロットを空きへ回収する
+  float simTime_ = 0.0f; // 累積シミュレーション時刻 [s] (emitFromEmitters で dt 加算)
 
   void computeBarrier(VkCommandBuffer cmd);
 

@@ -7,7 +7,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <limits>
 #include <cstdlib>
 #include <glm/glm.hpp>
 #include <glm/gtc/packing.hpp>
@@ -116,11 +115,17 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   densitySortedIdx_   = attrBuf_.addAttribute("densitySorted", sizeof(float), totalCap);
   lambdaPbfSortedIdx_ = attrBuf_.addAttribute("lambdaPbfSorted", sizeof(float), totalCap);
   invSortedIdxIdx_    = attrBuf_.addAttribute("invSortedIdx", sizeof(uint32_t), totalCap);
-  posSortedIdx_ = attrBuf_.addAttribute("posSorted", vec4ElemSize, totalCap); // issue #87 perf実験 続き
-  velSortedIdx_ = attrBuf_.addAttribute("velSorted", vec4ElemSizeVel, totalCap);
+  velSortedIdx_ = attrBuf_.addAttribute("velSorted", vec4ElemSizeVel, totalCap); // issue #87 perf実験 続き
   // lifeIdx_廃止: lifeはv.wに格納 (task2)
   emitterIdxIdx_  = attrBuf_.addAttribute("emitterIdx", sizeof(uint32_t), totalCap);
   absorberBufIdx_ = attrBuf_.addAttribute("absorbers", sizeof(float), MAX_ABSORBERS * 8u);
+
+  // 流体領域コンパクション (issue #87続き): fluidCapacity_要素(境界領域は対象外)
+  posScratchIdx_             = attrBuf_.addAttribute("posScratch", vec4ElemSize, fluidCapacity_);
+  velScratchIdx_             = attrBuf_.addAttribute("velScratch", vec4ElemSizeVel, fluidCapacity_);
+  typeFlagEmitterScratchIdx_ = attrBuf_.addAttribute("typeFlagEmitterScratch", sizeof(uint32_t), fluidCapacity_);
+  aliveCountIdx_             = attrBuf_.addHostVisibleAttribute("aliveCount", sizeof(uint32_t), 1u, &aliveCountMapped_);
+  *reinterpret_cast<uint32_t*>(aliveCountMapped_) = 0u; // 初回emitFromEmitters()前のreadback用初期値
 
   // foamParams は maxDiffuseParticles==0 でも常に確保し setFoamParams() を常時安全に呼べるようにする
   foamParamsIdx_ = attrBuf_.addAttribute("foamParams", sizeof(float), 16u);
@@ -141,6 +146,11 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
     uploadVec4_("P", zeroVec.data(), cfg_.max_boundary, cmdPool, queue);
     uploadVec4_("predP", zeroVec.data(), cfg_.max_boundary, cmdPool, queue);
     attrBuf_.upload("typeFlag", zeroFlags.data(), sizeof(uint32_t) * cfg_.max_boundary, cmdPool, queue);
+  }
+  // 流体領域typeFlagも0(死亡)初期化: コンパクション(issue #87続き)がfluidCapacity_全域を毎フレーム舐めるため。
+  if(fluidCapacity_ > 0) {
+    std::vector<uint32_t> zeroFluidFlags(fluidCapacity_, 0u);
+    attrBuf_.uploadAt("typeFlag", zeroFluidFlags.data(), sizeof(uint32_t) * fluidCapacity_, (VkDeviceSize)cfg_.max_boundary * sizeof(uint32_t), cmdPool, queue);
   }
 
   nFluid_ = 0;
@@ -189,6 +199,8 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   loadAdaptive(kVorticityForce_, "pbf_vorticity_force.comp");
   loadAdaptive(kFoamGenerate_, "pbf_foam_generate.comp");
   loadAdaptive(kFoamAdvect_, "pbf_foam_advect.comp");
+  loadAdaptive(kCompactScatter_, "compact_scatter.comp");
+  loadAdaptive(kCompactUnpack_, "compact_unpack.comp");
 
   auto load = [&](ComputePipeline& k, const char* name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
   load(kHashScanLocal_, "hash_scan_local.comp");
@@ -319,7 +331,11 @@ void FluidEngine::emitFromEmitters(float dt) {
   // 寿命付きEmitterが1つでもあればlifetimeパスを有効化(毎フレーム再計算しUIでの実行時変更にも追従)。
   lifetimeEnabled_ = std::any_of(emitters_.begin(), emitters_.end(), [](const auto& e) { return e && e->lifetime > 0.0f; });
 
-  reclaimDeadSlots_(); // 寿命切れスロットを空きへ回収し、以降の放出で再利用する
+  // issue #87続き: フェンス無しで読むとGPU側atomicAddの途中状態を読みかねないためwaitIdleで確定させる(このメソッドは元々uploadScattered等で複数回waitIdleしており新規の重さではない)
+  if(queue_ != VK_NULL_HANDLE) vkQueueWaitIdle(queue_);
+  attrBuf_.invalidateHostVisible("aliveCount");
+  nFluid_ = *reinterpret_cast<uint32_t*>(aliveCountMapped_);
+
   for(size_t i = 0; i < emitters_.size(); ++i) {
     Emitter& emitter = *emitters_[i];
     int& done        = emitterStepsDone_[i];
@@ -340,38 +356,19 @@ void FluidEngine::emitFromEmitters(float dt) {
       continue;
     }
 
-    // 空きスロット(freeSlots_)で足りない分だけ末尾を伸ばす。先に必要容量を確保し batch 中の再確保を避ける。
-    const uint32_t appendNeed = (uint32_t)nNew > freeSlots_.size() ? (uint32_t)nNew - (uint32_t)freeSlots_.size() : 0u;
-    if(nFluid_ + appendNeed > fluidCapacity_) growFluidCapacity(nFluid_ + appendNeed);
-    if(slotDeath_.size() < fluidCapacity_) {
-      slotDeath_.resize(fluidCapacity_, std::numeric_limits<float>::infinity());
-      slotAlive_.resize(fluidCapacity_, 0u);
-    }
+    if(nFluid_ + (uint32_t)nNew > fluidCapacity_) growFluidCapacity(nFluid_ + (uint32_t)nNew);
 
-    // 宛先スロットを確保(空きを優先し、無ければ末尾に追記)。連続runにまとまるようソートする。
-    std::vector<uint32_t> dst;
-    dst.reserve(nNew);
-    for(int j = 0; j < nNew; ++j) {
-      if(!freeSlots_.empty()) {
-        dst.push_back(freeSlots_.back());
-        freeSlots_.pop_back();
-      } else {
-        dst.push_back(nFluid_++);
-      }
-    }
-    std::sort(dst.begin(), dst.end());
-
+    // コンパクション(issue #87続き)で死亡粒子は常に末尾なので、空きスロット探索は不要で生存数の直後へ単純追記できる
     std::vector<glm::vec4> pos(nNew), vel(nNew);
     std::vector<uint32_t> flags(nNew, emitter.particleType);
     std::vector<uint32_t> eidx(nNew, (uint32_t)i);
     std::vector<uint32_t> absIdx(nNew);
-    std::vector<float> life(nNew);
     for(int j = 0; j < nNew; ++j) {
       const glm::vec3 sp = emitter.sample(emitterRng_);
-      life[j]            = emitter.sample_lifetime(emitterRng_); // <0=無限
+      const float lf      = emitter.sample_lifetime(emitterRng_); // <0=無限
       pos[j]             = glm::vec4(sp, 1.0f);                 // P.w=invMass=1(流体)
-      vel[j]             = glm::vec4(emitter.sample_velocity(sp, emitterRng_), life[j]); // v.w=life (task2)
-      absIdx[j]          = cfg_.max_boundary + dst[j];
+      vel[j]             = glm::vec4(emitter.sample_velocity(sp, emitterRng_), lf); // v.w=life (task2)
+      absIdx[j]          = cfg_.max_boundary + nFluid_ + (uint32_t)j;
     }
 
     uploadVec4Scattered_("P", pos, absIdx, cmdPool_, queue_);
@@ -380,11 +377,7 @@ void FluidEngine::emitFromEmitters(float dt) {
     attrBuf_.uploadScattered("typeFlag", flags.data(), sizeof(uint32_t), absIdx, cmdPool_, queue_);
     attrBuf_.uploadScattered("emitterIdx", eidx.data(), sizeof(uint32_t), absIdx, cmdPool_, queue_);
 
-    for(int j = 0; j < nNew; ++j) {
-      const uint32_t s = dst[j];
-      slotDeath_[s]    = life[j] < 0.0f ? std::numeric_limits<float>::infinity() : simTime_ + life[j];
-      slotAlive_[s]    = 1u;
-    }
+    nFluid_ += (uint32_t)nNew;
     done++;
 
     // エミッタ中心を移動
@@ -393,21 +386,11 @@ void FluidEngine::emitFromEmitters(float dt) {
   simTime_ += dt;
 }
 
-// simTime_ 時点で寿命切れ(GPUで既に墓場送り済み)のスロットを空きへ回収する。slotAlive_=0で二重回収を防ぐ。
-void FluidEngine::reclaimDeadSlots_() {
-  const uint32_t n = std::min<uint32_t>(nFluid_, (uint32_t)slotAlive_.size());
-  for(uint32_t i = 0; i < n; ++i) {
-    if(slotAlive_[i] != 0u && slotDeath_[i] <= simTime_) {
-      slotAlive_[i] = 0u;
-      freeSlots_.push_back(i);
-    }
-  }
-}
-
 // ── 流体パーティクル容量の動的拡張 (Issue #13) ───────────────────────────────────
 
 void FluidEngine::growFluidCapacity(uint32_t minRequired) {
   if(minRequired <= fluidCapacity_) return;
+  const uint32_t oldCapacity = fluidCapacity_;
   fluidCapacity_ = std::max(minRequired, uint32_t(fluidCapacity_ * 3 / 2)); // 50%増しの余裕を持たせる
 
   uint32_t newTotal = totalBufferCapacity();
@@ -424,10 +407,15 @@ void FluidEngine::growFluidCapacity(uint32_t minRequired) {
   attrBuf_.resizeAttribute("densitySorted", newTotal, cmdPool_, queue_);
   attrBuf_.resizeAttribute("lambdaPbfSorted", newTotal, cmdPool_, queue_);
   attrBuf_.resizeAttribute("invSortedIdx", newTotal, cmdPool_, queue_);
-  attrBuf_.resizeAttribute("posSorted", newTotal, cmdPool_, queue_);
   attrBuf_.resizeAttribute("velSorted", newTotal, cmdPool_, queue_);
-  slotDeath_.resize(fluidCapacity_, std::numeric_limits<float>::infinity());
-  slotAlive_.resize(fluidCapacity_, 0u);
+  attrBuf_.resizeAttribute("posScratch", fluidCapacity_, cmdPool_, queue_);
+  attrBuf_.resizeAttribute("velScratch", fluidCapacity_, cmdPool_, queue_);
+  attrBuf_.resizeAttribute("typeFlagEmitterScratch", fluidCapacity_, cmdPool_, queue_);
+
+  // 新規に伸びた流体領域のtypeFlagを0(死亡)で初期化(コンパクションがfluidCapacity_全域を舐めるため)
+  const uint32_t grown = fluidCapacity_ - oldCapacity;
+  std::vector<uint32_t> zeroFluidFlags(grown, 0u);
+  attrBuf_.uploadAt("typeFlag", zeroFluidFlags.data(), sizeof(uint32_t) * grown, (VkDeviceSize)(cfg_.max_boundary + oldCapacity) * sizeof(uint32_t), cmdPool_, queue_);
 }
 
 // ── 粒子リセット ─────────────────────────────────────────────────────────────
@@ -438,11 +426,13 @@ void FluidEngine::resetParticles() {
   nFluid_ = 0;
   std::fill(emitterStepsDone_.begin(), emitterStepsDone_.end(), 0);
   emitterRng_.seed(12345);
-  // スロット再利用状態もリセット(死亡予定/空き/累積時刻をクリア)。
   simTime_ = 0.0f;
-  freeSlots_.clear();
-  std::fill(slotAlive_.begin(), slotAlive_.end(), 0u);
-  std::fill(slotDeath_.begin(), slotDeath_.end(), std::numeric_limits<float>::infinity());
+  if(aliveCountMapped_) *reinterpret_cast<uint32_t*>(aliveCountMapped_) = 0u;
+  // 流体領域のtypeFlagを0(死亡)に戻す。境界領域は対象外。
+  if(fluidCapacity_ > 0) {
+    std::vector<uint32_t> zeroFluidFlags(fluidCapacity_, 0u);
+    attrBuf_.uploadAt("typeFlag", zeroFluidFlags.data(), sizeof(uint32_t) * fluidCapacity_, (VkDeviceSize)cfg_.max_boundary * sizeof(uint32_t), cmdPool_, queue_);
+  }
 }
 
 // ── クリーンアップ ───────────────────────────────────────────────────────────
@@ -466,6 +456,8 @@ void FluidEngine::cleanup() {
   kFoamGenerate_.cleanup();
   kFoamAdvect_.cleanup();
   kLifetime_.cleanup();
+  kCompactScatter_.cleanup();
+  kCompactUnpack_.cleanup();
 #ifdef NEBULA_GPU_PROFILING
   if(profPool_ != VK_NULL_HANDLE) vkDestroyQueryPool(device_, profPool_, nullptr);
 #endif
@@ -604,6 +596,43 @@ void FluidEngine::cleanupKinematicBoundaryStaging() {
   kinStagingMaxCount_ = 0;
 }
 
+// ── 流体領域コンパクション (issue #87続き): 死亡粒子を末尾へ毎フレーム物理的に集める(stream compaction) ──
+void FluidEngine::compactFluidRegion(VkCommandBuffer cmd) {
+  if(fluidCapacity_ == 0) return;
+  auto ds = attrBuf_.descriptorSet;
+
+  SimPC pc{};
+  pc.posIdx        = posIdx;
+  pc.velIdx        = velIdx;
+  pc.typeFlagIdx   = typeFlagIdx;
+  pc.particleCount = fluidCapacity_;
+  pc.fluidStart    = cfg_.max_boundary;
+
+  // 前方/後方カウンタ(cellCntの先頭2要素を作業領域として再利用)とaliveCount合計をゼロクリア
+  vkCmdFillBuffer(cmd, attrBuf_.getBuffer("cellCnt"), 0, sizeof(uint32_t) * 2, 0u);
+  vkCmdFillBuffer(cmd, attrBuf_.getBuffer("aliveCount"), 0, sizeof(uint32_t), 0u);
+  {
+    VkMemoryBarrier b{};
+    b.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &b, 0, nullptr, 0, nullptr);
+  }
+
+  pc.cellCountIdx     = cellCountIdx_;         // [0]=生存用前方カウンタ, [1]=死亡用後方カウンタ
+  pc.pinnedTargetIdx  = aliveCountIdx_;        // host-visible合計(readback用)
+  pc.stretchEdgesIdx  = emitterIdxIdx_;        // 元のemitterIdxバッファ
+  pc.lambdasIdx       = posScratchIdx_;
+  pc.couplingForceIdx = velScratchIdx_;
+  pc.cellOffsetIdx     = typeFlagEmitterScratchIdx_; // packed(typeFlag+emitterIdx)スクレッチ
+
+  kCompactScatter_.dispatch(cmd, ds, pc, fluidCapacity_);
+  computeBarrier(cmd);
+
+  kCompactUnpack_.dispatch(cmd, ds, pc, fluidCapacity_);
+  computeBarrier(cmd);
+}
+
 // ── 1フレームのシミュレーション ───────────────────────────────────────────────
 
 void FluidEngine::step(VkCommandBuffer cmd, float dt) {
@@ -611,6 +640,8 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
   FrameMark;
   // emitFromEmitters() はコマンドバッファ記録前に呼ぶこと。バッファ再確保で古いハンドルが残るとクラッシュする。
   if(nFluid_ == 0 && nBoundary == 0) return;
+
+  compactFluidRegion(cmd); // issue #87続き: 流体領域を毎フレーム先頭で圧縮+空間ソート
 
   auto ds = attrBuf_.descriptorSet;
 
@@ -665,7 +696,6 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     pc.densitySortedIdx   = densitySortedIdx_;
     pc.lambdaPbfSortedIdx = lambdaPbfSortedIdx_;
     pc.invSortedIdxIdx    = invSortedIdxIdx_;
-    pc.posSortedIdx       = posSortedIdx_;
     pc.velSortedIdx       = velSortedIdx_;
     pc.fluidStart        = cfg_.max_boundary;
     // PBF 論文準拠パラメータ

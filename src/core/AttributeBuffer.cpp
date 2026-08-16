@@ -65,6 +65,40 @@ uint32_t AttributeBuffer::addAttribute(const std::string& name, VkDeviceSize ele
   return attr.bindlessIndex;
 }
 
+uint32_t AttributeBuffer::addHostVisibleAttribute(const std::string& name, VkDeviceSize elementSize, uint32_t count, void** outMappedPtr) {
+  if(nextIndex_ >= MAX_BINDLESS_BUFFERS) throw std::runtime_error("Bindless buffer limit exceeded");
+
+  VkBufferCreateInfo bufInfo{};
+  bufInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  bufInfo.size  = elementSize * count;
+  bufInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+
+  VmaAllocationCreateInfo allocInfo{};
+  allocInfo.usage = VMA_MEMORY_USAGE_GPU_TO_CPU;
+  allocInfo.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+  Attribute attr{};
+  attr.count         = count;
+  attr.bindlessIndex = nextIndex_++;
+  attr.elementSize   = elementSize;
+
+  VmaAllocationInfo resultInfo{};
+  VkResult r = SAFE_VMA_CREATE_BUFFER(allocator_, &bufInfo, &allocInfo, &attr.buffer, &attr.allocation, &resultInfo);
+  if(r != VK_SUCCESS || attr.buffer == VK_NULL_HANDLE) throw std::runtime_error("Failed to create host-visible attribute buffer: " + name);
+  attr.mapped = resultInfo.pMappedData;
+  if(outMappedPtr) *outMappedPtr = attr.mapped;
+
+  registerBuffer(attr.bindlessIndex, attr.buffer);
+  attributes_[name] = attr;
+  return attr.bindlessIndex;
+}
+
+void AttributeBuffer::invalidateHostVisible(const std::string& name) const {
+  auto it = attributes_.find(name);
+  if(it == attributes_.end()) return;
+  vmaInvalidateAllocation(allocator_, it->second.allocation, 0, VK_WHOLE_SIZE);
+}
+
 void AttributeBuffer::upload(const std::string& name, const void* data, VkDeviceSize byteSize, VkCommandPool cmdPool, VkQueue queue) {
   auto it = attributes_.find(name);
   if(it == attributes_.end()) throw std::runtime_error("Attribute not found: " + name);

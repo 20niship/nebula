@@ -73,8 +73,7 @@ layout(push_constant) uniform PC {
     uint  densitySortedIdx;
     uint  lambdaPbfSortedIdx;
     uint  invSortedIdxIdx;
-    // 最終pos/velのソート済みコピー (pbf_viscosity 専用; issue #87 perf実験 続き)
-    uint  posSortedIdx;
+    // 最終velのソート済みコピー (pbf_viscosity 専用; issue #87 perf実験 続き)
     uint  velSortedIdx;
 } pc;
 

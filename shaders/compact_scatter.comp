@@ -1,0 +1,32 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "common.glsl"
+
+// issue #87続き: 生存粒子は前方カウンタ(0起点)、死亡粒子は後方カウンタ(fluidCapacity_-1起点)で
+// 埋めるstream compaction(空間ソートはせずdead-tail化のみ; hash_scan_global.compが1024グループ
+// 固定でtotalCells()が大きいドメインだとcellOffsetを取りこぼす既存制約を踏むため空間ハッシュ再利用は撤回)。
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.particleCount) return;
+    uint idx = i + pc.fluidStart;
+
+    uint fi = readUint(pc.typeFlagIdx, idx);
+    uint slot;
+    if (fi == 0u) {
+        slot = pc.particleCount - 1u - atomicAdd(buffers[pc.cellCountIdx].data[1], 1u);
+    } else {
+        slot = atomicAdd(buffers[pc.cellCountIdx].data[0], 1u);
+        atomicAdd(buffers[pc.pinnedTargetIdx].data[0], 1u);
+    }
+
+    vec4 p4 = readVec4(pc.posIdx, idx);
+    vec4 v4 = readVec4Vel(pc.velIdx, idx);
+    uint em = readUint(pc.stretchEdgesIdx, idx);
+
+    writeVec4(pc.lambdasIdx, slot, p4);
+    writeVec4Vel(pc.couplingForceIdx, slot, v4);
+    writeUint(pc.cellOffsetIdx, slot, (em << 8u) | (fi & 0xFFu));
+}

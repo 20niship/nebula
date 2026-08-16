@@ -13,26 +13,6 @@
 #include <stdexcept>
 #include <vector>
 
-void FluidEngine::uploadVec4_(const std::string& name, const glm::vec4* data, uint32_t n, VkCommandPool cmdPool, VkQueue queue) {
-  attrBuf_.uploadVec4(name, data, n, cmdPool, queue, cfg_.halfVec4);
-}
-
-void FluidEngine::uploadVec4At_(const std::string& name, const glm::vec4& v, uint32_t slot, VkCommandPool cmdPool, VkQueue queue) {
-  attrBuf_.uploadVec4At(name, v, slot, cmdPool, queue, cfg_.halfVec4);
-}
-
-void FluidEngine::uploadVec4Scattered_(const std::string& name, const std::vector<glm::vec4>& data, const std::vector<uint32_t>& dstIndices, VkCommandPool cmdPool, VkQueue queue) {
-  attrBuf_.uploadVec4Scattered(name, data, dstIndices, cmdPool, queue, cfg_.halfVec4);
-}
-
-void FluidEngine::uploadVec4Vel_(const std::string& name, const glm::vec4* data, uint32_t n, VkCommandPool cmdPool, VkQueue queue) {
-  attrBuf_.uploadVec4(name, data, n, cmdPool, queue, cfg_.halfVec4 || cfg_.halfVec4Vel);
-}
-
-void FluidEngine::uploadVec4VelScattered_(const std::string& name, const std::vector<glm::vec4>& data, const std::vector<uint32_t>& dstIndices, VkCommandPool cmdPool, VkQueue queue) {
-  attrBuf_.uploadVec4Scattered(name, data, dstIndices, cmdPool, queue, cfg_.halfVec4 || cfg_.halfVec4Vel);
-}
-
 // ── バリアヘルパー ───────────────────────────────────────────────────────────
 
 void FluidEngine::computeBarrier(VkCommandBuffer cmd) {
@@ -99,8 +79,8 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   if(cfg_.max_boundary > 0) {
     std::vector<glm::vec4> zeroVec(cfg_.max_boundary, glm::vec4(0.0f));
     std::vector<uint32_t> zeroFlags(cfg_.max_boundary, 6u);
-    uploadVec4_("P", zeroVec.data(), cfg_.max_boundary, cmdPool, queue);
-    uploadVec4_("predP", zeroVec.data(), cfg_.max_boundary, cmdPool, queue);
+    attrBuf_.uploadVec4("P", zeroVec.data(), cfg_.max_boundary, cmdPool, queue, cfg_.halfVec4);
+    attrBuf_.uploadVec4("predP", zeroVec.data(), cfg_.max_boundary, cmdPool, queue, cfg_.halfVec4);
     attrBuf_.upload("typeFlag", zeroFlags.data(), sizeof(uint32_t) * cfg_.max_boundary, cmdPool, queue);
   }
 
@@ -181,11 +161,11 @@ void FluidEngine::loadBoundary(const std::string& objPath, float spacing) {
 
   std::vector<glm::vec4> ptsFixed(pts.begin(), pts.begin() + n);
   for(auto& p : ptsFixed) p.w = 0.0f; // P.w=invMass=0 (固定境界)
-  uploadVec4_("P", ptsFixed.data(), n, cmdPool_, queue_);
-  uploadVec4_("predP", ptsFixed.data(), n, cmdPool_, queue_);
+  attrBuf_.uploadVec4("P", ptsFixed.data(), n, cmdPool_, queue_, cfg_.halfVec4);
+  attrBuf_.uploadVec4("predP", ptsFixed.data(), n, cmdPool_, queue_, cfg_.halfVec4);
 
   std::vector<glm::vec4> zeroVel(n, glm::vec4(0.0f, 0.0f, 0.0f, -1.0f));
-  uploadVec4Vel_("v", zeroVel.data(), n, cmdPool_, queue_);
+  attrBuf_.uploadVec4("v", zeroVel.data(), n, cmdPool_, queue_, cfg_.halfVec4 || cfg_.halfVec4Vel);
 
   std::vector<uint32_t> flags(n, 3u);
   attrBuf_.upload("typeFlag", flags.data(), sizeof(uint32_t) * n, cmdPool_, queue_);
@@ -204,11 +184,11 @@ void FluidEngine::loadBoundary(const std::string& objPath, float spacing, float 
 
   std::vector<glm::vec4> ptsFixed(mesh.particles.begin(), mesh.particles.begin() + n);
   for(auto& p : ptsFixed) p.w = 0.0f;
-  uploadVec4_("P", ptsFixed.data(), n, cmdPool_, queue_);
-  uploadVec4_("predP", ptsFixed.data(), n, cmdPool_, queue_);
+  attrBuf_.uploadVec4("P", ptsFixed.data(), n, cmdPool_, queue_, cfg_.halfVec4);
+  attrBuf_.uploadVec4("predP", ptsFixed.data(), n, cmdPool_, queue_, cfg_.halfVec4);
 
   std::vector<glm::vec4> zeroVel(n, glm::vec4(0.0f, 0.0f, 0.0f, -1.0f));
-  uploadVec4Vel_("v", zeroVel.data(), n, cmdPool_, queue_);
+  attrBuf_.uploadVec4("v", zeroVel.data(), n, cmdPool_, queue_, cfg_.halfVec4 || cfg_.halfVec4Vel);
 
   std::vector<uint32_t> flags(n, 3u);
   attrBuf_.upload("typeFlag", flags.data(), sizeof(uint32_t) * n, cmdPool_, queue_);
@@ -224,11 +204,11 @@ void FluidEngine::loadBoundaryParticles(const std::vector<glm::vec4>& pts) {
 
   std::vector<glm::vec4> ptsFixed(pts.begin(), pts.begin() + n);
   for(auto& p : ptsFixed) p.w = 0.0f;
-  uploadVec4_("P", ptsFixed.data(), n, cmdPool_, queue_);
-  uploadVec4_("predP", ptsFixed.data(), n, cmdPool_, queue_);
+  attrBuf_.uploadVec4("P", ptsFixed.data(), n, cmdPool_, queue_, cfg_.halfVec4);
+  attrBuf_.uploadVec4("predP", ptsFixed.data(), n, cmdPool_, queue_, cfg_.halfVec4);
 
   std::vector<glm::vec4> zeroVel(n, glm::vec4(0.0f, 0.0f, 0.0f, -1.0f));
-  uploadVec4Vel_("v", zeroVel.data(), n, cmdPool_, queue_);
+  attrBuf_.uploadVec4("v", zeroVel.data(), n, cmdPool_, queue_, cfg_.halfVec4 || cfg_.halfVec4Vel);
 
   std::vector<uint32_t> flags(n, 3u);
   attrBuf_.upload("typeFlag", flags.data(), sizeof(uint32_t) * n, cmdPool_, queue_);
@@ -259,8 +239,8 @@ void FluidEngine::setFoamParams(const FoamParams& params) {
 }
 
 void FluidEngine::debugSetFoamSlot(uint32_t slot, glm::vec4 pos, glm::vec4 vel, uint32_t kind) {
-  uploadVec4At_("foamPos", pos, slot, cmdPool_, queue_);
-  uploadVec4At_("foamVel", vel, slot, cmdPool_, queue_);
+  attrBuf_.uploadVec4At("foamPos", pos, slot, cmdPool_, queue_, cfg_.halfVec4);
+  attrBuf_.uploadVec4At("foamVel", vel, slot, cmdPool_, queue_, cfg_.halfVec4);
   attrBuf_.uploadAt("foamKind", &kind, sizeof(uint32_t), slot * sizeof(uint32_t), cmdPool_, queue_);
 }
 
@@ -335,9 +315,9 @@ void FluidEngine::emitFromEmitters(float dt) {
       absIdx[j]          = cfg_.max_boundary + dst[j];
     }
 
-    uploadVec4Scattered_("P", pos, absIdx, cmdPool_, queue_);
-    uploadVec4Scattered_("predP", pos, absIdx, cmdPool_, queue_);
-    uploadVec4VelScattered_("v", vel, absIdx, cmdPool_, queue_);
+    attrBuf_.uploadVec4Scattered("P", pos, absIdx, cmdPool_, queue_, cfg_.halfVec4);
+    attrBuf_.uploadVec4Scattered("predP", pos, absIdx, cmdPool_, queue_, cfg_.halfVec4);
+    attrBuf_.uploadVec4Scattered("v", vel, absIdx, cmdPool_, queue_, cfg_.halfVec4 || cfg_.halfVec4Vel);
     attrBuf_.uploadScattered("typeFlag", flags.data(), sizeof(uint32_t), absIdx, cmdPool_, queue_);
     attrBuf_.uploadScattered("emitterIdx", eidx.data(), sizeof(uint32_t), absIdx, cmdPool_, queue_);
 
@@ -580,17 +560,27 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     // pc.powderFriction → SimPC では pinnedTargetIdx に転用。FluidEngine では未使用 (0のまま)。
 
     // ① Predict + SDF 壁衝突 (1 dispatch; 境界は invMass==0 固定なので nFluid_ のみ)
-    kPredictSdf_.dispatch(cmd, ds, pc, nFluid_);
+    {
+      ZoneScopedN("PredictSdf");
+      kPredictSdf_.dispatch(cmd, ds, pc, nFluid_);
+    }
     // predP と cellCount は書き込み先が異なるためバリア不要 (MoltenVK encoder switch 削減)
 
     // ② 空間ハッシュ構築 (compute ゼロクリアで blit エンコーダー遷移を排除)
-    kZeroCells_.dispatch(cmd, ds, pc, cfg_.totalCells());
+    {
+      ZoneScopedN("ZeroCells");
+      kZeroCells_.dispatch(cmd, ds, pc, cfg_.totalCells());
+    }
     computeBarrier(cmd); // kHashCount_ が cellCount を読むため必要
 
-    kHashCount_.dispatch(cmd, ds, pc, totalN);
+    {
+      ZoneScopedN("HashCount");
+      kHashCount_.dispatch(cmd, ds, pc, totalN);
+    }
     computeBarrier(cmd);
 
     {
+      ZoneScopedN("HashScanLocal");
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanLocal_.pipeline);
       vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanLocal_.pipelineLayout, 0, 1, &ds, 0, nullptr);
       vkCmdPushConstants(cmd, kHashScanLocal_.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(SimPC), &pc);
@@ -599,6 +589,7 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     computeBarrier(cmd);
 
     {
+      ZoneScopedN("HashScanGlobal");
       // Pass 2b-1: グループサムの prefix scan（1 workgroup × 1024 threads）
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanGlobal_.pipeline);
       vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanGlobal_.pipelineLayout, 0, 1, &ds, 0, nullptr);
@@ -608,52 +599,82 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     computeBarrier(cmd); // exclusive prefix を書き戻してから kHashAddBase_ が読む
 
     // Pass 2b-2: ベース加算を 1024 wg × 256 threads で並列化（旧: 1 wg × 1024 threads × 256 sequential writes）
-    kHashAddBase_.dispatch(cmd, ds, pc, cfg_.totalCells());
+    {
+      ZoneScopedN("HashAddBase");
+      kHashAddBase_.dispatch(cmd, ds, pc, cfg_.totalCells());
+    }
     computeBarrier(cmd);
 
-    kHashSort_.dispatch(cmd, ds, pc, totalN);
+    {
+      ZoneScopedN("HashSort");
+      kHashSort_.dispatch(cmd, ds, pc, totalN);
+    }
     computeBarrier(cmd);
 
     // ④ PBF 不圧縮ソルバー × pbfIterations
     for(int iter = 0; iter < pbfIterations; ++iter) {
-      kPbfDensity_.dispatch(cmd, ds, pc, nFluid_);
+      {
+        ZoneScopedN("PbfDensity");
+        kPbfDensity_.dispatch(cmd, ds, pc, nFluid_);
+      }
       computeBarrier(cmd);
-      kPbfDeltaP_.dispatch(cmd, ds, pc, nFluid_);
+      {
+        ZoneScopedN("PbfDeltaP");
+        kPbfDeltaP_.dispatch(cmd, ds, pc, nFluid_);
+      }
       computeBarrier(cmd);
     }
 
     // ⑤+⑥ SDF 再適用 + 速度更新 (1 dispatch; 境界固定のため nFluid_ のみ)
-    kSdfVelocity_.dispatch(cmd, ds, pc, nFluid_);
+    {
+      ZoneScopedN("SdfVelocity");
+      kSdfVelocity_.dispatch(cmd, ds, pc, nFluid_);
+    }
     computeBarrier(cmd);
 
     // ⑦ 渦度閉じ込め (式15-16; ON/OFF 切替可能)
     if(vorticityEnabled) {
-      kVorticityOmega_.dispatch(cmd, ds, pc, nFluid_);
+      {
+        ZoneScopedN("VorticityOmega");
+        kVorticityOmega_.dispatch(cmd, ds, pc, nFluid_);
+      }
       computeBarrier(cmd);
-      kVorticityForce_.dispatch(cmd, ds, pc, nFluid_);
+      {
+        ZoneScopedN("VorticityForce");
+        kVorticityForce_.dispatch(cmd, ds, pc, nFluid_);
+      }
       computeBarrier(cmd);
     }
 
     // ⑧ XSPH 粘性 (1 回のみ; 境界粒子は typeFlag チェックで除外)
-    kPbfViscosity_.dispatch(cmd, ds, pc, nFluid_);
+    {
+      ZoneScopedN("PbfViscosity");
+      kPbfViscosity_.dispatch(cmd, ds, pc, nFluid_);
+    }
 
     // ⑨ 吸収パス（absorberCount_==0 のとき完全スキップ）
     if(absorberCount_ > 0) {
       computeBarrier(cmd);
+      ZoneScopedN("Absorb");
       kAbsorb_.dispatch(cmd, ds, pc, nFluid_);
     }
 
     // ⑩ 泡 (foamEnabled==false または maxDiffuseParticles==0 のとき完全スキップ)
     if(foamEnabled && cfg_.maxDiffuseParticles > 0) {
       computeBarrier(cmd); // kFoamGenerate_ が直前の viscosity/absorb 更新後の pos/vel/density を読む
-      kFoamGenerate_.dispatch(cmd, ds, pc, nFluid_);
+      {
+        ZoneScopedN("FoamGenerate");
+        kFoamGenerate_.dispatch(cmd, ds, pc, nFluid_);
+      }
       computeBarrier(cmd); // kFoamAdvect_ が kFoamGenerate_ の書き込んだ foam スロットを読む
+      ZoneScopedN("FoamAdvect");
       kFoamAdvect_.dispatch(cmd, ds, pc, cfg_.maxDiffuseParticles);
     }
 
     // ⑪ 寿命パス (life は v.w; 寿命切れを墓場送り)
     if(lifetimeEnabled_ && nFluid_ > 0) {
       computeBarrier(cmd);
+      ZoneScopedN("Lifetime");
       kLifetime_.dispatch(cmd, ds, pc, nFluid_);
     }
 

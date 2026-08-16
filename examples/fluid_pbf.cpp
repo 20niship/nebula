@@ -207,8 +207,8 @@ private:
     vkCmdSetScissor(cmd, 0, 1, &sc);
 
     SimPC pc{};
-    pc.posIdx        = engine_.posIdx;
-    pc.velIdx        = engine_.velIdx;
+    pc.posIdx        = engine_.posIdx();
+    pc.velIdx        = engine_.velIdx();
     pc.particleCount = engine_.nFluid();
     pc.worldMin      = glm::vec3(0.0f);
     pc.worldMax      = engine_.config().domainSize;

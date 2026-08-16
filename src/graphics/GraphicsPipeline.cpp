@@ -1,5 +1,6 @@
 #include "GraphicsPipeline.h"
 #include <array>
+#include <cstring>
 #include <fstream>
 #include <stdexcept>
 #include <vector>
@@ -8,10 +9,9 @@ VkShaderModule GraphicsPipeline::loadShader(const std::string& path) {
   std::ifstream file(path, std::ios::binary | std::ios::ate);
   if(!file.is_open()) throw std::runtime_error("Cannot open shader: " + path);
   size_t size = file.tellg();
-  std::vector<char> code(size);
-  file.seekg(0);
-  file.read(code.data(), size);
   std::vector<uint32_t> spirv(size / sizeof(uint32_t));
+  file.seekg(0);
+  file.read(reinterpret_cast<char*>(spirv.data()), size);
   return loadShader(spirv);
 }
 

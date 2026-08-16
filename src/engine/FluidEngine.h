@@ -73,12 +73,6 @@ public:
   void step(VkCommandBuffer cmd, float dt);
   void resetParticles(); // 粒子を初期位置・速度にリセット（バッファ/パイプラインは再生成しない）
 
-#ifdef NEBULA_GPU_PROFILING
-  // ── GPUパス単位プロファイリング(診断用; PyroEngineと同じ仕組み) ────────────
-  void enableGpuProfiling(VkPhysicalDevice physicalDevice);
-  void printGpuProfile();
-#endif
-
   void addEmitter(std::shared_ptr<Emitter> emitter);
   void clearEmitters();
   uint32_t nFluid() const { return nFluid_; }
@@ -206,8 +200,7 @@ private:
   uint32_t densityIdx_    = 0;
   uint32_t lambdaPbfIdx_  = 0;
   uint32_t omegaIdx_      = 0; // 渦度 ω バッファ (vec4 × N)
-  // 近傍リストキャッシュ (issue #87 perf実験): kMaxNeighbors超過分は切り捨て
-  static constexpr uint32_t kMaxNeighbors = 48;
+  static constexpr uint32_t kMaxNeighbors = 16; // 近傍リストキャッシュ
   uint32_t nbrListIdx_ = 0; // uint × N × kMaxNeighbors
   // 粒子バッファのソート済みコピー (issue #87 perf実験): typeFlag/nbrCountはビット同居で専用バッファを節約
   uint32_t predPSortedIdx_     = 0; // vec4 × N
@@ -272,16 +265,7 @@ private:
 
   void computeBarrier(VkCommandBuffer cmd);
 
-  void profBegin(VkCommandBuffer cmd);
-  void profEnd(VkCommandBuffer cmd, const char* label);
-#ifdef NEBULA_GPU_PROFILING
-  VkQueryPool profPool_       = VK_NULL_HANDLE;
-  bool profEnabled_           = false;
-  double profTsPeriodNs_      = 1.0;
-  static constexpr uint32_t kProfMaxQueries = 256;
-  std::vector<std::string> profLabels_;
-  uint32_t profQueryIndex_ = 0;
-#endif
+  SimPC pc_; // step() で毎substep組み立てる push constant (フィールド変更時の編集箇所を1つに集約)
 
   void uploadVec4_(const std::string& name, const glm::vec4* data, uint32_t n, VkCommandPool cmdPool, VkQueue queue);
   void uploadVec4At_(const std::string& name, const glm::vec4& v, uint32_t slot, VkCommandPool cmdPool, VkQueue queue);

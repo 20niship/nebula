@@ -98,9 +98,6 @@ public:
     initVulkan(cfg, sigma);
     setupScenario(cfg);
     mainLoop(args.n_shots);
-#ifdef NEBULA_GPU_PROFILING
-    engine_.printGpuProfile();
-#endif
     cleanup();
   }
 
@@ -119,9 +116,6 @@ private:
     base_.createDescriptorPool();
 
     engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
-#ifdef NEBULA_GPU_PROFILING
-    engine_.enableGpuProfiling(base_.ctx.physicalDevice);
-#endif
 
     gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f); // Z-up
     engine_.addForce(gravity_);

@@ -5,71 +5,32 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <cstdlib>
 #include <glm/glm.hpp>
-#include <glm/gtc/packing.hpp>
-#include <map>
 #include <random>
 #include <stdexcept>
 #include <vector>
 
-namespace {
-std::vector<uint32_t> packVec4Array(const glm::vec4* data, size_t n) {
-  std::vector<uint32_t> out(n * 2);
-  for(size_t i = 0; i < n; ++i) {
-    out[i * 2]     = glm::packHalf2x16(glm::vec2(data[i].x, data[i].y));
-    out[i * 2 + 1] = glm::packHalf2x16(glm::vec2(data[i].z, data[i].w));
-  }
-  return out;
-}
-} // namespace
-
 void FluidEngine::uploadVec4_(const std::string& name, const glm::vec4* data, uint32_t n, VkCommandPool cmdPool, VkQueue queue) {
-  if(cfg_.halfVec4) {
-    std::vector<uint32_t> packed = packVec4Array(data, n);
-    attrBuf_.upload(name, packed.data(), sizeof(uint32_t) * packed.size(), cmdPool, queue);
-  } else {
-    attrBuf_.upload(name, data, sizeof(glm::vec4) * n, cmdPool, queue);
-  }
+  attrBuf_.uploadVec4(name, data, n, cmdPool, queue, cfg_.halfVec4);
 }
 
 void FluidEngine::uploadVec4At_(const std::string& name, const glm::vec4& v, uint32_t slot, VkCommandPool cmdPool, VkQueue queue) {
-  if(cfg_.halfVec4) {
-    uint32_t packed[2] = {glm::packHalf2x16(glm::vec2(v.x, v.y)), glm::packHalf2x16(glm::vec2(v.z, v.w))};
-    attrBuf_.uploadAt(name, packed, sizeof(packed), (VkDeviceSize)slot * sizeof(packed), cmdPool, queue);
-  } else {
-    attrBuf_.uploadAt(name, &v, sizeof(glm::vec4), (VkDeviceSize)slot * sizeof(glm::vec4), cmdPool, queue);
-  }
+  attrBuf_.uploadVec4At(name, v, slot, cmdPool, queue, cfg_.halfVec4);
 }
 
 void FluidEngine::uploadVec4Scattered_(const std::string& name, const std::vector<glm::vec4>& data, const std::vector<uint32_t>& dstIndices, VkCommandPool cmdPool, VkQueue queue) {
-  if(cfg_.halfVec4) {
-    std::vector<uint32_t> packed = packVec4Array(data.data(), data.size());
-    attrBuf_.uploadScattered(name, packed.data(), sizeof(uint32_t) * 2, dstIndices, cmdPool, queue);
-  } else {
-    attrBuf_.uploadScattered(name, data.data(), sizeof(glm::vec4), dstIndices, cmdPool, queue);
-  }
+  attrBuf_.uploadVec4Scattered(name, data, dstIndices, cmdPool, queue, cfg_.halfVec4);
 }
 
 void FluidEngine::uploadVec4Vel_(const std::string& name, const glm::vec4* data, uint32_t n, VkCommandPool cmdPool, VkQueue queue) {
-  if(cfg_.halfVec4 || cfg_.halfVec4Vel) {
-    std::vector<uint32_t> packed = packVec4Array(data, n);
-    attrBuf_.upload(name, packed.data(), sizeof(uint32_t) * packed.size(), cmdPool, queue);
-  } else {
-    attrBuf_.upload(name, data, sizeof(glm::vec4) * n, cmdPool, queue);
-  }
+  attrBuf_.uploadVec4(name, data, n, cmdPool, queue, cfg_.halfVec4 || cfg_.halfVec4Vel);
 }
 
 void FluidEngine::uploadVec4VelScattered_(const std::string& name, const std::vector<glm::vec4>& data, const std::vector<uint32_t>& dstIndices, VkCommandPool cmdPool, VkQueue queue) {
-  if(cfg_.halfVec4 || cfg_.halfVec4Vel) {
-    std::vector<uint32_t> packed = packVec4Array(data.data(), data.size());
-    attrBuf_.uploadScattered(name, packed.data(), sizeof(uint32_t) * 2, dstIndices, cmdPool, queue);
-  } else {
-    attrBuf_.uploadScattered(name, data.data(), sizeof(glm::vec4), dstIndices, cmdPool, queue);
-  }
+  attrBuf_.uploadVec4Scattered(name, data, dstIndices, cmdPool, queue, cfg_.halfVec4 || cfg_.halfVec4Vel);
 }
 
 // ── バリアヘルパー ───────────────────────────────────────────────────────────
@@ -466,72 +427,8 @@ void FluidEngine::cleanup() {
   kFoamGenerate_.cleanup();
   kFoamAdvect_.cleanup();
   kLifetime_.cleanup();
-#ifdef NEBULA_GPU_PROFILING
-  if(profPool_ != VK_NULL_HANDLE) vkDestroyQueryPool(device_, profPool_, nullptr);
-#endif
   cleanupEngineBase();
 }
-
-// ── GPUパス単位プロファイリング(診断用; PyroEngineと同じ仕組み) ────────────────
-
-void FluidEngine::profBegin(VkCommandBuffer cmd) {
-#ifdef NEBULA_GPU_PROFILING
-  if(profEnabled_ && profQueryIndex_ + 1 < kProfMaxQueries) vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, profPool_, profQueryIndex_);
-#else
-  (void)cmd;
-#endif
-}
-
-void FluidEngine::profEnd(VkCommandBuffer cmd, const char* label) {
-#ifdef NEBULA_GPU_PROFILING
-  if(profEnabled_ && profQueryIndex_ + 1 < kProfMaxQueries) {
-    vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, profPool_, profQueryIndex_ + 1);
-    profLabels_.push_back(label);
-    profQueryIndex_ += 2;
-  }
-#else
-  (void)cmd;
-  (void)label;
-#endif
-}
-
-#ifdef NEBULA_GPU_PROFILING
-
-void FluidEngine::enableGpuProfiling(VkPhysicalDevice physicalDevice) {
-  VkPhysicalDeviceProperties props{};
-  vkGetPhysicalDeviceProperties(physicalDevice, &props);
-  profTsPeriodNs_ = props.limits.timestampPeriod;
-  VkQueryPoolCreateInfo qpci{};
-  qpci.sType      = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
-  qpci.queryType  = VK_QUERY_TYPE_TIMESTAMP;
-  qpci.queryCount = kProfMaxQueries;
-  vkCreateQueryPool(device_, &qpci, nullptr, &profPool_);
-  profEnabled_ = true;
-}
-
-void FluidEngine::printGpuProfile() {
-  if(!profEnabled_ || profLabels_.empty()) return;
-  uint32_t n = uint32_t(profLabels_.size()) * 2;
-  std::vector<uint64_t> ts(n);
-  vkGetQueryPoolResults(device_, profPool_, 0, n, ts.size() * sizeof(uint64_t), ts.data(), sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
-
-  std::map<std::string, double> sumMs;
-  std::map<std::string, int> counts;
-  double total = 0.0;
-  for(size_t i = 0; i < profLabels_.size(); i++) {
-    double ms = double(ts[i * 2 + 1] - ts[i * 2]) * profTsPeriodNs_ / 1e6;
-    sumMs[profLabels_[i]] += ms;
-    counts[profLabels_[i]] += 1;
-    total += ms;
-  }
-  std::vector<std::pair<std::string, double>> sorted(sumMs.begin(), sumMs.end());
-  std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
-  std::fprintf(stderr, "=== [FluidEngine GPU profile] total=%.4f ms ===\n", total);
-  for(const auto& [label, ms] : sorted) {
-    std::fprintf(stderr, "  %-26s %9.4f ms  (%5.1f%%, x%d)\n", label.c_str(), ms, ms / total * 100.0, counts[label]);
-  }
-}
-#endif
 
 // ── TC8: kinematic 境界粒子 staging ────────────────────────────────────────────
 
@@ -616,19 +513,12 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
 
   uploadForces(dt);
 
-#ifdef NEBULA_GPU_PROFILING
-  if(profEnabled_) {
-    vkCmdResetQueryPool(cmd, profPool_, 0, kProfMaxQueries);
-    profLabels_.clear();
-  }
-  profQueryIndex_ = 0;
-#endif
-
   float subDt     = dt / float(std::max(1, numSubsteps));
   uint32_t totalN = cfg_.max_boundary + nFluid_;
 
   for(int sub = 0; sub < numSubsteps; ++sub) {
-    SimPC pc{};
+    pc_ = SimPC{};
+    SimPC& pc = pc_;
     pc.posIdx            = posIdx;
     pc.velIdx            = velIdx;
     pc.predPIdx          = predPIdx;
@@ -690,23 +580,16 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     // pc.powderFriction → SimPC では pinnedTargetIdx に転用。FluidEngine では未使用 (0のまま)。
 
     // ① Predict + SDF 壁衝突 (1 dispatch; 境界は invMass==0 固定なので nFluid_ のみ)
-    profBegin(cmd);
     kPredictSdf_.dispatch(cmd, ds, pc, nFluid_);
     // predP と cellCount は書き込み先が異なるためバリア不要 (MoltenVK encoder switch 削減)
-    profEnd(cmd, "PredictSdf");
 
     // ② 空間ハッシュ構築 (compute ゼロクリアで blit エンコーダー遷移を排除)
-    profBegin(cmd);
     kZeroCells_.dispatch(cmd, ds, pc, cfg_.totalCells());
     computeBarrier(cmd); // kHashCount_ が cellCount を読むため必要
-    profEnd(cmd, "ZeroCells");
 
-    profBegin(cmd);
     kHashCount_.dispatch(cmd, ds, pc, totalN);
     computeBarrier(cmd);
-    profEnd(cmd, "HashCount");
 
-    profBegin(cmd);
     {
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanLocal_.pipeline);
       vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanLocal_.pipelineLayout, 0, 1, &ds, 0, nullptr);
@@ -714,9 +597,7 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
       vkCmdDispatch(cmd, (cfg_.totalCells() + 255u) / 256u, 1, 1);
     }
     computeBarrier(cmd);
-    profEnd(cmd, "HashScanLocal");
 
-    profBegin(cmd);
     {
       // Pass 2b-1: グループサムの prefix scan（1 workgroup × 1024 threads）
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanGlobal_.pipeline);
@@ -725,80 +606,55 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
       vkCmdDispatch(cmd, 1, 1, 1);
     }
     computeBarrier(cmd); // exclusive prefix を書き戻してから kHashAddBase_ が読む
-    profEnd(cmd, "HashScanGlobal");
 
     // Pass 2b-2: ベース加算を 1024 wg × 256 threads で並列化（旧: 1 wg × 1024 threads × 256 sequential writes）
-    profBegin(cmd);
     kHashAddBase_.dispatch(cmd, ds, pc, cfg_.totalCells());
     computeBarrier(cmd);
-    profEnd(cmd, "HashAddBase");
 
-    profBegin(cmd);
     kHashSort_.dispatch(cmd, ds, pc, totalN);
     computeBarrier(cmd);
-    profEnd(cmd, "HashSort");
 
     // ④ PBF 不圧縮ソルバー × pbfIterations
     for(int iter = 0; iter < pbfIterations; ++iter) {
-      profBegin(cmd);
       kPbfDensity_.dispatch(cmd, ds, pc, nFluid_);
       computeBarrier(cmd);
-      profEnd(cmd, "PbfDensity");
-      profBegin(cmd);
       kPbfDeltaP_.dispatch(cmd, ds, pc, nFluid_);
       computeBarrier(cmd);
-      profEnd(cmd, "PbfDeltaP");
     }
 
     // ⑤+⑥ SDF 再適用 + 速度更新 (1 dispatch; 境界固定のため nFluid_ のみ)
-    profBegin(cmd);
     kSdfVelocity_.dispatch(cmd, ds, pc, nFluid_);
     computeBarrier(cmd);
-    profEnd(cmd, "SdfVelocity");
 
     // ⑦ 渦度閉じ込め (式15-16; ON/OFF 切替可能)
     if(vorticityEnabled) {
-      profBegin(cmd);
       kVorticityOmega_.dispatch(cmd, ds, pc, nFluid_);
       computeBarrier(cmd);
-      profEnd(cmd, "VorticityOmega");
-      profBegin(cmd);
       kVorticityForce_.dispatch(cmd, ds, pc, nFluid_);
       computeBarrier(cmd);
-      profEnd(cmd, "VorticityForce");
     }
 
     // ⑧ XSPH 粘性 (1 回のみ; 境界粒子は typeFlag チェックで除外)
-    profBegin(cmd);
     kPbfViscosity_.dispatch(cmd, ds, pc, nFluid_);
-    profEnd(cmd, "PbfViscosity");
 
     // ⑨ 吸収パス（absorberCount_==0 のとき完全スキップ）
     if(absorberCount_ > 0) {
       computeBarrier(cmd);
-      profBegin(cmd);
       kAbsorb_.dispatch(cmd, ds, pc, nFluid_);
-      profEnd(cmd, "Absorb");
     }
 
     // ⑩ 泡 (foamEnabled==false または maxDiffuseParticles==0 のとき完全スキップ)
     if(foamEnabled && cfg_.maxDiffuseParticles > 0) {
       computeBarrier(cmd); // kFoamGenerate_ が直前の viscosity/absorb 更新後の pos/vel/density を読む
-      profBegin(cmd);
       kFoamGenerate_.dispatch(cmd, ds, pc, nFluid_);
       computeBarrier(cmd); // kFoamAdvect_ が kFoamGenerate_ の書き込んだ foam スロットを読む
-      profEnd(cmd, "FoamGenerate");
-      profBegin(cmd);
       kFoamAdvect_.dispatch(cmd, ds, pc, cfg_.maxDiffuseParticles);
-      profEnd(cmd, "FoamAdvect");
     }
 
     // ⑪ 寿命パス (life は v.w; 寿命切れを墓場送り)
     if(lifetimeEnabled_ && nFluid_ > 0) {
       computeBarrier(cmd);
-      profBegin(cmd);
       kLifetime_.dispatch(cmd, ds, pc, nFluid_);
-      profEnd(cmd, "Lifetime");
     }
 
     // 次の substep がある場合のみバリアが必要（次の kPredictSdf_ が vel/pos を読む）

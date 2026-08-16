@@ -1,5 +1,6 @@
 #pragma once
 
+#include <glm/glm.hpp>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -27,6 +28,11 @@ public:
 
   // packed な count 要素を dstIndices[j] の要素位置へ1 submitのmulti-region copyで散布転送する(スロット再利用の穴埋め用; 単位は要素index)。
   void uploadScattered(const std::string& name, const void* packedData, VkDeviceSize elemSize, const std::vector<uint32_t>& dstIndices, VkCommandPool cmdPool, VkQueue queue);
+
+  // vec4配列のupload。half=trueならpackHalf2x16(8B/vec4)、falseならFP32(16B/vec4)で転送する。
+  void uploadVec4(const std::string& name, const glm::vec4* data, uint32_t n, VkCommandPool cmdPool, VkQueue queue, bool half);
+  void uploadVec4At(const std::string& name, const glm::vec4& v, uint32_t slot, VkCommandPool cmdPool, VkQueue queue, bool half);
+  void uploadVec4Scattered(const std::string& name, const std::vector<glm::vec4>& data, const std::vector<uint32_t>& dstIndices, VkCommandPool cmdPool, VkQueue queue, bool half);
 
   // 既存データ（先頭からのバイト列）を保持したまま容量を newCount 要素に再確保する。
   // Bindless index は維持されるため、他の保持済みインデックスは変更不要。

@@ -41,34 +41,34 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
 
   const VkDeviceSize vec4ElemSize    = cfg_.halfVec4 ? sizeof(uint32_t) * 2 : sizeof(glm::vec4);
   const VkDeviceSize vec4ElemSizeVel = (cfg_.halfVec4 || cfg_.halfVec4Vel) ? sizeof(uint32_t) * 2 : sizeof(glm::vec4);
-  posIdx          = attrBuf_.addAttribute("P", vec4ElemSize, totalCap);       // P.w = invMass
-  velIdx          = attrBuf_.addAttribute("v", vec4ElemSizeVel, totalCap);    // v.w = life
-  predPIdx        = attrBuf_.addAttribute("predP", vec4ElemSize, totalCap);
-  invMassIdx      = posIdx; // task2: invMassはP.wに統合。既存シェーダーのpc.invMassIdx参照を維持
-  typeFlagIdx     = attrBuf_.addAttribute("typeFlag", sizeof(uint32_t), totalCap);
-  cellCountIdx_   = attrBuf_.addAttribute("cellCnt", sizeof(uint32_t), cfg_.totalCells());
-  cellOffsetIdx_  = attrBuf_.addAttribute("cellOff", sizeof(uint32_t), cfg_.totalCells() + N_GROUPS);
-  sortedIdxIdx_   = attrBuf_.addAttribute("sorted", sizeof(uint32_t), totalCap);
-  densityIdx_     = attrBuf_.addAttribute("density", sizeof(float), totalCap);
-  lambdaPbfIdx_   = attrBuf_.addAttribute("lambdaPbf", sizeof(float), totalCap);
-  omegaIdx_       = attrBuf_.addAttribute("omega", vec4ElemSizeVel, totalCap);
-  nbrListIdx_     = attrBuf_.addAttribute("nbrList", sizeof(uint32_t) * kMaxNeighbors, totalCap); // issue #87 perf実験
-  predPSortedIdx_     = attrBuf_.addAttribute("predPSorted", vec4ElemSize, totalCap); // issue #87 perf実験
-  densitySortedIdx_   = attrBuf_.addAttribute("densitySorted", sizeof(float), totalCap);
-  lambdaPbfSortedIdx_ = attrBuf_.addAttribute("lambdaPbfSorted", sizeof(float), totalCap);
-  invSortedIdxIdx_    = attrBuf_.addAttribute("invSortedIdx", sizeof(uint32_t), totalCap);
-  posSortedIdx_ = attrBuf_.addAttribute("posSorted", vec4ElemSize, totalCap); // issue #87 perf実験 続き
-  velSortedIdx_ = attrBuf_.addAttribute("velSorted", vec4ElemSizeVel, totalCap);
+  pc_.posIdx      = attrBuf_.addAttribute("P", vec4ElemSize, totalCap);       // P.w = invMass
+  pc_.velIdx      = attrBuf_.addAttribute("v", vec4ElemSizeVel, totalCap);    // v.w = life
+  pc_.predPIdx    = attrBuf_.addAttribute("predP", vec4ElemSize, totalCap);
+  pc_.invMassIdx  = pc_.posIdx; // task2: invMassはP.wに統合。既存シェーダーのpc.invMassIdx参照を維持
+  pc_.typeFlagIdx = attrBuf_.addAttribute("typeFlag", sizeof(uint32_t), totalCap);
+  pc_.cellCountIdx  = attrBuf_.addAttribute("cellCnt", sizeof(uint32_t), cfg_.totalCells());
+  pc_.cellOffsetIdx = attrBuf_.addAttribute("cellOff", sizeof(uint32_t), cfg_.totalCells() + N_GROUPS);
+  pc_.sortedIdxIdx  = attrBuf_.addAttribute("sorted", sizeof(uint32_t), totalCap);
+  pc_.densityIdx    = attrBuf_.addAttribute("density", sizeof(float), totalCap);
+  pc_.lambdaPbfIdx  = attrBuf_.addAttribute("lambdaPbf", sizeof(float), totalCap);
+  pc_.omegaIdx      = attrBuf_.addAttribute("omega", vec4ElemSizeVel, totalCap);
+  pc_.nbrListIdx    = attrBuf_.addAttribute("nbrList", sizeof(uint32_t) * kMaxNeighbors, totalCap); // issue #87 perf実験
+  pc_.predPSortedIdx     = attrBuf_.addAttribute("predPSorted", vec4ElemSize, totalCap); // issue #87 perf実験
+  pc_.densitySortedIdx   = attrBuf_.addAttribute("densitySorted", sizeof(float), totalCap);
+  pc_.lambdaPbfSortedIdx = attrBuf_.addAttribute("lambdaPbfSorted", sizeof(float), totalCap);
+  pc_.invSortedIdxIdx    = attrBuf_.addAttribute("invSortedIdx", sizeof(uint32_t), totalCap);
+  pc_.posSortedIdx = attrBuf_.addAttribute("posSorted", vec4ElemSize, totalCap); // issue #87 perf実験 続き
+  pc_.velSortedIdx = attrBuf_.addAttribute("velSorted", vec4ElemSizeVel, totalCap);
   // lifeIdx_廃止: lifeはv.wに格納 (task2)
   emitterIdxIdx_  = attrBuf_.addAttribute("emitterIdx", sizeof(uint32_t), totalCap);
-  absorberBufIdx_ = attrBuf_.addAttribute("absorbers", sizeof(float), MAX_ABSORBERS * 8u);
+  pc_.absorberBufIdx = attrBuf_.addAttribute("absorbers", sizeof(float), MAX_ABSORBERS * 8u);
 
   // foamParams は maxDiffuseParticles==0 でも常に確保し setFoamParams() を常時安全に呼べるようにする
-  foamParamsIdx_ = attrBuf_.addAttribute("foamParams", sizeof(float), 16u);
+  pc_.foamParamsIdx = attrBuf_.addAttribute("foamParams", sizeof(float), 16u);
   if(cfg_.maxDiffuseParticles > 0) {
-    foamPosIdx_  = attrBuf_.addAttribute("foamPos", vec4ElemSize, cfg_.maxDiffuseParticles);    // foamPos.w=残り寿命(既存)
-    foamVelIdx_  = attrBuf_.addAttribute("foamVel", vec4ElemSize, cfg_.maxDiffuseParticles);    // foamVel.w=初期寿命(既存)
-    foamKindIdx_ = attrBuf_.addAttribute("foamKind", sizeof(uint32_t), cfg_.maxDiffuseParticles + 1u); // 末尾1要素=生成カーソル
+    pc_.foamPosIdx  = attrBuf_.addAttribute("foamPos", vec4ElemSize, cfg_.maxDiffuseParticles);    // foamPos.w=残り寿命(既存)
+    pc_.foamVelIdx  = attrBuf_.addAttribute("foamVel", vec4ElemSize, cfg_.maxDiffuseParticles);    // foamVel.w=初期寿命(既存)
+    pc_.foamKindIdx = attrBuf_.addAttribute("foamKind", sizeof(uint32_t), cfg_.maxDiffuseParticles + 1u); // 末尾1要素=生成カーソル
 
     // 全スロットを 死(kind=0) + 生成カーソル=0 で zero-init する。
     std::vector<uint32_t> zeroKind(cfg_.maxDiffuseParticles + 1u, 0u);
@@ -224,8 +224,8 @@ void FluidEngine::clearBoundary() {
 // ── 吸収ポート登録 ────────────────────────────────────────────────────────────
 
 void FluidEngine::setAbsorbers(const std::vector<AbsorberDesc>& absorbers) {
-  uint32_t n     = static_cast<uint32_t>(std::min(absorbers.size(), size_t(MAX_ABSORBERS)));
-  absorberCount_ = n;
+  uint32_t n      = static_cast<uint32_t>(std::min(absorbers.size(), size_t(MAX_ABSORBERS)));
+  pc_.absorberCount = n;
   if(n == 0) return;
   static_assert(sizeof(AbsorberDesc) == 8 * sizeof(float), "AbsorberDesc must be 8 floats");
   attrBuf_.upload("absorbers", absorbers.data(), n * sizeof(AbsorberDesc), cmdPool_, queue_);
@@ -497,16 +497,7 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
   uint32_t totalN = cfg_.max_boundary + nFluid_;
 
   for(int sub = 0; sub < numSubsteps; ++sub) {
-    pc_ = SimPC{};
-    SimPC& pc = pc_;
-    pc.posIdx            = posIdx;
-    pc.velIdx            = velIdx;
-    pc.predPIdx          = predPIdx;
-    pc.invMassIdx        = invMassIdx;
-    pc.typeFlagIdx       = typeFlagIdx;
-    pc.cellCountIdx      = cellCountIdx_;
-    pc.cellOffsetIdx     = cellOffsetIdx_;
-    pc.sortedIdxIdx      = sortedIdxIdx_;
+    SimPC& pc = pc_; // バッファindex類はinit()/setAbsorbers()等でpc_に設定済み。ここでは毎substep変わりうる値のみ更新する。
     pc.particleCount     = totalN;
     pc.hashCells         = cfg_.totalCells();
     pc.stretchEdgesIdx   = 0;
@@ -528,15 +519,6 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     pc.stretchCompliance = rho0;
     pc.bendCompliance    = viscosityC;
     pc.forceCount        = (uint32_t)forces_.size();
-    pc.densityIdx        = densityIdx_;
-    pc.lambdaPbfIdx      = lambdaPbfIdx_;
-    pc.nbrListIdx        = nbrListIdx_;
-    pc.predPSortedIdx     = predPSortedIdx_;
-    pc.densitySortedIdx   = densitySortedIdx_;
-    pc.lambdaPbfSortedIdx = lambdaPbfSortedIdx_;
-    pc.invSortedIdxIdx    = invSortedIdxIdx_;
-    pc.posSortedIdx       = posSortedIdx_;
-    pc.velSortedIdx       = velSortedIdx_;
     pc.fluidStart        = cfg_.max_boundary;
     // PBF 論文準拠パラメータ
     pc.cfmEpsilon       = cfmEpsilon;
@@ -544,18 +526,9 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     pc.surfaceTension   = surfaceTension;
     pc.vorticityEpsilon = vorticityEpsilon;
     pc.linearDamping    = linearDamping;
-    pc.omegaIdx         = omegaIdx_;
     // 煙・粉体パラメータ
     pc.smokeRiseAccel = smokeRiseAccel;
     pc.smokeDamping   = smokeDamping;
-    // 吸収ポート（absorberCount_==0 の場合は kAbsorb_ をディスパッチしない）
-    pc.absorberBufIdx = absorberBufIdx_;
-    pc.absorberCount  = absorberCount_;
-    // 泡 (spray/foam/bubble) 二次パーティクル（foamEnabled==false の場合はディスパッチしない）
-    pc.foamPosIdx          = foamPosIdx_;
-    pc.foamVelIdx          = foamVelIdx_;
-    pc.foamKindIdx         = foamKindIdx_;
-    pc.foamParamsIdx       = foamParamsIdx_;
     pc.maxDiffuseParticles = cfg_.maxDiffuseParticles;
     // pc.powderFriction → SimPC では pinnedTargetIdx に転用。FluidEngine では未使用 (0のまま)。
 
@@ -652,8 +625,8 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
       kPbfViscosity_.dispatch(cmd, ds, pc, nFluid_);
     }
 
-    // ⑨ 吸収パス（absorberCount_==0 のとき完全スキップ）
-    if(absorberCount_ > 0) {
+    // ⑨ 吸収パス（pc.absorberCount==0 のとき完全スキップ）
+    if(pc.absorberCount > 0) {
       computeBarrier(cmd);
       ZoneScopedN("Absorb");
       kAbsorb_.dispatch(cmd, ds, pc, nFluid_);

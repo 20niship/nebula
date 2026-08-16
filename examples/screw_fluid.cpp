@@ -266,8 +266,8 @@ private:
 
     // 流体粒子 + 境界（スクリュー）を描画（バッファ上は非連続のため2回に分けて描画）
     SimPC pc{};
-    pc.posIdx   = engine_.posIdx;
-    pc.velIdx   = engine_.velIdx;
+    pc.posIdx   = engine_.posIdx();
+    pc.velIdx   = engine_.velIdx();
     pc.worldMin = glm::vec3(0.0f);
     pc.worldMax = engine_.config().domainSize;
 

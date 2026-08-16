@@ -153,20 +153,20 @@ public:
   void setFoamParams(const FoamParams& params);
   bool foamEnabled = false; // false のとき dispatch スキップ (バッファは保持)
 
-  uint32_t foamPosIdx() const { return foamPosIdx_; }   // 描画側から参照 (vec4: xyz=pos, w=残り寿命)
-  uint32_t foamVelIdx() const { return foamVelIdx_; }   // vec4: xyz=vel, w=初期寿命
-  uint32_t foamKindIdx() const { return foamKindIdx_; } // uint: 0=死/未使用,1=spray,2=foam,3=bubble
+  uint32_t foamPosIdx() const { return pc_.foamPosIdx; }   // 描画側から参照 (vec4: xyz=pos, w=残り寿命)
+  uint32_t foamVelIdx() const { return pc_.foamVelIdx; }   // vec4: xyz=vel, w=初期寿命
+  uint32_t foamKindIdx() const { return pc_.foamKindIdx; } // uint: 0=死/未使用,1=spray,2=foam,3=bubble
 
   void debugSetFoamSlot(uint32_t slot, glm::vec4 pos, glm::vec4 vel, uint32_t kind);
 
   VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
   VkDescriptorSet descriptorSet             = VK_NULL_HANDLE;
-  uint32_t posIdx                           = 0;
-  uint32_t velIdx                           = 0;
+  uint32_t posIdx() const { return pc_.posIdx; }
+  uint32_t velIdx() const { return pc_.velIdx; }
   // 外部シェーダー（fluid_absorb.comp 等）からも参照されるバッファインデックス
-  uint32_t predPIdx    = 0;
-  uint32_t invMassIdx  = 0;
-  uint32_t typeFlagIdx = 0;
+  uint32_t predPIdx() const { return pc_.predPIdx; }
+  uint32_t invMassIdx() const { return pc_.invMassIdx; }
+  uint32_t typeFlagIdx() const { return pc_.typeFlagIdx; }
 
   VkBuffer getPositionBuffer() const;
   // 泡バッファの直接読み戻し用 (テスト/デバッグ; issue #47)
@@ -194,36 +194,11 @@ private:
   uint32_t totalBufferCapacity() const { return cfg_.max_boundary + fluidCapacity_ + kDispatchPad; }
   void growFluidCapacity(uint32_t minRequired);
 
-  uint32_t cellCountIdx_  = 0;
-  uint32_t cellOffsetIdx_ = 0;
-  uint32_t sortedIdxIdx_  = 0;
-  uint32_t densityIdx_    = 0;
-  uint32_t lambdaPbfIdx_  = 0;
-  uint32_t omegaIdx_      = 0; // 渦度 ω バッファ (vec4 × N)
   // 近傍リストキャッシュ (issue #87 perf実験): 1セルあたり実質8個程度の想定で超過分は切り捨て
   static constexpr uint32_t kMaxNeighbors = 16;
-  uint32_t nbrListIdx_ = 0; // uint × N × kMaxNeighbors
-  // 粒子バッファのソート済みコピー (issue #87 perf実験): typeFlag/nbrCountはビット同居で専用バッファを節約
-  uint32_t predPSortedIdx_     = 0; // vec4 × N
-  uint32_t densitySortedIdx_   = 0; // float × N
-  uint32_t lambdaPbfSortedIdx_ = 0; // float × N
-  uint32_t invSortedIdxIdx_    = 0; // uint × N (下位24bit=ソート後位置k, 上位8bit=nbrCount)
-  // 最終pos/velのソート済みコピー (issue #87 perf実験 続き): sdf_collision_velocityが書き、pbf_viscosityが読む
-  uint32_t posSortedIdx_ = 0; // vec4 × N
-  uint32_t velSortedIdx_ = 0; // vec4 × N
   // lifeIdx_ は廃止: 寿命はv.w(velIdx)に格納 (task2: バッファ統合)
   uint32_t emitterIdxIdx_ = 0; // 放出元エミッタindex (uint × N)
   bool lifetimeEnabled_   = false; // lifetime>0のEmitterが登録されたら有効(lifetimeパスを実行)
-
-  // 吸収パス用プライベートメンバー
-  uint32_t absorberBufIdx_ = 0; // absorbers バッファの bindless index
-  uint32_t absorberCount_  = 0; // 現フレームの有効吸収形状数
-
-  // 泡 (spray/foam/bubble) 二次パーティクル用プライベートメンバー (issue #47)
-  uint32_t foamPosIdx_    = 0;
-  uint32_t foamVelIdx_    = 0;
-  uint32_t foamKindIdx_   = 0; // 末尾1要素は生成カーソル (atomicAdd)
-  uint32_t foamParamsIdx_ = 0;
 
   ComputePipeline kPredictSdf_;
   ComputePipeline kSdfVelocity_; // issue #66: SDF境界再衝突+速度更新を統合(旧kSdfCollision_+kUpdateVelocity_)
@@ -238,7 +213,7 @@ private:
   ComputePipeline kHashAddBase_;
   ComputePipeline kVorticityOmega_;
   ComputePipeline kVorticityForce_;
-  ComputePipeline kAbsorb_;       // 吸収パス（fluid_absorb.comp; absorberCount_>0 のときのみ使用）
+  ComputePipeline kAbsorb_;       // 吸収パス（fluid_absorb.comp; pc_.absorberCount>0 のときのみ使用）
   ComputePipeline kFoamGenerate_; // 泡生成パス（pbf_foam_generate.comp; foamEnabled かつ maxDiffuseParticles>0 のときのみ使用）
   ComputePipeline kFoamAdvect_;   // 泡移流・分類パス（pbf_foam_advect.comp; 同上）
   ComputePipeline kLifetime_;     // 寿命パス（fluid_lifetime.comp; lifetimeEnabled_ のときのみ使用）
@@ -266,5 +241,6 @@ private:
 
   void computeBarrier(VkCommandBuffer cmd);
 
-  SimPC pc_; // step() で毎substep組み立てる push constant (フィールド変更時の編集箇所を1つに集約)
+  // バッファindex類はinit()/setAbsorbers()で一度だけ設定され、step()内で毎substep書き換わる値のみ更新される
+  SimPC pc_{};
 };

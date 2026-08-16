@@ -102,8 +102,12 @@ struct SimPC {
   uint32_t densitySortedIdx;   // float × N (pbf_densityが毎iteration更新)
   uint32_t lambdaPbfSortedIdx; // float × N (pbf_densityが毎iteration更新)
   uint32_t invSortedIdxIdx;    // uint × N。元idx→ソート後位置k(下位24bit)+nbrCount(上位8bit)。hash_sortが書きpbf_densityが更新
+
+  // ── 最終pos/velのソート済みコピー (pbf_viscosity 専用; issue #87 perf実験 続き。他シェーダーは宣言のみで不使用) ──
+  uint32_t posSortedIdx; // vec4 × N。typeFlagはビット格納した.wに同居。sdf_collision_velocityが書く
+  uint32_t velSortedIdx; // vec4 × N。sdf_collision_velocityが書く
 };
-static_assert(sizeof(SimPC) == 244, "SimPC must be 244 bytes"); // 232B(issue#87 近傍リストまで) + ソート済みコピー(issue #87, +12B)
+static_assert(sizeof(SimPC) == 252, "SimPC must be 252 bytes"); // 244B(issue#87近傍+ソート済みコピー) + pos/velソート済みコピー(issue #87続き, +8B)
 static_assert(offsetof(SimPC, cellCountIdx) == 20, "hash compat offset");
 static_assert(offsetof(SimPC, cellOffsetIdx) == 24, "hash compat offset");
 static_assert(offsetof(SimPC, hashCells) == 36, "hash compat offset");

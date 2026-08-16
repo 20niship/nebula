@@ -116,6 +116,8 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   densitySortedIdx_   = attrBuf_.addAttribute("densitySorted", sizeof(float), totalCap);
   lambdaPbfSortedIdx_ = attrBuf_.addAttribute("lambdaPbfSorted", sizeof(float), totalCap);
   invSortedIdxIdx_    = attrBuf_.addAttribute("invSortedIdx", sizeof(uint32_t), totalCap);
+  posSortedIdx_ = attrBuf_.addAttribute("posSorted", vec4ElemSize, totalCap); // issue #87 perf実験 続き
+  velSortedIdx_ = attrBuf_.addAttribute("velSorted", vec4ElemSizeVel, totalCap);
   // lifeIdx_廃止: lifeはv.wに格納 (task2)
   emitterIdxIdx_  = attrBuf_.addAttribute("emitterIdx", sizeof(uint32_t), totalCap);
   absorberBufIdx_ = attrBuf_.addAttribute("absorbers", sizeof(float), MAX_ABSORBERS * 8u);
@@ -422,6 +424,8 @@ void FluidEngine::growFluidCapacity(uint32_t minRequired) {
   attrBuf_.resizeAttribute("densitySorted", newTotal, cmdPool_, queue_);
   attrBuf_.resizeAttribute("lambdaPbfSorted", newTotal, cmdPool_, queue_);
   attrBuf_.resizeAttribute("invSortedIdx", newTotal, cmdPool_, queue_);
+  attrBuf_.resizeAttribute("posSorted", newTotal, cmdPool_, queue_);
+  attrBuf_.resizeAttribute("velSorted", newTotal, cmdPool_, queue_);
   slotDeath_.resize(fluidCapacity_, std::numeric_limits<float>::infinity());
   slotAlive_.resize(fluidCapacity_, 0u);
 }
@@ -661,6 +665,8 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     pc.densitySortedIdx   = densitySortedIdx_;
     pc.lambdaPbfSortedIdx = lambdaPbfSortedIdx_;
     pc.invSortedIdxIdx    = invSortedIdxIdx_;
+    pc.posSortedIdx       = posSortedIdx_;
+    pc.velSortedIdx       = velSortedIdx_;
     pc.fluidStart        = cfg_.max_boundary;
     // PBF 論文準拠パラメータ
     pc.cfmEpsilon       = cfmEpsilon;

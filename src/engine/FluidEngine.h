@@ -214,6 +214,9 @@ private:
   uint32_t densitySortedIdx_   = 0; // float × N
   uint32_t lambdaPbfSortedIdx_ = 0; // float × N
   uint32_t invSortedIdxIdx_    = 0; // uint × N (下位24bit=ソート後位置k, 上位8bit=nbrCount)
+  // 最終pos/velのソート済みコピー (issue #87 perf実験 続き): sdf_collision_velocityが書き、pbf_viscosityが読む
+  uint32_t posSortedIdx_ = 0; // vec4 × N
+  uint32_t velSortedIdx_ = 0; // vec4 × N
   // lifeIdx_ は廃止: 寿命はv.w(velIdx)に格納 (task2: バッファ統合)
   uint32_t emitterIdxIdx_ = 0; // 放出元エミッタindex (uint × N)
   bool lifetimeEnabled_   = false; // lifetime>0のEmitterが登録されたら有効(lifetimeパスを実行)

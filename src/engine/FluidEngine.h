@@ -200,7 +200,8 @@ private:
   uint32_t densityIdx_    = 0;
   uint32_t lambdaPbfIdx_  = 0;
   uint32_t omegaIdx_      = 0; // 渦度 ω バッファ (vec4 × N)
-  static constexpr uint32_t kMaxNeighbors = 16; // 近傍リストキャッシュ
+  // 近傍リストキャッシュ (issue #87 perf実験): 1セルあたり実質8個程度の想定で超過分は切り捨て
+  static constexpr uint32_t kMaxNeighbors = 16;
   uint32_t nbrListIdx_ = 0; // uint × N × kMaxNeighbors
   // 粒子バッファのソート済みコピー (issue #87 perf実験): typeFlag/nbrCountはビット同居で専用バッファを節約
   uint32_t predPSortedIdx_     = 0; // vec4 × N
@@ -266,10 +267,4 @@ private:
   void computeBarrier(VkCommandBuffer cmd);
 
   SimPC pc_; // step() で毎substep組み立てる push constant (フィールド変更時の編集箇所を1つに集約)
-
-  void uploadVec4_(const std::string& name, const glm::vec4* data, uint32_t n, VkCommandPool cmdPool, VkQueue queue);
-  void uploadVec4At_(const std::string& name, const glm::vec4& v, uint32_t slot, VkCommandPool cmdPool, VkQueue queue);
-  void uploadVec4Scattered_(const std::string& name, const std::vector<glm::vec4>& data, const std::vector<uint32_t>& dstIndices, VkCommandPool cmdPool, VkQueue queue);
-  void uploadVec4Vel_(const std::string& name, const glm::vec4* data, uint32_t n, VkCommandPool cmdPool, VkQueue queue);
-  void uploadVec4VelScattered_(const std::string& name, const std::vector<glm::vec4>& data, const std::vector<uint32_t>& dstIndices, VkCommandPool cmdPool, VkQueue queue);
 };

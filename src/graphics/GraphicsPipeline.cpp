@@ -11,18 +11,11 @@ VkShaderModule GraphicsPipeline::loadShader(const std::string& path) {
   std::vector<char> code(size);
   file.seekg(0);
   file.read(code.data(), size);
-
-  VkShaderModuleCreateInfo info{};
-  info.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-  info.codeSize = size;
-  info.pCode    = reinterpret_cast<const uint32_t*>(code.data());
-
-  VkShaderModule mod;
-  if(vkCreateShaderModule(device_, &info, nullptr, &mod) != VK_SUCCESS) throw std::runtime_error("Failed to create shader module: " + path);
-  return mod;
+  std::vector<uint32_t> spirv(size / sizeof(uint32_t));
+  return loadShader(spirv);
 }
 
-VkShaderModule GraphicsPipeline::loadShaderFromSpirv(const std::vector<uint32_t>& code) {
+VkShaderModule GraphicsPipeline::loadShader(const std::vector<uint32_t>& code) {
   VkShaderModuleCreateInfo info{};
   info.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
   info.codeSize = code.size() * sizeof(uint32_t);
@@ -34,15 +27,15 @@ VkShaderModule GraphicsPipeline::loadShaderFromSpirv(const std::vector<uint32_t>
 }
 
 void GraphicsPipeline::init(VkDevice device, VkRenderPass renderPass, VkDescriptorSetLayout bindlessLayout, const std::string& vertPath, const std::string& fragPath, VkPrimitiveTopology topology, bool enableBlend) {
-  device_ = device;
+  device_                = device;
   VkShaderModule vertMod = loadShader(vertPath);
   VkShaderModule fragMod = loadShader(fragPath);
   buildPipeline(renderPass, bindlessLayout, vertMod, fragMod, topology, enableBlend);
 }
 
 void GraphicsPipeline::initVertFromSpirv(VkDevice device, VkRenderPass renderPass, VkDescriptorSetLayout bindlessLayout, const std::vector<uint32_t>& vertSpirv, const std::string& fragPath, VkPrimitiveTopology topology, bool enableBlend) {
-  device_ = device;
-  VkShaderModule vertMod = loadShaderFromSpirv(vertSpirv);
+  device_                = device;
+  VkShaderModule vertMod = loadShader(vertSpirv);
   VkShaderModule fragMod = loadShader(fragPath);
   buildPipeline(renderPass, bindlessLayout, vertMod, fragMod, topology, enableBlend);
 }

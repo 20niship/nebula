@@ -31,4 +31,10 @@ void main() {
 
     writeVec4(pc.posIdx,   idx, predP); // P.w = predP.w = invMass(predict_sdfで伝播済み)
     writeVec4Vel(pc.velIdx, idx, vec4(vxyz, life)); // v.w=lifeを復元
+
+    // issue #87 perf実験 続き: pbf_viscosity用に最終pos/velのソート済みコピーを同じpassで書く。
+    // typeFlagはposSorted.wにビット格納 (invSortedIdxの上位8bitのnbrCountはマスクして無視)。
+    uint kSelf = readUint(pc.invSortedIdxIdx, idx) & 0xFFFFFFu;
+    writeVec4(pc.posSortedIdx, kSelf, vec4(predP.xyz, uintBitsToFloat(flag)));
+    writeVec4Vel(pc.velSortedIdx, kSelf, vec4(vxyz, life));
 }

@@ -27,6 +27,7 @@ void main() {
     float h2 = h * h;
     float c  = pc.bendCompliance; // XSPH 粘性係数
     float poly6_coeff = 315.0 / (64.0 * 3.14159265 * h2 * h2 * h2 * h2 * h);
+    uint kSelf = readUint(pc.invSortedIdxIdx, idx) & 0xFFFFFFu; // issue #87 perf実験 続き: 自分自身のソート後位置
 
     vec3 vel_corr = vec3(0.0);
 
@@ -49,19 +50,21 @@ void main() {
         uint start = readUint(pc.cellOffsetIdx, cid) - cnt;
 
         for (uint k = start; k < start + cnt; ++k) {
-            uint j  = readUint(pc.sortedIdxIdx, k);
-            if (j == idx) continue;
-            uint fj = readUint(pc.typeFlagIdx, j);
+            // issue #87 perf実験 続き: sortedIdx経由のgatherをやめ、sdf_collision_velocityが
+            // 書いたソート済みコピーをkで直接コアレス読みする。typeFlagはposSorted.wに同居。
+            if (k == kSelf) continue;
+            vec4 pjv = readVec4(pc.posSortedIdx, k);
+            uint fj  = floatBitsToUint(pjv.w);
             if (fj != 1u && fj != 3u) continue; // 流体 + 運動学的境界 (TC8)
 
-            vec3 pj = readVec4(pc.posIdx, j).xyz;
+            vec3 pj = pjv.xyz;
             vec3 r  = pi - pj;
             float r2 = dot(r, r);
             if (r2 >= h2) continue;
 
             float hr2 = h2 - r2;
             float w   = poly6_coeff * hr2 * hr2 * hr2;
-            vec3 vj   = readVec4Vel(pc.velIdx, j).xyz;
+            vec3 vj   = readVec4Vel(pc.velSortedIdx, k).xyz;
             vel_corr += (vj - vi) * w;
         }
     }

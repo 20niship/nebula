@@ -6,8 +6,8 @@
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
-// MoltenVK上限31に対し、FluidEngineのfoam有効時最大22スロット(issue #87)を確保。
-static constexpr uint32_t MAX_BINDLESS_BUFFERS = 22;
+// MoltenVK上限31に対し、FluidEngineのfoam有効時最大24スロット(issue #87)を確保。
+static constexpr uint32_t MAX_BINDLESS_BUFFERS = 24;
 
 // SoAバッファマネージャ。addAttribute()でVMAバッファを確保し、
 // Bindlessディスクリプタ配列へ自動登録してインデックスを返す。

@@ -22,16 +22,12 @@ find_package(Vulkan REQUIRED)
 find_program(GLSLC glslc HINTS "${VULKAN_SDK}/bin" REQUIRED)
 
 # ── GPUプロファイリング (Vulkan timestamp query、診断用) ──────────────────
-# デフォルトOFF。task perf (build-perf/) からのみ ON でconfigureされる。
 option(NEBULA_GPU_PROFILING "Enable Vulkan timestamp-query based GPU pass profiling (PyroEngine)" OFF)
 
 # ── Tracy プロファイラ (https://github.com/wolfpld/tracy) ───────────────────
-# デフォルトOFF。Taskfile経由のビルド (task configure/build 等) では常にONになる
-# (Taskfile.yml の configure タスク参照)。手動 cmake 直呼びではOFFのまま。
-option(NEBULA_TRACY "Enable Tracy profiler client (FetchContent, only fetched when ON)" OFF)
+option(NEBULA_TRACY "Enable Tracy profiler" OFF)
 
-# ── shaderc (実行時 GLSL→SPIR-V 動的コンパイル; issue #30 Force システム用) ──
-# Vulkan SDK に同梱の shaderc_combined を使用。新規パッケージ導入は不要。
+# ── shaderc (実行時 GLSL→SPIR-V 動的コンパイル ──
 find_path(SHADERC_INCLUDE_DIR shaderc/shaderc.hpp
     HINTS "${VULKAN_SDK}/include"
     REQUIRED
@@ -96,19 +92,6 @@ set(SHADER_OUT_DIR ${CMAKE_BINARY_DIR}/shaders)
 file(MAKE_DIRECTORY ${SHADER_OUT_DIR})
 
 set(SHADER_SOURCES
-    # predict.comp / predict_sdf.comp / mpm_grid_update.comp は FORCE_AUTOGEN
-    # マーカーを含み、Engine 側で ForceShaderCompiler により実行時に shaderc で
-    # コンパイルされる (issue #30)。静的 glslc ビルド対象には含めない。
-    #
-    # hash_count.comp / hash_sort.comp / pbf_density.comp / pbf_delta_p.comp /
-    # pbf_viscosity.comp / pbf_vorticity_omega.comp / pbf_vorticity_force.comp /
-    # pbf_foam_generate.comp / pbf_foam_advect.comp / solve_density.comp /
-    # coupling_cloth.comp は common.glsl の cellId()/mortonAxisTriples() 経由で
-    # アダプティブ(直方体)Morton定数(ADAPTIVE_MASK等)を必要とし、ドメイン形状
-    # (gridRes)ごとに値が変わるため、各Engine(FluidEngine/ClothSceneEngine/
-    # SimulationEngine)のinit()内でDefineShaderCompilerに
-    # より実行時コンパイルされる。静的 glslc ビルド対象には含めない
-    # (MPM専用の mpm_hash_count.comp/mpm_hash_sort.comp は対象外、従来通り静的コンパイル)。
     ${SHADER_SRC_DIR}/sdf_collision.comp
     ${SHADER_SRC_DIR}/sdf_collision_velocity.comp
     ${SHADER_SRC_DIR}/hash_scan_local.comp
@@ -147,8 +130,6 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/mpm_g2p.comp
     ${SHADER_SRC_DIR}/mpm_nanovdb_bc.comp
     # ── Pyro (グリッドベース煙・火炎) シェーダー ─────────────────────────────
-    # pyro_forces.comp は FORCE_AUTOGEN マーカーを含み、PyroEngine 側で
-    # ForceShaderCompiler により実行時に shaderc でコンパイルされる (issue #30)
     ${SHADER_SRC_DIR}/pyro_emit.comp
     ${SHADER_SRC_DIR}/pyro_combustion.comp
     ${SHADER_SRC_DIR}/pyro_obstacle_bc.comp
@@ -188,7 +169,7 @@ if(NEBULA_TRACY)
     FetchContent_Declare(
         tracy
         GIT_REPOSITORY https://github.com/wolfpld/tracy.git
-        GIT_TAG        v0.11.1
+        GIT_TAG        v0.13.1
         GIT_SHALLOW    TRUE
     )
     FetchContent_MakeAvailable(tracy)
@@ -284,9 +265,6 @@ add_sim_example(mpm_geolayer examples/mpm_geolayer.cpp)
 add_sim_example(mpm_snow_impact examples/mpm_snow_impact.cpp)
 
 # ── Pyro (グリッドベース煙・火炎) ヘッドレス実行例 ───────────────────────────
-# ウィンドウ/ImGui を使わないため add_sim_example ではなく tests/vulkan_tests と
-# 同じ最小構成 (HeadlessCtx) を用いる。ボクセルを .pvox にダンプするのみで、
-# 可視化は tools/pyro_raymarch.py (Python) 側で行う。
 if(APPLE)
     set(PYRO_PLATFORM_WRAPPERS tests/helpers/VkWrapper.mm)
 else()

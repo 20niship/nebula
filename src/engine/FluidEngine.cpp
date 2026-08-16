@@ -554,20 +554,14 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
 
     {
       ZoneScopedN("HashScanLocal");
-      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanLocal_.pipeline);
-      vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanLocal_.pipelineLayout, 0, 1, &ds, 0, nullptr);
-      vkCmdPushConstants(cmd, kHashScanLocal_.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(SimPC), &pc);
-      vkCmdDispatch(cmd, (cfg_.totalCells() + 255u) / 256u, 1, 1);
+      kHashScanLocal_.dispatch(cmd, ds, pc, cfg_.totalCells());
     }
     computeBarrier(cmd);
 
     {
-      ZoneScopedN("HashScanGlobal");
       // Pass 2b-1: グループサムの prefix scan（1 workgroup × 1024 threads）
-      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanGlobal_.pipeline);
-      vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanGlobal_.pipelineLayout, 0, 1, &ds, 0, nullptr);
-      vkCmdPushConstants(cmd, kHashScanGlobal_.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(SimPC), &pc);
-      vkCmdDispatch(cmd, 1, 1, 1);
+      ZoneScopedN("HashScanGlobal");
+      kHashScanGlobal_.dispatchRaw(cmd, ds, &pc, sizeof(SimPC), 1);
     }
     computeBarrier(cmd); // exclusive prefix を書き戻してから kHashAddBase_ が読む
 

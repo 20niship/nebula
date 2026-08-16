@@ -313,10 +313,7 @@ void ClothSceneEngine::step(VkCommandBuffer cmd, float dt) {
         pc.batchEdgeEnd      = end;
         pc.stretchCompliance = (color >= 8) ? bendCompliance : stretchCompliance;
 
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kSolveStretch_.pipeline);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kSolveStretch_.pipelineLayout, 0, 1, &ds, 0, nullptr);
-        vkCmdPushConstants(cmd, kSolveStretch_.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(SimPC), &pc);
-        vkCmdDispatch(cmd, (cnt + 255) / 256, 1, 1);
+        kSolveStretch_.dispatch(cmd, ds, pc, cnt);
       }
       computeBarrier(cmd);
     }
@@ -331,19 +328,9 @@ void ClothSceneEngine::step(VkCommandBuffer cmd, float dt) {
       computeBarrier(cmd);
       kHashCount_.dispatch(cmd, ds, pc, totalCount_);
       computeBarrier(cmd);
-      {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanLocal_.pipeline);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanLocal_.pipelineLayout, 0, 1, &ds, 0, nullptr);
-        vkCmdPushConstants(cmd, kHashScanLocal_.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(SimPC), &pc);
-        vkCmdDispatch(cmd, (totalCells() + 255u) / 256u, 1, 1);
-      }
+      kHashScanLocal_.dispatch(cmd, ds, pc, totalCells());
       computeBarrier(cmd);
-      {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanGlobal_.pipeline);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanGlobal_.pipelineLayout, 0, 1, &ds, 0, nullptr);
-        vkCmdPushConstants(cmd, kHashScanGlobal_.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(SimPC), &pc);
-        vkCmdDispatch(cmd, 1, 1, 1);
-      }
+      kHashScanGlobal_.dispatchRaw(cmd, ds, &pc, sizeof(SimPC), 1);
       computeBarrier(cmd); // exclusive prefix を書き戻してから kHashAddBase_ が読む
       kHashAddBase_.dispatch(cmd, ds, pc, totalCells());
       computeBarrier(cmd);

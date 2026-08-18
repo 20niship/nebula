@@ -314,8 +314,8 @@ void ClothSceneEngine::step(VkCommandBuffer cmd, float dt) {
         pc.stretchCompliance = (color >= 8) ? bendCompliance : stretchCompliance;
 
         kSolveStretch_.dispatch(cmd, ds, pc, cnt);
+        computeBarrier(cmd);
       }
-      computeBarrier(cmd);
     }
 
     // ⑥ SDF 再適用

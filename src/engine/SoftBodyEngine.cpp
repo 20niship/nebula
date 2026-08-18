@@ -136,6 +136,7 @@ void SoftBodyEngine::step(VkCommandBuffer cmd, float dt) {
         pc.batchEdgeEnd   = end;
 
         kSolveEdge_.dispatch(cmd, ds, pc, cnt);
+        computeBarrier(cmd);
       }
 
       // 四面体体積拘束 (グラフ彩色バッチ)
@@ -149,8 +150,8 @@ void SoftBodyEngine::step(VkCommandBuffer cmd, float dt) {
         pc.lambdaPbfIdx = end;   // batchTetEnd
 
         kSolveVolume_.dispatch(cmd, ds, pc, cnt);
+        computeBarrier(cmd);
       }
-      computeBarrier(cmd);
     }
 
     // ④ 粒子間衝突 (ボディ間反発)

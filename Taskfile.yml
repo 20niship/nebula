@@ -198,7 +198,7 @@ tasks:
     deps: [configure]
     cmds:
       - cmake --build {{.BUILD_DIR}} -j{{.JOBS}}
-      - /opt/homebrew/bin/python3 capture_sim.py
+      - python3 capture_sim.py
     env:
       MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS: "0"
 
@@ -212,7 +212,7 @@ tasks:
     desc: "純粋なシミュレーション実行時間計測"
     deps: [build:perf]
     cmds:
-      - /opt/homebrew/bin/python3 perf_sim.py --build-dir {{.PERF_BUILD_DIR}} {{.CLI_ARGS}}
+      - python3 perf_sim.py --build-dir {{.PERF_BUILD_DIR}} {{.CLI_ARGS}}
 
   # ── デフォルト ──────────────────────────────────────────────────────────────
   default:

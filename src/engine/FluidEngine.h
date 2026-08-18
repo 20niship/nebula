@@ -194,8 +194,8 @@ private:
   uint32_t totalBufferCapacity() const { return cfg_.max_boundary + fluidCapacity_ + kDispatchPad; }
   void growFluidCapacity(uint32_t minRequired);
 
-  // 近傍リストキャッシュ (issue #87 perf実験): 16では--largeの高密度シーンでPBFが発散し性能退行するため48
-  static constexpr uint32_t kMaxNeighbors = 48;
+  // 近傍リストキャッシュ (issue #87 perf実験): 48だと高密度シーン(TC13, h=2*spacing)で近傍が切り捨てられ発散するため96
+  static constexpr uint32_t kMaxNeighbors = 96;
   // lifeIdx_ は廃止: 寿命はv.w(velIdx)に格納 (task2: バッファ統合)
   uint32_t emitterIdxIdx_ = 0; // 放出元エミッタindex (uint × N)
   bool lifetimeEnabled_   = false; // lifetime>0のEmitterが登録されたら有効(lifetimeパスを実行)

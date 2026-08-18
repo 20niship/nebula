@@ -284,9 +284,7 @@ void SimulationEngine::step(VkCommandBuffer cmd, float dt) {
     kZeroLambdas_.dispatch(cmd, ds, pc, pc.edgeCount);
     computeBarrier(cmd);
 
-    // ④ XPBD 距離拘束 (全色 × solverIterations 反復)
-    // 最適化: グラフ彩色により同一反復内の異なる色は頂点を共有しない
-    // → 色ループ内バリアを廃止し反復ごとに 1 バリアのみ (120→10 に削減)
+    // ④ XPBD 距離拘束 (全色 × solverIterations 反復)。同色内は頂点非共有だが色をまたぐと共有するため色ごとにバリアが必要(無いと暴走の原因になる)
     for(int iter = 0; iter < solverIterations; ++iter) {
       for(int color = 0; color < nColors_; ++color) {
         uint32_t start = colorBatch_cpu_[color];
@@ -300,10 +298,8 @@ void SimulationEngine::step(VkCommandBuffer cmd, float dt) {
         pc.stretchCompliance = (color >= 8) ? bendCompliance : stretchCompliance;
 
         kSolveStretch_.dispatch(cmd, ds, pc, cnt);
-        // バリア不要: 同一反復内で異なる色の辺は頂点非共有
+        computeBarrier(cmd);
       }
-      // 反復間のバリア: 次の反復が今回の位置書き込みを読む
-      computeBarrier(cmd);
     }
 
     // ⑤ SDF 再適用 (拘束後の境界修正)

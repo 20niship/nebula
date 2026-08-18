@@ -118,6 +118,11 @@ public:
   // sdf[mortonEncode(ix,iy,iz)] = 符号付き距離 [m]  負値=障害物内部
   void setColliderSDF(const std::vector<float>& mortonSDF);
 
+  // OBJを読みローカルSDFを焼いてbindlessバッファへアップロード、そのindexを返す。gridOutはColliderSet::addMeshSDF用のローカル空間パラメータ出力。scaleはOBJ読み込み時の等方拡大率。
+  uint32_t loadColliderMesh(const std::string& objPath, LocalMeshSDF& gridOut, uint32_t res = 48, float scale = 1.0f);
+  // 既に焼き済みのLocalMeshSDFをbindlessバッファへアップロードするだけ(loadColliderMeshの後半部分を単独利用したい場合用)。
+  uint32_t uploadColliderMeshSDF(const LocalMeshSDF& grid);
+
   VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
   VkDescriptorSet descriptorSet             = VK_NULL_HANDLE;
   uint32_t posIdx                           = 0;
@@ -162,6 +167,9 @@ private:
 
   // NanoVDB SDF コライダー
   uint32_t nanoVDBIdx_ = 0; // 0 = 未設定 (シェーダー内でスキップ)
+
+  // メッシュSDFコライダー: アップロードごとに一意なバッファ名を振るためのカウンタ
+  uint32_t nextMeshSDFId_ = 0;
 
   // Emitter (Phase 4)
   std::vector<std::shared_ptr<Emitter>> emitters_;

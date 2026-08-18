@@ -1,5 +1,6 @@
 #include "MPMEngine.h"
 #include "../core/Profiling.h"
+#include "BoundaryParticles.h"
 
 #include <cmath>
 #include <cstring>
@@ -201,6 +202,32 @@ void MPMEngine::setColliderSphere(float radius, float cx, float cy, float cz) {
 }
 
 void MPMEngine::clearCollider() { nanoVDBIdx_ = 0; }
+
+uint32_t MPMEngine::loadColliderMesh(const std::string& objPath, LocalMeshSDF& gridOut, uint32_t res, float scale) {
+  BoundaryParticles bp;
+  BoundaryMesh mesh = bp.loadOBJ(objPath, 1e6f, scale, glm::vec3(0.0f), false);
+
+  std::vector<MeshTriangle> tris;
+  tris.reserve(mesh.triVerts.size() / 3);
+  for(size_t i = 0; i + 2 < mesh.triVerts.size(); i += 3) {
+    MeshTriangle t;
+    t.v[0] = mesh.triVerts[i];
+    t.v[1] = mesh.triVerts[i + 1];
+    t.v[2] = mesh.triVerts[i + 2];
+    t.n    = glm::normalize(glm::cross(t.v[1] - t.v[0], t.v[2] - t.v[0]));
+    tris.push_back(t);
+  }
+
+  gridOut = bakeLocalMeshSDF(tris, res);
+  return uploadColliderMeshSDF(gridOut);
+}
+
+uint32_t MPMEngine::uploadColliderMeshSDF(const LocalMeshSDF& grid) {
+  std::string name = "meshSDF_" + std::to_string(nextMeshSDFId_++);
+  uint32_t idx      = attrBuf_.addAttribute(name, sizeof(float), grid.data.size());
+  attrBuf_.upload(name, grid.data.data(), grid.data.size() * sizeof(float), cmdPool_, queue_);
+  return idx;
+}
 
 void MPMEngine::setColliderSDF(const std::vector<float>& mortonSDF) {
   if(nanoVDBIdx_ == 0) {

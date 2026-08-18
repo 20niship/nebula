@@ -5,6 +5,7 @@ add_library(nebula STATIC
     core/ComputePipeline.cpp
     core/ForceShaderCompiler.cpp
     core/DefineShaderCompiler.cpp
+    core/RigidMeshCollider.cpp
     graphics/GraphicsPipeline.cpp
     graphics/ClothRenderer.cpp
     engine/EngineBase.cpp

@@ -27,6 +27,7 @@ struct MpmSnowImpactArgs : public argparse::Args {
   float& box_speed            = kwarg("box-speed", "obstacle box speed [m/s]").set_default(6.0f);
   float& box_scale            = kwarg("box-scale", "obstacle box half-extent scale (1=original)").set_default(0.5f);
   int& launch_frame           = kwarg("launch-frame", "box starts moving automatically at this frame (-1=manual button only)").set_default(60);
+  bool& large                 = flag("large", "高解像度プリセット: pn×2(粒子8倍)・cell-size÷2・box-speed×2・substeps×2");
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
 };
@@ -36,21 +37,26 @@ struct MpmSnowImpactArgs : public argparse::Args {
 class MpmSnowImpactApp {
 public:
   void run(const MpmSnowImpactArgs& args) {
+    // --large: pn×2(粒子8倍)・cell-size÷2(粒子/セル比を維持しgridResを2の累乗に保つ)・box-speed×2・substeps×2(速い衝突を細かいtimestepでトンネリングなく解く)
+    const int pn         = args.large ? args.pn * 2 : args.pn;
+    const float cellSize = args.large ? args.cell_size * 0.5f : args.cell_size;
+    const int substeps   = args.large ? args.substeps * 2 : args.substeps;
+
     dt_                 = args.dt;
     base_.screenshotDir = args.screenshot_dir;
-    boxSpeed_           = args.box_speed;
+    boxSpeed_           = args.large ? args.box_speed * 2.0f : args.box_speed;
     boxScale_           = args.box_scale;
     launchFrame_        = args.launch_frame;
 
     MPMConfig cfg;
-    cfg.nx         = uint32_t(args.pn);
-    cfg.ny         = uint32_t(args.pn);
-    cfg.nz         = uint32_t(args.pn);
+    cfg.nx         = uint32_t(pn);
+    cfg.ny         = uint32_t(pn);
+    cfg.nz         = uint32_t(pn);
     cfg.domainSize = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
-    cfg.cellSize   = args.cell_size;
+    cfg.cellSize   = cellSize;
 
-    base_.initWindow("MPM Snow Impact – 移動箱コライダー衝突");
-    initVulkan(cfg, args.substeps);
+    base_.initWindow(args.large ? "MPM Snow Impact – 移動箱コライダー衝突 (Large)" : "MPM Snow Impact – 移動箱コライダー衝突");
+    initVulkan(cfg, substeps);
     mainLoop(args.n_shots);
     cleanup();
   }

@@ -108,10 +108,12 @@ private:
       src->step_count         = 0; // 無限
       engine_.addEmitter(src);
     } else {
-      // dam-break (デフォルト): 左半分上部 (X: 左半分, Z: 上半分) を一気に充填
+      // dam-break (デフォルト): 左半分上部 (X: 左半分, Z: 上半分)。Y(奥行き)は薄い直方体にしN≈10万に抑える(デフォルトdomain=20mでの実測調整値)
+      const float damDepthY = 1.3f;
+
       auto src                = std::make_shared<AABBEmitter>();
       src->center             = glm::vec3(w.x * 0.25f, w.y * 0.5f, w.z * 0.75f);
-      src->size               = glm::vec3(w.x * 0.5f - 2.0f * m, w.y - 2.0f * m, w.z * 0.5f - 2.0f * m);
+      src->size               = glm::vec3(w.x * 0.5f - 2.0f * m, damDepthY, w.z * 0.5f - 2.0f * m);
       src->vel                = glm::vec3(0.0f);
       src->particles_per_step = (uint32_t)(src->size.x * src->size.y * src->size.z / (d * d * d)); // 箱を一気に充填
       src->step_count         = -1;               // 1回のみ

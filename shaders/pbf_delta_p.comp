@@ -2,10 +2,7 @@
 #extension GL_EXT_nonuniform_qualifier : enable
 #include "common.glsl"
 
-// Phase 4 PBF: λ_i から位置補正 ΔP_i を計算して predP に加算
-// 人工圧力 s_corr で Tensile Instability を抑制
-// pc.stretchCompliance = ρ_0
-// pc.cellSize          = h
+// Phase 4 PBF: λ_i から位置補正 ΔP_i を計算しpredPに加算(人工圧力s_corrでTensile Instability抑制; pc.stretchCompliance=ρ_0, pc.cellSize=h)
 
 layout(local_size_x = 256) in;
 
@@ -60,13 +57,13 @@ void main() {
     // issue #87 perf実験: 27セル探索は pbf_density が同イテレーション内で済ませており、
     // nbrList には(元indexではなく)sorted位置kを格納しているのでソート済みコピーを直接読む。
     // nbrListに入る候補は既にpbf_density側で流体・境界・粉体のみに絞り込み済みなので
-    // ここでの型フィルタは不要 (typeFlagはpredPSorted.wにビット格納)。
+    // ここでの型フィルタは不要 (typeFlagはpredPSorted.wに値として格納)。
     uint nbrBase = idx * MAX_NBR;
 
     for (uint kk = 0u; kk < nbrN; ++kk) {
         uint k   = readUint(pc.nbrListIdx, nbrBase + kk);
         vec4 pjv = readVec4(pc.predPSortedIdx, k);
-        uint fj  = floatBitsToUint(pjv.w);
+        uint fj  = uint(pjv.w + 0.5);
 
         vec3 pj = pjv.xyz;
 #else
@@ -151,7 +148,7 @@ void main() {
     vec4 newP = vec4(pi + deltaP, pi4.w);
     writeVec4(pc.predPIdx, idx, newP);
 #ifdef NBR_SORTED_BUFFERS
-    // issue #87 perf実験: 次iterationのdensityが読む。predPSorted.wはtypeFlagのビット格納用なのでpi4.wでなくfiを詰める
-    writeVec4(pc.predPSortedIdx, kSelf, vec4(pi + deltaP, uintBitsToFloat(fi)));
+    // 次iterationのdensityが読む。predPSorted.wはtypeFlag格納用(HALF_VEC4でも壊れない値として)なのでpi4.wでなくfiを詰める
+    writeVec4(pc.predPSortedIdx, kSelf, vec4(pi + deltaP, float(fi)));
 #endif
 }

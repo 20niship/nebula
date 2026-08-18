@@ -62,9 +62,9 @@ void main() {
 #ifdef NBR_SORTED_BUFFERS
             // issue #87 perf実験: sortedIdx経由のgatherをやめ、hash_sortが書いた
             // ソート済みコピーをkで直接コアレス読みする(sortedIdxIdx自体は不要になる)。
-            // typeFlagはpredPSorted.wにビット格納済み(専用バッファを節約)。
+            // typeFlagはpredPSorted.wに値として格納済み(HALF_VEC4でも壊れないようビットパターンでなく整数値で持つ)。
             vec4 pjv = readVec4(pc.predPSortedIdx, k);
-            uint fj  = floatBitsToUint(pjv.w);
+            uint fj  = uint(pjv.w + 0.5);
 #else
             uint j  = readUint(pc.sortedIdxIdx, k);
             uint fj = readUint(pc.typeFlagIdx, j);

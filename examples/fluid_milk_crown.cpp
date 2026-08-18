@@ -26,11 +26,7 @@ static constexpr float kDropRadius   = 1.0f;   // 水滴の半径 [m]
 static constexpr float kDropHeight   = 14.0f;  // 水滴の初期高さ [m] (床からの落下距離で水たまりが沈降する時間を確保)
 static constexpr float kSigmaDefault = 0.001f; // h=cellSize≈1.25m でチューニングした値
 
-// ── シナリオ定数: --large モード (2m四方ドメイン・1cm前後解像度・連続降雨) ──────────
-// cohesionカーネル係数は 32/(π h^9) で、ピーク値は概ね h^-3 でスケールする
-// (32/(π h^9) * O(h^6) = O(h^-3))。h=0.02m は通常モード(h≈1.25m)の1/62.5であり、
-// (62.5)^3 ≈ 2.44e5 倍カーネルが強くなる計算になるため、sigmaはその逆数程度から
-// 実測で調整する必要がある(下記kSigmaDefaultLarge参照; 理論値はあくまで出発点)。
+// ── シナリオ定数: --large モード (cohesion係数はh^-3でスケールしh=0.02mは通常h≈1.25m比で約2.44e5倍強くなるためsigmaは逆数程度が出発点、実測調整前提) ──
 static constexpr float kLargeWorldSize     = 2.0f;
 static constexpr float kLargeSpacing       = 0.01f; // 目標粒子間隔 [m] (≈1cm)
 static constexpr float kLargePoolThickness = 0.10f; // 水たまりの厚み [m] (数cm〜数十cmの範囲で10cmを既定に)
@@ -39,12 +35,7 @@ static constexpr float kLargeRainHeight    = 1.7f;  // 降雨エミッタの高�
 static constexpr float kLargeRainRate      = 60.0f; // 降雨生成レート [粒子/s]
 static constexpr float kSigmaDefaultLarge  = 4e-9f; // h^-3スケーリングから逆算した出発点(実測調整前提)
 
-// --large の水たまり(ドメイン下部全体、壁際1粒子分だけ余白)に必要な粒子数。
-// FluidConfig::fluidCount()(ドメイン体積を丸ごと粒子間隔で埋めた理論値、2m四方1cm解像度では
-// 800万粒子相当)をそのまま初期バッファ容量に使うと、実際の使用量(数十万粒子)に対して
-// 桁違いに巨大なバッファを確保してしまい、MoltenVK上でdispatch毎のbindless resident化
-// コストが跳ね上がる(実測で1フレームあたり数百msの固定コストとして現れた)。
-// 実際に必要な粒子数から初期容量を決め、それを超えた分は動的拡張(issue #13)に任せる。
+// --largeの水たまりに必要な粒子数(FluidConfig::fluidCount()の理論値=800万粒子をそのまま初期容量にするとMoltenVKのbindless resident化コストが跳ね上がるため実量から算出、超過分はgrowFluidCapacityに任せる)
 static uint32_t largePoolParticleCount() {
   const float margin       = kLargeSpacing;
   const float poolHalfSize = kLargeWorldSize * 0.5f - margin;
@@ -78,13 +69,8 @@ public:
     if(large_) {
       cfg.particleRadius = kLargeSpacing * 0.5f;
       cfg.domainSize     = glm::vec3(kLargeWorldSize, kLargeWorldSize, kLargeWorldSize);
-      // 水たまり分 + 連続降雨の当面の蓄積分として2倍の余裕を初期容量に持たせる。
-      // それでも足りなくなったら growFluidCapacity() (issue #13) が自動で追い足す。
-      cfg.initialCapacityHint = largePoolParticleCount() * 2u;
-      // perf検証(issue: --largeのhalf float化): worldSize=2m・粒子間隔1cmの--largeは
-      // common.glslに記載の通常モード(worldSize=20m)発散知見のスケールと異なるため、
-      // ここでのみHALF_VEC4を有効化する。通常モードはFP32のまま変更しない。
-      cfg.halfVec4 = !args.no_half; // 計測用: --no-halfで強制無効化
+      cfg.initialCapacityHint = largePoolParticleCount() * 2u; // 水たまり+連続降雨の蓄積分として2倍の余裕(超過分はgrowFluidCapacityが追い足す)
+      cfg.halfVec4            = !args.no_half; // --largeはcommon.glslの通常モード発散知見と異なるスケールのためここでのみ有効化(--no-halfで計測用に強制無効化)
     } else {
       cfg.particleRadius = (kWorldSize / 32.0f) / 2.0f; // spacing=20/32=0.625m
       cfg.domainSize     = glm::vec3(kWorldSize, kWorldSize, kWorldSize);
@@ -122,26 +108,17 @@ private:
     engine_.viscosityC    = 0.01f;
     engine_.pbfIterations = 2;
     engine_.numSubsteps   = 2;
-    // rho0: h/dの絶対スケールが--largeで大きく変わるため、ハードコード値ではなく
-    // cfg.computeRestDensity()(h/d比から数値計算する静止密度)を使う。
-    // 通常モードは30.0f(実測チューニング済み)をそのまま踏襲する。
-    engine_.rho0           = large_ ? cfg.computeRestDensity() : 30.0f;
+    engine_.rho0            = large_ ? cfg.computeRestDensity() : 30.0f; // h/dの絶対スケールが--largeで大きく変わるためハードコード値でなくcomputeRestDensity()を使う(通常モードは実測チューニング済みの30.0fを踏襲)
     engine_.linearDamping  = 0.02f;
     engine_.surfaceTension = surfaceTension;
     if(large_) {
-      // cfmEpsilon/scorrKの既定値(3000 / 0.001)はh≈1.25m規模でのチューニング値。
-      // --large(h=0.02m, rho0≈100万)ではCFM緩和項がgrad項優位になり密度拘束が
-      // 過剰に硬くなって暴走する(TC13で実測確認: 既定値のままだと水たまりが
-      // ドメイン天井まで吹き飛ぶ)。cfmEpsilonを大幅に緩め、人工圧力(Tensile
-      // Instability対策)を無効化することで安定する。
+      // cfmEpsilon/scorrKの既定値はh≈1.25m規模のチューニング値で、--large(h=0.02m)ではCFM緩和項がgrad項優位になり密度拘束が過剰に硬くなり暴走するため大幅に緩める(TC13で実測確認)
       engine_.cfmEpsilon = 1e6f;
       engine_.scorrK     = 0.0f;
     }
 
     if(large_) {
-      // fluid_particle.vertはposIdx/velIdxをreadVec4するため、cfg.halfVec4==trueのバッファ
-      // (packHalf2x16詰め、8 bytes/vec4)を静的.spv(FP32、16 bytes/vec4想定)のまま読むと
-      // ストライド不一致でバッファ範囲外読み出しになる。HALF_VEC4を注入した実行時コンパイルに切り替える。
+      // cfg.halfVec4==trueだとバッファがpackHalf2x16詰め(8 bytes/vec4)になり静的.spv(FP32想定)のまま読むとストライド不一致で範囲外読み出しになるためHALF_VEC4注入の実行時コンパイルに切り替える
       std::vector<uint32_t> vertSpirv = DefineShaderCompiler::compile("fluid_particle.vert", {{"HALF_VEC4", "1"}}, /*isVertexShader=*/true);
       graphicsPipe_.initVertFromSpirv(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, vertSpirv, SHADER_DIR_STR + "/fluid.frag.spv");
     } else {
@@ -160,10 +137,7 @@ private:
 
     const float particleR = cfg.cellSize * 0.5f;               // SDF衝突距離
     const float floorZ    = particleR + cfg.particleSpacing(); // 床ちょうど上
-    // 水たまりに厚み(数粒子分)を持たせる。EllipseEmitterは単層(Z固定)のため、
-    // 全粒子が「表面」扱いになり表面張力で薄膜ごと丸まってしまう
-    // (Plateau-Rayleigh不安定の誇張)。AABBEmitterで浅いブロックにし、
-    // 内部(非表面)粒子を持たせることで通常の水たまりらしい挙動にする。
+    // EllipseEmitter(単層)だと全粒子が「表面」扱いで表面張力により薄膜ごと丸まる(Plateau-Rayleigh不安定の誇張)ためAABBEmitterで厚みを持たせ内部粒子を作る
     const float poolThickness = 3.0f * cfg.particleSpacing();
 
     // 水たまりエミッタ: 床付近に浅い直方体の水たまりを一括投入
@@ -175,10 +149,7 @@ private:
     pool->step_count         = -1; // 初回1回のみ
     engine_.addEmitter(pool);
 
-    // 水滴エミッタ: 水たまり中心の真上から自由落下する球状の塊を一括投入。
-    // step_count=-1 は初回ステップで即座に発生するが、重力で床まで落下するのに
-    // 数十フレームかかるため、水たまりが自然に沈降・安定する時間が確保される
-    // (タイマー等の追加ロジック不要)。
+    // 水滴エミッタ: step_count=-1で初回即発生するが落下に数十フレームかかるため水たまりが自然に沈降・安定する時間が確保される(タイマー等不要)
     auto drop                = std::make_shared<SphereEmitter>();
     drop->center             = glm::vec3(kWorldSize * 0.5f, kWorldSize * 0.5f, kDropHeight);
     drop->radius             = kDropRadius;
@@ -194,8 +165,6 @@ private:
     const float floorZ    = particleR + cfg.particleSpacing(); // 床ちょうど上
     const float d         = cfg.particleSpacing();
 
-    // 水たまり: ドメイン下部"全体"(壁際の1粒子分だけ余白)を kLargePoolThickness の
-    // 厚みで覆う直方体を一括投入。
     const float margin        = d; // 壁際に1粒子分の余白
     const float poolHalfSize  = kLargeWorldSize * 0.5f - margin;
     const float poolThickness = kLargePoolThickness;
@@ -208,8 +177,6 @@ private:
     pool->step_count         = -1; // 初回1回のみ
     engine_.addEmitter(pool);
 
-    // 雨: 降雨エリア上空の薄い層から、毎フレーム少量ずつ無限に放出し続ける
-    // (step_count=0)。ミルククラウンが複数箇所で連続的に発生する見た目になる。
     auto rain                = std::make_shared<AABBEmitter>();
     rain->center             = glm::vec3(kLargeWorldSize * 0.5f, kLargeWorldSize * 0.5f, kLargeRainHeight);
     rain->size               = glm::vec3(2.0f * kLargeRainHalfSize, 2.0f * kLargeRainHalfSize, d);

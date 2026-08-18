@@ -21,7 +21,7 @@ private:
   VkDevice device_ = VK_NULL_HANDLE;
 
   VkShaderModule loadShader(const std::string& path);
-  VkShaderModule loadShader(const std::vector<uint32_t>& code);
+  VkShaderModule loadShader(const std::vector<uint8_t>& code);
 
   void buildPipeline(VkRenderPass renderPass, VkDescriptorSetLayout bindlessLayout, VkShaderModule vertMod, VkShaderModule fragMod, VkPrimitiveTopology topology, bool enableBlend);
 };

@@ -22,9 +22,13 @@ void main() {
     uint slot = atomicAdd(buffers[pc.cellOffsetIdx].data[cid], 1u);
     buffers[pc.sortedIdxIdx].data[slot] = i;
 
+#ifdef NBR_SORTED_BUFFERS
     // issue #87 perf実験: 逆写像とソート済みコピーを同じpassで書く (density/delta_pの近傍gather
     // がsortedIdx経由の間接参照なしにkで直接コアレス読みできるようにする)。typeFlagは
     // predPSorted.wにビット格納し専用バッファを節約 (predP.wはこの用途では未使用のため)。
+    // NBR_SORTED_BUFFERS未定義の呼び出し元(FluidEngine以外)はinvSortedIdxIdx/predPSortedIdxを
+    // pcに設定しない(=0)ため、このガード無しではbindlessインデックス0の別バッファを破壊する。
     writeUint(pc.invSortedIdxIdx, i, slot);
     writeVec4(pc.predPSortedIdx, slot, vec4(predP.xyz, uintBitsToFloat(fi)));
+#endif
 }

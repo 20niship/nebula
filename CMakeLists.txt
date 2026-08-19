@@ -263,6 +263,9 @@ add_sim_example(mpm_geolayer examples/mpm_geolayer.cpp)
 # ── mpm_snow_impact: 移動箱 SDF による雪衝突 ─────────────────────────────────
 add_sim_example(mpm_snow_impact examples/mpm_snow_impact.cpp)
 
+# ── mpm_tire_sand: 転がるタイヤ(円柱MESH_SDF)による砂の巻き上げ ───────────────
+add_sim_example(mpm_tire_sand examples/mpm_tire_sand.cpp)
+
 # ── Pyro (グリッドベース煙・火炎) ヘッドレス実行例 ───────────────────────────
 if(APPLE)
     set(PYRO_PLATFORM_WRAPPERS tests/helpers/VkWrapper.mm)
@@ -295,5 +298,5 @@ add_pyro_example(pyro_explosion   examples/pyro_explosion.cpp)
 add_custom_target(capture_all DEPENDS
     fluid_pbf cloth_3d cloth_scene smoke fluid_absorb xpbd_softbody
     screw_fluid fluid_wave_foam mpm_elastic mpm_avalanche mpm_multimaterial
-    mpm_snow_impact mpm_geolayer pyro_cow_blast pyro_explosion
+    mpm_snow_impact mpm_geolayer mpm_tire_sand pyro_cow_blast pyro_explosion
 )

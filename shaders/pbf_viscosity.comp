@@ -53,11 +53,10 @@ void main() {
 
         for (uint k = start; k < start + cnt; ++k) {
 #ifdef NBR_SORTED_BUFFERS
-            // issue #87 perf実験 続き: sortedIdx経由のgatherをやめ、sdf_collision_velocityが
-            // 書いたソート済みコピーをkで直接コアレス読みする。typeFlagはposSorted.wに同居。
+            // sortedIdx経由のgatherをやめ、sdf_collision_velocityが書いたソート済みコピーをkで直接コアレス読み
             if (k == kSelf) continue;
             vec4 pjv = readVec4(pc.posSortedIdx, k);
-            uint fj  = floatBitsToUint(pjv.w);
+            uint fj  = uint(pjv.w + 0.5);
 #else
             uint j  = readUint(pc.sortedIdxIdx, k);
             if (j == idx) continue;

@@ -33,12 +33,9 @@ void main() {
     writeVec4Vel(pc.velIdx, idx, vec4(vxyz, life)); // v.w=lifeを復元
 
 #ifdef NBR_SORTED_BUFFERS
-    // issue #87 perf実験 続き: pbf_viscosity用に最終pos/velのソート済みコピーを同じpassで書く。
-    // typeFlagはposSorted.wにビット格納 (invSortedIdxの上位8bitのnbrCountはマスクして無視)。
-    // NBR_SORTED_BUFFERS未定義の呼び出し元はinvSortedIdxIdx/posSortedIdx/velSortedIdxが0のため、
-    // このガード無しではbindlessインデックス0の別バッファを破壊する。
+    //  pbf_viscosity用に最終pos/velのソート済みコピーを同じpassで書く。
     uint kSelf = readUint(pc.invSortedIdxIdx, idx) & 0xFFFFFFu;
-    writeVec4(pc.posSortedIdx, kSelf, vec4(predP.xyz, uintBitsToFloat(flag)));
+    writeVec4(pc.posSortedIdx, kSelf, vec4(predP.xyz, float(flag)));
     writeVec4Vel(pc.velSortedIdx, kSelf, vec4(vxyz, life));
 #endif
 }

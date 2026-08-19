@@ -9,17 +9,19 @@ VkShaderModule GraphicsPipeline::loadShader(const std::string& path) {
   std::ifstream file(path, std::ios::binary | std::ios::ate);
   if(!file.is_open()) throw std::runtime_error("Cannot open shader: " + path);
   size_t size = file.tellg();
-  std::vector<uint32_t> spirv(size / sizeof(uint32_t));
+  std::vector<uint8_t> code(size);
   file.seekg(0);
-  file.read(reinterpret_cast<char*>(spirv.data()), size);
-  return loadShader(spirv);
+  file.read(reinterpret_cast<char*>(code.data()), size);
+  if(!file) throw std::runtime_error("Failed to read shader: " + path);
+  return loadShader(code);
 }
 
-VkShaderModule GraphicsPipeline::loadShader(const std::vector<uint32_t>& code) {
+VkShaderModule GraphicsPipeline::loadShader(const std::vector<uint8_t>& code) {
+  if(code.size() % sizeof(uint32_t) != 0) throw std::runtime_error("Invalid SPIR-V size (not a multiple of 4)");
   VkShaderModuleCreateInfo info{};
   info.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-  info.codeSize = code.size() * sizeof(uint32_t);
-  info.pCode    = code.data();
+  info.codeSize = code.size();
+  info.pCode    = reinterpret_cast<const uint32_t*>(code.data());
 
   VkShaderModule mod;
   if(vkCreateShaderModule(device_, &info, nullptr, &mod) != VK_SUCCESS) throw std::runtime_error("Failed to create shader module from spirv");
@@ -34,8 +36,9 @@ void GraphicsPipeline::init(VkDevice device, VkRenderPass renderPass, VkDescript
 }
 
 void GraphicsPipeline::initVertFromSpirv(VkDevice device, VkRenderPass renderPass, VkDescriptorSetLayout bindlessLayout, const std::vector<uint32_t>& vertSpirv, const std::string& fragPath, VkPrimitiveTopology topology, bool enableBlend) {
-  device_                = device;
-  VkShaderModule vertMod = loadShader(vertSpirv);
+  device_ = device;
+  const uint8_t* bytes = reinterpret_cast<const uint8_t*>(vertSpirv.data());
+  VkShaderModule vertMod = loadShader(std::vector<uint8_t>(bytes, bytes + vertSpirv.size() * sizeof(uint32_t)));
   VkShaderModule fragMod = loadShader(fragPath);
   buildPipeline(renderPass, bindlessLayout, vertMod, fragMod, topology, enableBlend);
 }

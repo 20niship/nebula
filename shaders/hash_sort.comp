@@ -2,8 +2,7 @@
 #extension GL_EXT_nonuniform_qualifier : enable
 #include "common.glsl"
 
-// Pass 3: cellOffset を消費しながら sortedIdx を埋める
-// cellOffset はこの pass で破壊されるが、次フレームで再計算されるので問題なし
+// Pass 3: cellOffset を消費しながら sortedIdx を埋める(cellOffsetは破壊されるが次フレームで再計算)
 
 layout(local_size_x = 256) in;
 
@@ -29,6 +28,14 @@ void main() {
     // NBR_SORTED_BUFFERS未定義の呼び出し元(FluidEngine以外)はinvSortedIdxIdx/predPSortedIdxを
     // pcに設定しない(=0)ため、このガード無しではbindlessインデックス0の別バッファを破壊する。
     writeUint(pc.invSortedIdxIdx, i, slot);
-    writeVec4(pc.predPSortedIdx, slot, vec4(predP.xyz, uintBitsToFloat(fi)));
+    writeVec4(pc.predPSortedIdx, slot, vec4(predP.xyz, float(fi)));
+    // 運動学的境界(fi==3)はsdf_collision_velocityがnFluid_のみdispatchのためposSorted/velSortedを書かない。
+    // substep内では境界のpos/velは不変なのでここで埋めておく(未初期化読みを防ぐ)。
+    if (fi == 3u) {
+        vec4 bp = readVec4(pc.posIdx, i);
+        vec4 bv = readVec4Vel(pc.velIdx, i);
+        writeVec4(pc.posSortedIdx, slot, vec4(bp.xyz, float(fi)));
+        writeVec4Vel(pc.velSortedIdx, slot, bv);
+    }
 #endif
 }

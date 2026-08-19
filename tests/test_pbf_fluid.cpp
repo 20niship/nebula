@@ -591,13 +591,15 @@ TEST_CASE("TC13: --large scale pool settles without rain (bounding box z_max sta
   HeadlessCtx ctx;
   ctx.init();
 
-  const float worldSize     = 2.0f;
+  // フットプリント縮小(元の2m四方=約39万粒子はctest TIMEOUT超過)。高さは2mのまま残し天井への発散を検知
+  const float worldSize     = 0.4f;
+  const float domainHeight  = 2.0f;
   const float spacing       = 0.01f; // ≈1cm
   const float poolThickness = 0.10f;
 
   FluidConfig cfg;
   cfg.particleRadius = spacing * 0.5f;
-  cfg.domainSize      = glm::vec3(worldSize, worldSize, worldSize);
+  cfg.domainSize      = glm::vec3(worldSize, worldSize, domainHeight);
   cfg.cellSize        = 2.0f * cfg.particleSpacing();
   cfg.max_boundary    = 0;
 

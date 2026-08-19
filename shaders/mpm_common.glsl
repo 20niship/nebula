@@ -39,7 +39,7 @@ layout(push_constant) uniform PC {
     uint  B0Idx;         // 132 B 列0 (xyz, APIC) + σ_xy (w)
     uint  B1Idx;         // 136 B 列1 (xyz, APIC) + σ_xz (w)
     uint  B2Idx;         // 140 B 列2 (xyz, APIC) + σ_yz (w)
-    uint  nanoVDBIdx;    // 144 NanoVDB SDF バッファ (0=無効)
+    uint  reserved144;   // 144 旧NanoVDB SDF境界条件用、未使用化(MESH_SDFに統一)
     uint  gridMomIdx;    // 148
     uint  gridMassIdx;   // 152
     float restitution;   // 156

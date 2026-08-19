@@ -236,7 +236,6 @@ MPMSimPC MPMHarness::makePC(float dt, float rho0, float mu, float lam, float gra
   pc.B0Idx            = B0Idx_;
   pc.B1Idx            = B1Idx_;
   pc.B2Idx            = B2Idx_;
-  pc.nanoVDBIdx       = 0; // 無効
   pc.gridMomIdx       = gridMomIdx_;
   pc.gridMassIdx      = gridMassIdx_;
   pc.restitution      = 0.3f;

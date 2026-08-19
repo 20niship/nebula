@@ -128,7 +128,6 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/mpm_p2g.comp
     ${SHADER_SRC_DIR}/mpm_grid_update.comp
     ${SHADER_SRC_DIR}/mpm_g2p.comp
-    ${SHADER_SRC_DIR}/mpm_nanovdb_bc.comp
     # ── Pyro (グリッドベース煙・火炎) シェーダー ─────────────────────────────
     ${SHADER_SRC_DIR}/pyro_emit.comp
     ${SHADER_SRC_DIR}/pyro_combustion.comp

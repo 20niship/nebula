@@ -59,7 +59,6 @@ public:
   void runG2P(const MPMSimPC& pc);
 
   // フルステップ実行 (ZeroGrid + ハッシュビルド + P2G + GridUpdate + G2P)
-  // NanoVDB BCは含まない (nanoVDBIdx=0でスキップ)
   void runFullStep(const MPMSimPC& pc);
 
   // 結果の読み取り

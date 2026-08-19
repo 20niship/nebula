@@ -82,6 +82,7 @@ void main() {
 
             vec3  col_n;
             float sdf;
+            float band  = 0.0; // MESH_SDF専用: 今stepで進む距離分だけ早めに判定しトンネリングを防ぐ(静止時は0=真の表面でのみ判定、box等と同じ挙動を維持)
             vec3  vColl = cvel;
             if (ctype == COLL_SPHERE) {
                 sdf = sphereSDF(xi, cpos, cr, col_n);
@@ -104,12 +105,14 @@ void main() {
                 MESH_SDF_SAMPLE(sdfBufIdx, localP, cnrm, cr, meshRes, sdf, nLocal)
                 col_n = quatRotate(cq, nLocal);
                 vColl = cvel + cross(cw, xi - cpos);
+                float vApproach = -dot(v - vColl, col_n); // 法線方向の接近速度(正=接近中)
+                band = max(0.0, vApproach) * pc.dt * 1.5;
             } else {
                 // COLL_PLANE (default)
                 sdf = planeSDF(xi, cpos, cnrm, col_n);
             }
 
-            if (sdf <= 0.0) {
+            if (sdf <= band) {
                 applyColliderBC(v, col_n, vColl, crest, cfric);
             }
         }

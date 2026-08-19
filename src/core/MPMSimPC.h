@@ -55,7 +55,7 @@ struct MPMSimPC {
   uint32_t B2Idx;         // 140 APIC B行列 列2 (xyz) + σ_yz (w)
 
   // ── Grid buffer indices (16 bytes) ───────────────────────────────────
-  uint32_t nanoVDBIdx;  // 144 NanoVDB SDF バッファ (0=無効)
+  uint32_t reserved144; // 144 旧NanoVDB SDF境界条件用(mpm_nanovdb_bc.comp削除に伴い未使用化、colliderIdx/MESH_SDFに統一)
   uint32_t gridMomIdx;  // 148 vec4×CELLS グリッド運動量/速度
   uint32_t gridMassIdx; // 152 float×CELLS グリッド質量
   float restitution;    // 156

@@ -93,7 +93,8 @@ void main() {
             any(greaterThanEqual(nijk, ivec3(pc.gridRes)))) continue;
 
         uint nid  = mortonEncodeI(nijk);
-        float mass = readFloat(pc.gridMassIdx, nid);
+        // gridMassはGridUpdateが書き戻さないためP2G(scatter)の固定小数点atomicAdd出力のまま
+        float mass = decodeFixed(readUint(pc.gridMassIdx, nid));
         if (mass < 1e-10) continue;
 
         vec3 xi = (vec3(nijk) + 0.5) * pc.cellSize + pc.worldMin;

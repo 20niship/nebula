@@ -1,4 +1,5 @@
 #include "AttributeBuffer.h"
+#include "Profiling.h"
 #include <cstring>
 #include <glm/gtc/packing.hpp>
 #include <stdexcept>
@@ -78,6 +79,7 @@ uint32_t AttributeBuffer::addAttribute(const std::string& name, VkDeviceSize ele
 }
 
 void AttributeBuffer::upload(const std::string& name, const void* data, VkDeviceSize byteSize, VkCommandPool cmdPool, VkQueue queue) {
+  ZoneScoped;
   auto it = attributes_.find(name);
   if(it == attributes_.end()) throw std::runtime_error("Attribute not found: " + name);
 
@@ -123,8 +125,11 @@ void AttributeBuffer::upload(const std::string& name, const void* data, VkDevice
   si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
   si.commandBufferCount = 1;
   si.pCommandBuffers    = &cmd;
-  vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE);
-  vkQueueWaitIdle(queue);
+  {
+    ZoneScopedN("QueueWaitIdle");
+    vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE);
+    vkQueueWaitIdle(queue);
+  }
   vkFreeCommandBuffers(device_, cmdPool, 1, &cmd);
 
   vmaDestroyBuffer(allocator_, stageBuf, stageAlloc);

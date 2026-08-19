@@ -250,7 +250,6 @@ TEST_CASE("MPM GPU - 2-1: P2G mass and momentum conservation") {
   p.F   = glm::mat3(1.0f); // F=I → tau=0 (応力項の寄与なし)
   p.tau = glm::mat3(0.0f);
   sim.uploadParticles({p});
-  sim.buildHashGridCPU({p});
 
   auto pc = sim.makePC(0.001f, 1.0f /*rho0*/, 5000.0f, 11538.0f, 0.0f);
   sim.runZeroGrid(pc);
@@ -287,7 +286,7 @@ TEST_CASE("MPM GPU - 3-1: Grid update with gravity") {
   std::vector<glm::vec4> gridMom(NC, glm::vec4(0.0f));
   std::vector<float> gridMass(NC, 0.0f);
   gridMass[targetMorton] = 1.0f; // mass=1.0, mom=(0,0,0)
-  sim.uploadGrid(gridMom, gridMass);
+  sim.uploadGrid(gridMom, gridMass, true);
 
   // gravity=-9.8, dt=0.01 → v.y = 0/1.0 + (-9.8)*0.01 = -0.098
   auto pc = sim.makePC(0.01f, 1000.0f, 5000.0f, 11538.0f, -9.8f);
@@ -321,7 +320,7 @@ TEST_CASE("MPM GPU - 3-2: Grid update wall boundary condition") {
   std::vector<float> gridMass(NC, 0.0f);
   gridMass[wallMorton] = 1.0f;
   gridMom[wallMorton]  = glm::vec4(-5.0f, 2.0f, 0.0f, 0.0f); // v=(-5,2,0)
-  sim.uploadGrid(gridMom, gridMass);
+  sim.uploadGrid(gridMom, gridMass, true);
 
   // gravity=0 で境界条件のみを確認
   auto pc = sim.makePC(0.01f, 1000.0f, 5000.0f, 11538.0f, 0.0f);
@@ -437,7 +436,6 @@ TEST_CASE("MPM GPU - 6-1: Full step 50 iterations, no NaN, in bounds") {
       cur[i].pos    = glm::vec3(pos);
       cur[i].Vp     = pos.w;
     }
-    sim.buildHashGridCPU(cur);
     sim.runFullStep(pc);
   }
 
@@ -488,7 +486,6 @@ TEST_CASE("MPM GPU - 6-2: Single particle constant velocity (grid crossing)") {
     MPMHarness::Particle cur;
     cur.pos = glm::vec3(curPos);
     cur.Vp  = curPos.w;
-    sim.buildHashGridCPU({cur});
     sim.runFullStep(pc);
 
     // 各ステップで速度が保持されていること (1粒子PICは正確)
@@ -536,7 +533,6 @@ TEST_CASE("MPM GPU Advanced - 7-1: Full pipeline gravity acceleration (1 step)")
   auto pc             = sim.makePC(dt, 1000.0f, 5000.0f, 11538.0f, gravity);
   pc.particleCount    = 1;
 
-  sim.buildHashGridCPU({p});
   sim.runFullStep(pc);
 
   // v_p.y = g*dt (PICなので全近傍ノードが同じ速度を持ち誤差なし)
@@ -669,7 +665,6 @@ TEST_CASE("MPM GPU Advanced - 7-3: Multi-particle momentum conservation (no grav
   auto pc          = sim.makePC(0.01f, rho0, 5000.0f, 11538.0f, 0.0f);
   pc.particleCount = 4;
 
-  sim.buildHashGridCPU(particles);
   sim.runFullStep(pc);
 
   // 各粒子の速度を読み取り総運動量を計算
@@ -723,7 +718,6 @@ TEST_CASE("MPM GPU Advanced - 7-4: Wall boundary clamps particle position and ve
     cur.Vp  = curPos.w;
     cur.F   = sim.readParticleF(0);
     cur.tau = sim.readParticleStress(0);
-    sim.buildHashGridCPU({cur});
     sim.runFullStep(pc);
 
     // 毎ステップ位置が境界内であること

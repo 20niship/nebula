@@ -4,19 +4,17 @@
 // ── Bindless バッファ配列 ──────────────────────────────────────────────────
 layout(set = 0, binding = 0) buffer StorageBuffers { uint data[]; } buffers[];
 
-// ── MPMSimPC Push Constants (188 bytes, hash compat) ───────────────────────
-// C++側 src/core/MPMSimPC.h と同一オフセット順であること (offsetof の static_assert 参照)。
-// hash compat: cellCountIdx(20)/cellOffsetIdx(24)/hashCells(36) は SimPC (common.glsl) と
-// 完全一致。gridRes/worldMin/worldMax はこの3フィールドより後ろにあるため一致不要。
+// ── MPMSimPC Push Constants (188 bytes) ───────────────────────
+// C++側 src/core/MPMSimPC.h と同一オフセット順であること。reserved20/24/28は旧cellCountIdx/cellOffsetIdx/sortedIdxIdx(MLS-MPM化で未使用化)。
 layout(push_constant) uniform PC {
     uint  posIdx;        // 0   vec4×N  (xyz=pos, w=Vp)
     uint  velIdx;        // 4   vec4×N  (xyz=vel, w=material id)
     uint  F0Idx;         // 8   vec4×N  F 列0 (xyz) + σ_xx (w)
     uint  F1Idx;         // 12  vec4×N  F 列1 (xyz) + σ_yy (w)
     uint  typeFlagIdx;   // 16  (reserved)
-    uint  cellCountIdx;  // 20  ← hash compat
-    uint  cellOffsetIdx; // 24  ← hash compat
-    uint  sortedIdxIdx;  // 28  ← hash compat
+    uint  reserved20;    // 20  旧cellCountIdx
+    uint  reserved24;    // 24  旧cellOffsetIdx
+    uint  reserved28;    // 28  旧sortedIdxIdx
     uint  particleCount; // 32  ライブ粒子数
     uint  hashCells;     // 36  空間ハッシュ/MPMグリッドバッファの実要素数 (=cubeRes^3) ← hash compat
     uint  F2Idx;         // 40  F 列2 (xyz) + σ_zz (w)
@@ -208,6 +206,15 @@ float bspline2g(float d) {
     if (ad < 1.5) return -sign(d) * (1.5 - ad);
     return 0.0;
 }
+
+// ── 固定小数点atomicAdd (scatter P2G用) ─────────────────────────────────────
+// GLSLコアのatomicAdd(uint)のみで質量/運動量の並列蓄積を実現するための符号化。
+// int↔uintは同一ビットパターンを保持するため、uintとしてatomicAddしても2の補数の
+// 符号付き加算として正しく動作する(shader_atomic_float拡張非依存、MoltenVK含め全platform対応)。
+// スケール2^16: 現実的な質量/運動量値(数百以下)に対しint32上限(±2^31)まで十分な余裕を確保
+#define FIXED_POINT_SCALE 65536.0
+#define encodeFixed(v) uint(int((v) * FIXED_POINT_SCALE))
+#define decodeFixed(u) (float(int(u)) / FIXED_POINT_SCALE)
 
 // ── 3×3 対称 Jacobi 固有値分解 ───────────────────────────────────────────
 void jacobiEigen3(mat3 A, out vec3 D, out mat3 V) {

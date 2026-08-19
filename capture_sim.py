@@ -64,7 +64,7 @@ SIMS = [
         "id": "tc1", "exe": "fluid_pbf",
         "title": "TC1: Dam Break",
         "env": {}, "extra_args": ["--scenario", "dam-break"],
-        "params": "N~110K | dam-break (left-top half)",
+        "params": "N~100K | dam-break (left-top half)",
     },
     {
         "id": "tc2", "exe": "fluid_pbf",
@@ -80,7 +80,7 @@ SIMS = [
         "id": "tc3", "exe": "fluid_pbf",
         "title": "TC3: Jelly (High Viscosity)",
         "env": {"SIM_VISCOSITY_C": "0.5"}, "extra_args": [],
-        "params": "N~110K | rho0=2097 | visc=0.50",
+        "params": "N~100K | rho0=2097 | visc=0.50",
     },
     {
         "id": "tc4", "exe": "cloth_3d",
@@ -224,6 +224,8 @@ def _load_font(size: int):
     for path in [
         "/System/Library/Fonts/Helvetica.ttc",
         "/System/Library/Fonts/Arial.ttf",
+        "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     ]:
         try:
             return ImageFont.truetype(path, size)
@@ -285,9 +287,8 @@ def make_grid_frame(frame_idx: int, sim_frames: dict, fps_map: dict) -> Image.Im
     return canvas
 
 
-def run_sim(sim: dict, n_frames: int) -> tuple[list[str], int | None]:
-    """戻り値: (キャプチャできた PPM フレームパスのリスト, プロセスの returncode)。
-    exe が存在しない場合は returncode=None を返す。"""
+def run_sim(sim: dict, n_frames: int, sim_timeout: float = 0) -> tuple[list[str], int | None]:
+    """戻り値: (キャプチャできた PPM フレームパスのリスト, returncode)。sim_timeout>0で超過時は強制終了しreturncode=-1。"""
     exe   = BUILD_DIR / sim["exe"]
     title = sim["title"]
 
@@ -318,23 +319,33 @@ def run_sim(sim: dict, n_frames: int) -> tuple[list[str], int | None]:
     proc = subprocess.Popen(cmd, env=env, cwd=str(BUILD_DIR))
     print(f"  PID {proc.pid} — {n_frames} フレーム待機中 …")
 
+    t0 = time.time()
+    timed_out = False
     while proc.poll() is None:
+        if sim_timeout > 0 and time.time() - t0 > sim_timeout:
+            print(f"\n  TIMEOUT ({sim_timeout}s 超過) — プロセスを強制終了")
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            timed_out = True
+            break
         captured = len(list(ppm_dir.glob("frame*.ppm")))
         print(f"  [{int(time.time() % 10000)}] {captured}/{n_frames} frames", end="\r", flush=True)
         time.sleep(2)
     print()
-    print(f"  終了 (rc={proc.returncode})")
+    returncode = -1 if timed_out else proc.returncode
+    print(f"  終了 (rc={returncode})")
 
     frames = sorted(ppm_dir.glob("frame*.ppm"))
     print(f"  キャプチャ完了: {len(frames)} frames")
-    return [str(p) for p in frames], proc.returncode
+    return [str(p) for p in frames], returncode
 
 
-def run_pyro_sim(sim: dict, n_frames: int) -> tuple[list[str], int | None]:
-    """Pyro (ヘッドレス) サンプル用ランナー。--n-shots/--screenshot-dir ではなく
-    --n-frames/--dump-every/--out で .pvox をダンプさせ、tools/pyro_raymarch.py の
-    関数を直接呼び出して PNG (frameNNNN.png) に変換する。
-    戻り値: (レンダリングした PNG フレームパスのリスト, プロセスの returncode)。"""
+def run_pyro_sim(sim: dict, n_frames: int, sim_timeout: float = 0) -> tuple[list[str], int | None]:
+    """戻り値: (レンダリングしたPNGフレームパスのリスト, returncode)。sim_timeout>0で超過時は強制終了しreturncode=-1。"""
     exe   = BUILD_DIR / sim["exe"]
     title = sim["title"]
 
@@ -363,8 +374,12 @@ def run_pyro_sim(sim: dict, n_frames: int) -> tuple[list[str], int | None]:
     cmd += sim.get("extra_args", [])
 
     t0 = time.time()
-    proc = subprocess.run(cmd, env=env, cwd=str(BUILD_DIR))
-    print(f"  シミュレーション完了 (rc={proc.returncode}, {time.time()-t0:.1f}s)")
+    try:
+        proc_rc = subprocess.run(cmd, env=env, cwd=str(BUILD_DIR), timeout=sim_timeout or None).returncode
+    except subprocess.TimeoutExpired:
+        print(f"  TIMEOUT ({sim_timeout}s 超過) — 強制終了")
+        proc_rc = -1
+    print(f"  シミュレーション完了 (rc={proc_rc}, {time.time()-t0:.1f}s)")
 
     pvox_files = sorted(pvox_dir.glob("frame_*.pvox"))
     print(f"  .pvox: {len(pvox_files)} frames — PNG へレンダリング中 …")
@@ -393,7 +408,7 @@ def run_pyro_sim(sim: dict, n_frames: int) -> tuple[list[str], int | None]:
             print(f"    render {i + 1}/{len(pvox_files)}")
 
     print(f"  レンダリング完了: {len(frames)} frames")
-    return frames, proc.returncode
+    return frames, proc_rc
 
 
 def _resolve_commit_sha(cli_sha: str) -> str:
@@ -490,10 +505,15 @@ def main():
                         help="各シムの実行時間 (ms/frame) を書き出す JSON ファイルパス")
     parser.add_argument("--commit-sha", type=str, default="",
                         help="perf-json に埋め込む commit sha (未指定なら git rev-parse HEAD)")
+    parser.add_argument("--sim-timeout", type=float, default=0,
+                        help="1シムあたりの最大実行秒数 (0=無制限; CIでのハング対策)")
+    parser.add_argument("--skip-sim", action="store_true",
+                        help="シム実行/既存フレーム削除をスキップし、OUT_DIR に既に保存済みのフレームだけでグリッド合成・動画エンコードする")
     cli = parser.parse_args()
 
-    n_frames  = cli.frames
-    video_fps = cli.fps
+    n_frames    = cli.frames
+    video_fps   = cli.fps
+    sim_timeout = cli.sim_timeout
 
     print("=== Simulation Capture Pipeline ===")
     print(f"  N_FRAMES={n_frames}  VIDEO_FPS={video_fps}  THUMB={THUMB_W}×{THUMB_H}")
@@ -508,9 +528,13 @@ def main():
         if sim["exe"] is None:
             continue
         t0 = time.time()
-        frames, returncode = (
-            run_pyro_sim(sim, n_frames) if sim.get("kind") == "pyro" else run_sim(sim, n_frames)
-        )
+        if cli.skip_sim:
+            pattern = "frame*.png" if sim.get("kind") == "pyro" else "frame*.ppm"
+            frames, returncode = [str(p) for p in sorted((OUT_DIR / sim["id"]).glob(pattern))], 0
+        else:
+            frames, returncode = (
+                run_pyro_sim(sim, n_frames, sim_timeout) if sim.get("kind") == "pyro" else run_sim(sim, n_frames, sim_timeout)
+            )
         elapsed = time.time() - t0
         sim_frames[sim["id"]] = frames
         timing[sim["id"]]     = (len(frames), elapsed, returncode)

@@ -30,13 +30,14 @@ tasks:
 
   # ── CMake 設定 ──────────────────────────────────────────────────────────────
   configure:
-    desc: "CMake を構成する (BUILD_TYPE={{.BUILD_TYPE}})"
+    desc: "CMake を構成する (BUILD_TYPE={{.BUILD_TYPE}}, Tracyプロファイラ常時ON)"
     cmds:
       - |
         git submodule update --init --recursive
         cmake -B {{.BUILD_DIR}} \
           -DCMAKE_BUILD_TYPE={{.BUILD_TYPE}} \
-          -DVULKAN_SDK={{.VULKAN_SDK}}
+          -DVULKAN_SDK={{.VULKAN_SDK}} \
+          -DNEBULA_TRACY=ON
     env:
       VULKAN_SDK: "{{.VULKAN_SDK}}"
     sources:
@@ -47,14 +48,15 @@ tasks:
 
   # ── CMake 設定 (task perf 専用: GPUプロファイリングON、別ビルドツリー) ────
   configure:perf:
-    desc: "task perf 専用に CMake を構成する (NEBULA_GPU_PROFILING=ON, 別ビルドツリー)"
+    desc: "task perf 専用に CMake を構成する (NEBULA_GPU_PROFILING=ON, Tracy=ON, 別ビルドツリー)"
     cmds:
       - |
         git submodule update --init --recursive
         cmake -B {{.PERF_BUILD_DIR}} \
           -DCMAKE_BUILD_TYPE={{.BUILD_TYPE}} \
           -DVULKAN_SDK={{.VULKAN_SDK}} \
-          -DNEBULA_GPU_PROFILING=ON
+          -DNEBULA_GPU_PROFILING=ON \
+          -DNEBULA_TRACY=ON
     env:
       VULKAN_SDK: "{{.VULKAN_SDK}}"
     sources:
@@ -196,7 +198,7 @@ tasks:
     deps: [configure]
     cmds:
       - cmake --build {{.BUILD_DIR}} -j{{.JOBS}}
-      - /opt/homebrew/bin/python3 capture_sim.py
+      - python3 capture_sim.py
     env:
       MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS: "0"
 
@@ -210,7 +212,7 @@ tasks:
     desc: "純粋なシミュレーション実行時間計測"
     deps: [build:perf]
     cmds:
-      - /opt/homebrew/bin/python3 perf_sim.py --build-dir {{.PERF_BUILD_DIR}} {{.CLI_ARGS}}
+      - python3 perf_sim.py --build-dir {{.PERF_BUILD_DIR}} {{.CLI_ARGS}}
 
   # ── デフォルト ──────────────────────────────────────────────────────────────
   default:

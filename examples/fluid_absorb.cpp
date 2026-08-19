@@ -251,9 +251,9 @@ private:
 
     // typeFlagIdx を渡して吸収済み粒子 (typeFlag==0) をクリップ
     SimPC pc{};
-    pc.posIdx        = engine_.posIdx;
-    pc.velIdx        = engine_.velIdx;
-    pc.typeFlagIdx   = engine_.typeFlagIdx;
+    pc.posIdx        = engine_.posIdx();
+    pc.velIdx        = engine_.velIdx();
+    pc.typeFlagIdx   = engine_.typeFlagIdx();
     pc.particleCount = engine_.nFluid();
     pc.worldMin      = glm::vec3(0.0f);
     pc.worldMax      = engine_.config().domainSize;

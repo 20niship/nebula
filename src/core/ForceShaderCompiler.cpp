@@ -136,7 +136,8 @@ std::string ForceShaderCompiler::replaceMarkerBlock(const std::string& source, c
   return source.substr(0, lineStart) + replacement + source.substr(lineEnd + 1);
 }
 
-std::vector<uint32_t> ForceShaderCompiler::compile(const std::vector<std::shared_ptr<Force>>& forces, const std::string& shaderSourceName) {
+std::vector<uint32_t> ForceShaderCompiler::compile(const std::vector<std::shared_ptr<Force>>& forces, const std::string& shaderSourceName,
+                                                     const std::vector<std::pair<std::string, std::string>>& extraDefines) {
   std::string path = std::string(SHADER_SRC_DIR) + "/" + shaderSourceName;
   std::ifstream file(path);
   if(!file.is_open()) throw std::runtime_error("ForceShaderCompiler: cannot open " + path);
@@ -157,6 +158,7 @@ std::vector<uint32_t> ForceShaderCompiler::compile(const std::vector<std::shared
   options.SetIncluder(std::make_unique<ForceGlslIncluder>());
   options.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_2);
   options.SetOptimizationLevel(shaderc_optimization_level_performance);
+  for(const auto& [name, value] : extraDefines) options.AddMacroDefinition(name, value);
 
   shaderc::SpvCompilationResult result = compiler.CompileGlslToSpv(source, shaderc_compute_shader, shaderSourceName.c_str(), options);
   if(result.GetCompilationStatus() != shaderc_compilation_status_success)

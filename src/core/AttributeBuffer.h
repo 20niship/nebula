@@ -1,15 +1,14 @@
 #pragma once
 
+#include <glm/glm.hpp>
 #include <string>
 #include <unordered_map>
 #include <vector>
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
 
-// MoltenVK (Apple M2) maxPerStageDescriptorStorageBuffers = 31
-// MPMEngine が既に16スロット使い切っているため、Force用バッファ (issue #30) 追加分の
-// 余裕を持たせて20に引き上げ (31に対し十分な余裕を確保)
-static constexpr uint32_t MAX_BINDLESS_BUFFERS = 20;
+// MoltenVK上限31に対し、FluidEngineのfoam有効時最大24スロット(issue #87)を確保。
+static constexpr uint32_t MAX_BINDLESS_BUFFERS = 24;
 
 // SoAバッファマネージャ。addAttribute()でVMAバッファを確保し、
 // Bindlessディスクリプタ配列へ自動登録してインデックスを返す。
@@ -29,6 +28,11 @@ public:
 
   // packed な count 要素を dstIndices[j] の要素位置へ1 submitのmulti-region copyで散布転送する(スロット再利用の穴埋め用; 単位は要素index)。
   void uploadScattered(const std::string& name, const void* packedData, VkDeviceSize elemSize, const std::vector<uint32_t>& dstIndices, VkCommandPool cmdPool, VkQueue queue);
+
+  // vec4配列のupload。half=trueならpackHalf2x16(8B/vec4)、falseならFP32(16B/vec4)で転送する。
+  void uploadVec4(const std::string& name, const glm::vec4* data, uint32_t n, VkCommandPool cmdPool, VkQueue queue, bool half);
+  void uploadVec4At(const std::string& name, const glm::vec4& v, uint32_t slot, VkCommandPool cmdPool, VkQueue queue, bool half);
+  void uploadVec4Scattered(const std::string& name, const std::vector<glm::vec4>& data, const std::vector<uint32_t>& dstIndices, VkCommandPool cmdPool, VkQueue queue, bool half);
 
   // 既存データ（先頭からのバイト列）を保持したまま容量を newCount 要素に再確保する。
   // Bindless index は維持されるため、他の保持済みインデックスは変更不要。

@@ -1,4 +1,5 @@
 #include "App.h"
+#include "core/DefineShaderCompiler.h"
 #include "core/Emitter.h"
 #include "core/Force.h"
 #include "engine/FluidEngine.h"
@@ -10,6 +11,7 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <stdexcept>
@@ -17,19 +19,41 @@
 
 static const std::string SHADER_DIR_STR = SHADER_DIR;
 
-// ── シナリオ定数 (ミルククラウン: 水たまりエミッタ + 水滴エミッタ) ────────────────
-static constexpr float kWorldSize  = 20.0f;
-static constexpr float kPoolRadius = 4.0f;  // 水たまりの半径 [m]
-static constexpr float kDropRadius = 1.0f;  // 水滴の半径 [m]
-static constexpr float kDropHeight = 14.0f; // 水滴の初期高さ [m] (床からの落下距離で水たまりが沈降する時間を確保)
+// ── シナリオ定数: 通常モード (水たまりエミッタ + 一発水滴エミッタ) ────────────────
+static constexpr float kWorldSize    = 20.0f;
+static constexpr float kPoolRadius   = 4.0f;   // 水たまりの半径 [m]
+static constexpr float kDropRadius   = 1.0f;   // 水滴の半径 [m]
+static constexpr float kDropHeight   = 14.0f;  // 水滴の初期高さ [m] (床からの落下距離で水たまりが沈降する時間を確保)
+static constexpr float kSigmaDefault = 0.001f; // h=cellSize≈1.25m でチューニングした値
+
+// ── シナリオ定数: --large モード (cohesion係数はh^-3でスケールしh=0.02mは通常h≈1.25m比で約2.44e5倍強くなるためsigmaは逆数程度が出発点、実測調整前提) ──
+static constexpr float kLargeWorldSize     = 2.0f;
+static constexpr float kLargeSpacing       = 0.01f; // 目標粒子間隔 [m] (≈1cm)
+static constexpr float kLargePoolThickness = 0.10f; // 水たまりの厚み [m] (数cm〜数十cmの範囲で10cmを既定に)
+static constexpr float kLargeRainHalfSize  = 0.85f; // 降雨エリアの半辺長 [m] (水たまりよりひと回り内側)
+static constexpr float kLargeRainHeight    = 1.7f;  // 降雨エミッタの高さ [m]
+static constexpr float kLargeRainRate      = 60.0f; // 降雨生成レート [粒子/s]
+static constexpr float kSigmaDefaultLarge  = 4e-9f; // h^-3スケーリングから逆算した出発点(実測調整前提)
+
+// --largeの水たまりに必要な粒子数(FluidConfig::fluidCount()の理論値=800万粒子をそのまま初期容量にするとMoltenVKのbindless resident化コストが跳ね上がるため実量から算出、超過分はgrowFluidCapacityに任せる)
+static uint32_t largePoolParticleCount() {
+  const float margin       = kLargeSpacing;
+  const float poolHalfSize = kLargeWorldSize * 0.5f - margin;
+  const float d            = kLargeSpacing;
+  const float volume       = (2.0f * poolHalfSize) * (2.0f * poolHalfSize) * kLargePoolThickness;
+  return (uint32_t)(volume / (d * d * d));
+}
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
 
 struct MilkCrownArgs : public argparse::Args {
-  float& dt                   = kwarg("dt", "timestep [s]").set_default(1.0f / 60.0f);
-  float& surface_tension      = kwarg("surface-tension", "surface tension cohesion sigma (Akinci 2013)").set_default(0.001f);
+  float& dt = kwarg("dt", "timestep [s]").set_default(1.0f / 60.0f);
+  // -1 = 未指定(--largeの有無に応じてkSigmaDefault/kSigmaDefaultLargeを自動選択)
+  float& surface_tension      = kwarg("surface-tension", "surface tension cohesion sigma (Akinci 2013); 未指定なら--largeに応じて自動選択").set_default(-1.0f);
+  bool& large                 = flag("large", "2m四方ドメイン・1cm前後解像度・水たまり+連続降雨シナリオ");
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
+  bool& no_half               = flag("no-half", "計測用: --large時のhalfVec4を強制的に無効化する");
 };
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -39,15 +63,25 @@ public:
   void run(const MilkCrownArgs& args) {
     dt_                 = args.dt;
     base_.screenshotDir = args.screenshot_dir;
+    large_              = args.large;
 
     FluidConfig cfg;
-    cfg.particleRadius = (kWorldSize / 32.0f) / 2.0f; // spacing=20/32=0.625m (旧 fluid_nx=32 相当)
-    cfg.domainSize     = glm::vec3(kWorldSize, kWorldSize, kWorldSize);
-    cfg.cellSize       = 2.0f * cfg.particleSpacing(); // h/d比≈2 (fluid_absorb.cppと同方針)
-    cfg.max_boundary   = 0;                            // 床はドメインのSDF境界がそのまま機能する (専用境界メッシュ不要)
+    if(large_) {
+      cfg.particleRadius = kLargeSpacing * 0.5f;
+      cfg.domainSize     = glm::vec3(kLargeWorldSize, kLargeWorldSize, kLargeWorldSize);
+      cfg.initialCapacityHint = largePoolParticleCount() * 2u; // 水たまり+連続降雨の蓄積分として2倍の余裕(超過分はgrowFluidCapacityが追い足す)
+      cfg.halfVec4            = !args.no_half; // --largeはcommon.glslの通常モード発散知見と異なるスケールのためここでのみ有効化(--no-halfで計測用に強制無効化)
+    } else {
+      cfg.particleRadius = (kWorldSize / 32.0f) / 2.0f; // spacing=20/32=0.625m
+      cfg.domainSize     = glm::vec3(kWorldSize, kWorldSize, kWorldSize);
+    }
+    cfg.cellSize     = 2.0f * cfg.particleSpacing(); // h/d比≈2 (fluid_absorb.cppと同方針)
+    cfg.max_boundary = 0;                            // 床はドメインのSDF境界がそのまま機能する (専用境界メッシュ不要)
 
-    base_.initWindow("Vulkan Sim – Milk Crown (Surface Tension)");
-    initVulkan(cfg, args.surface_tension);
+    const float sigma = args.surface_tension >= 0.0f ? args.surface_tension : (large_ ? kSigmaDefaultLarge : kSigmaDefault);
+
+    base_.initWindow(large_ ? "Vulkan Sim – Milk Crown (Large / Surface Tension)" : "Vulkan Sim – Milk Crown (Surface Tension)");
+    initVulkan(cfg, sigma);
     setupScenario(cfg);
     mainLoop(args.n_shots);
     cleanup();
@@ -61,6 +95,7 @@ private:
 
   float dt_      = 1.0f / 60.0f;
   float simTime_ = 0.0f;
+  bool large_    = false;
 
   void initVulkan(const FluidConfig& cfg, float surfaceTension) {
     base_.ctx.init(base_.window);
@@ -70,41 +105,51 @@ private:
 
     gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f); // Z-up
     engine_.addForce(gravity_);
-    engine_.viscosityC     = 0.01f;
-    engine_.pbfIterations  = 2;
-    engine_.numSubsteps    = 2;
-    engine_.rho0           = 30.0f;
+    engine_.viscosityC    = 0.01f;
+    engine_.pbfIterations = 2;
+    engine_.numSubsteps   = 2;
+    engine_.rho0            = large_ ? cfg.computeRestDensity() : 30.0f; // h/dの絶対スケールが--largeで大きく変わるためハードコード値でなくcomputeRestDensity()を使う(通常モードは実測チューニング済みの30.0fを踏襲)
     engine_.linearDamping  = 0.02f;
     engine_.surfaceTension = surfaceTension;
+    if(large_) {
+      // cfmEpsilon/scorrKの既定値はh≈1.25m規模のチューニング値で、--large(h=0.02m)ではCFM緩和項がgrad項優位になり密度拘束が過剰に硬くなり暴走するため大幅に緩める(TC13で実測確認)
+      engine_.cfmEpsilon = 1e6f;
+      engine_.scorrK     = 0.0f;
+    }
 
-    graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/fluid_particle.vert.spv", SHADER_DIR_STR + "/fluid.frag.spv");
+    if(large_) {
+      // cfg.halfVec4==trueだとバッファがpackHalf2x16詰め(8 bytes/vec4)になり静的.spv(FP32想定)のまま読むとストライド不一致で範囲外読み出しになるためHALF_VEC4注入の実行時コンパイルに切り替える
+      std::vector<uint32_t> vertSpirv = DefineShaderCompiler::compile("fluid_particle.vert", {{"HALF_VEC4", "1"}}, /*isVertexShader=*/true);
+      graphicsPipe_.initVertFromSpirv(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, vertSpirv, SHADER_DIR_STR + "/fluid.frag.spv");
+    } else {
+      graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/fluid_particle.vert.spv", SHADER_DIR_STR + "/fluid.frag.spv");
+    }
 
     base_.createFrameData();
     base_.initImGui();
   }
 
   void setupScenario(const FluidConfig& cfg) {
+    if(large_) {
+      setupLargeScenario(cfg);
+      return;
+    }
+
     const float particleR = cfg.cellSize * 0.5f;               // SDF衝突距離
     const float floorZ    = particleR + cfg.particleSpacing(); // 床ちょうど上
-    // 水たまりに厚み(数粒子分)を持たせる。EllipseEmitterは単層(Z固定)のため、
-    // 全粒子が「表面」扱いになり表面張力で薄膜ごと丸まってしまう
-    // (Plateau-Rayleigh不安定の誇張)。AABBEmitterで浅いブロックにし、
-    // 内部(非表面)粒子を持たせることで通常の水たまりらしい挙動にする。
+    // EllipseEmitter(単層)だと全粒子が「表面」扱いで表面張力により薄膜ごと丸まる(Plateau-Rayleigh不安定の誇張)ためAABBEmitterで厚みを持たせ内部粒子を作る
     const float poolThickness = 3.0f * cfg.particleSpacing();
 
     // 水たまりエミッタ: 床付近に浅い直方体の水たまりを一括投入
     auto pool                = std::make_shared<AABBEmitter>();
     pool->center             = glm::vec3(kWorldSize * 0.5f, kWorldSize * 0.5f, floorZ + poolThickness * 0.5f);
-    pool->size                = glm::vec3(2.0f * kPoolRadius, 2.0f * kPoolRadius, poolThickness);
+    pool->size               = glm::vec3(2.0f * kPoolRadius, 2.0f * kPoolRadius, poolThickness);
     pool->vel                = glm::vec3(0.0f);
     pool->particles_per_step = 4500;
     pool->step_count         = -1; // 初回1回のみ
     engine_.addEmitter(pool);
 
-    // 水滴エミッタ: 水たまり中心の真上から自由落下する球状の塊を一括投入。
-    // step_count=-1 は初回ステップで即座に発生するが、重力で床まで落下するのに
-    // 数十フレームかかるため、水たまりが自然に沈降・安定する時間が確保される
-    // (タイマー等の追加ロジック不要)。
+    // 水滴エミッタ: step_count=-1で初回即発生するが落下に数十フレームかかるため水たまりが自然に沈降・安定する時間が確保される(タイマー等不要)
     auto drop                = std::make_shared<SphereEmitter>();
     drop->center             = glm::vec3(kWorldSize * 0.5f, kWorldSize * 0.5f, kDropHeight);
     drop->radius             = kDropRadius;
@@ -112,6 +157,33 @@ private:
     drop->particles_per_step = 900;
     drop->step_count         = -1;
     engine_.addEmitter(drop);
+  }
+
+  // --large: ドメイン下部全体を覆う厚みのある水たまり + 常時降り続く雨エミッタ
+  void setupLargeScenario(const FluidConfig& cfg) {
+    const float particleR = cfg.cellSize * 0.5f;               // SDF衝突距離
+    const float floorZ    = particleR + cfg.particleSpacing(); // 床ちょうど上
+    const float d         = cfg.particleSpacing();
+
+    const float margin        = d; // 壁際に1粒子分の余白
+    const float poolHalfSize  = kLargeWorldSize * 0.5f - margin;
+    const float poolThickness = kLargePoolThickness;
+
+    auto pool                = std::make_shared<AABBEmitter>();
+    pool->center             = glm::vec3(kLargeWorldSize * 0.5f, kLargeWorldSize * 0.5f, floorZ + poolThickness * 0.5f);
+    pool->size               = glm::vec3(2.0f * poolHalfSize, 2.0f * poolHalfSize, poolThickness);
+    pool->vel                = glm::vec3(0.0f);
+    pool->particles_per_step = largePoolParticleCount();
+    pool->step_count         = -1; // 初回1回のみ
+    engine_.addEmitter(pool);
+
+    auto rain                = std::make_shared<AABBEmitter>();
+    rain->center             = glm::vec3(kLargeWorldSize * 0.5f, kLargeWorldSize * 0.5f, kLargeRainHeight);
+    rain->size               = glm::vec3(2.0f * kLargeRainHalfSize, 2.0f * kLargeRainHalfSize, d);
+    rain->vel                = glm::vec3(0.0f, 0.0f, -3.0f); // 初速: 下向き
+    rain->particles_per_step = std::max(1u, (uint32_t)(kLargeRainRate * dt_));
+    rain->step_count         = 0; // 無限
+    engine_.addEmitter(rain);
   }
 
   void recordComputeCmd(VkCommandBuffer cmd) {
@@ -167,8 +239,8 @@ private:
     vkCmdSetScissor(cmd, 0, 1, &sc);
 
     SimPC pc{};
-    pc.posIdx        = engine_.posIdx;
-    pc.velIdx        = engine_.velIdx;
+    pc.posIdx        = engine_.posIdx();
+    pc.velIdx        = engine_.velIdx();
     pc.particleCount = engine_.nFluid();
     pc.worldMin      = glm::vec3(0.0f);
     pc.worldMax      = engine_.config().domainSize;

@@ -58,6 +58,11 @@ protected:
   std::vector<std::shared_ptr<Force>> forces_;
   uint32_t forcesIdx_ = 0;
 
+  // forceTargetPipeline() 用シェーダーに追加注入する#define (例: FluidEngineの
+  // --largeモード用HALF_VEC4)。派生Engineがinit()冒頭、initForces()呼び出し前に
+  // 設定すること。既定は空(既存Engineの挙動に影響なし)。
+  std::vector<std::pair<std::string, std::string>> extraForceDefines_;
+
 private:
   // 登録済みForce群に応じて対象シェーダーを実行時に再生成・再コンパイルする。
   // キャッシュはせず、addForce/removeForce/setForces/clearForces/initForcesの

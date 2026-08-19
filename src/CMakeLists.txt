@@ -1,7 +1,4 @@
 # ── nebula: 共通ライブラリ ───────────────────────────────────────────────────
-# VulkanContext / AttributeBuffer / ComputePipeline / GraphicsPipeline や各種
-# Engine (Fluid, Cloth, MPM, Pyro, ...) をまとめた静的ライブラリ。
-# 従来は例ごとに同じ .cpp を再コンパイルしていたため、ここに集約して一度だけビルドする。
 add_library(nebula STATIC
     core/VulkanContext.cpp
     core/AttributeBuffer.cpp
@@ -49,9 +46,6 @@ target_link_libraries(nebula PUBLIC
     ${SHADERC_LIB}
 )
 
-# SHADER_DIR / ASSET_DIR は example・test からも参照されるため PUBLIC にして伝播させる
-# SHADER_SRC_DIR: Force動的シェーダー生成 (issue #30) が #include "common.glsl" 等を
-# 実行時に解決する際のソースディレクトリ (glslc向けの SHADER_DIR = コンパイル済み.spv出力先とは別)
 target_compile_definitions(nebula PUBLIC
     SHADER_DIR="${SHADER_OUT_DIR}"
     SHADER_SRC_DIR="${SHADER_SRC_DIR}"
@@ -66,6 +60,11 @@ target_compile_definitions(nebula PRIVATE
 # NEBULA_GPU_PROFILING は PyroEngine.h/.cpp と pyro_*.cpp example から参照するため PUBLIC
 if(NEBULA_GPU_PROFILING)
     target_compile_definitions(nebula PUBLIC NEBULA_GPU_PROFILING)
+endif()
+
+if(NEBULA_TRACY)
+    target_compile_definitions(nebula PUBLIC NEBULA_TRACY)
+    target_link_libraries(nebula PUBLIC TracyClient)
 endif()
 
 if(APPLE)

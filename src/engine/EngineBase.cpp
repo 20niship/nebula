@@ -40,7 +40,7 @@ void EngineBase::clearForces() {
 }
 
 void EngineBase::rebuildForceShader() {
-  std::vector<uint32_t> spirv = ForceShaderCompiler::compile(forces_, forceShaderName());
+  std::vector<uint32_t> spirv = ForceShaderCompiler::compile(forces_, forceShaderName(), extraForceDefines_);
   ComputePipeline& k          = forceTargetPipeline();
   k.cleanup(); // 未初期化 (device_==VK_NULL_HANDLE) でも安全
   k.initFromSpirv(device_, attrBuf_.descriptorSetLayout, spirv);

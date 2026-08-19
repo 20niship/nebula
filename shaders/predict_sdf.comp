@@ -12,15 +12,15 @@ void main() {
     if (i >= pc.particleCount) return;
     uint idx = i + pc.fluidStart;
 
-    float invM = readVec4(pc.invMassIdx, idx).x;
+    vec4 p  = readVec4(pc.posIdx, idx);
+    float invM = p.w; // invMassはP.wに格納 (task2: バッファ統合)
 
     if (invM == 0.0) {
-        writeVec4(pc.predPIdx, idx, readVec4(pc.posIdx, idx));
+        writeVec4(pc.predPIdx, idx, p);
         return;
     }
 
-    vec4 p = readVec4(pc.posIdx, idx);
-    vec4 v = readVec4(pc.velIdx, idx);
+    vec4 v = readVec4Vel(pc.velIdx, idx);
     uint forceTypeFlag = readUint(pc.typeFlagIdx, idx);
     vec3 forcePos = p.xyz;
 
@@ -52,6 +52,6 @@ void main() {
     vec3 hi = pc.worldMax - vec3(r);
     predP.xyz = clamp(predP.xyz, lo, hi);
 
-    writeVec4(pc.velIdx,   idx, v);       // 力を積分した速度（衝突応答はしない）
+    writeVec4Vel(pc.velIdx,   idx, v);    // 力を積分した速度（衝突応答はしない）; v.w=lifeを保持
     writeVec4(pc.predPIdx, idx, predP);
 }

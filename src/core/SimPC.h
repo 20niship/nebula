@@ -93,8 +93,21 @@ struct SimPC {
 
   // ── 表面張力 (pbf_delta_p 専用; Akinci 2013 cohesion。他シェーダーは宣言のみで不使用) ──
   float surfaceTension; // 表面張力係数 σ (0=無効)
+
+  // ── 近傍リストキャッシュ (pbf_density/pbf_delta_p 専用; issue #87 perf実験。他シェーダーは宣言のみで不使用) ──
+  uint32_t nbrListIdx; // uint × N × MAX_NBR。pbf_densityが27セル探索中に書き、pbf_deltaPが読む
+
+  // ── 粒子バッファの物理ソート済みコピー (pbf_density/pbf_delta_p 専用; issue #87 perf実験。近傍gatherをkで直接コアレス読みするため) ──
+  uint32_t predPSortedIdx;     // vec4 × N。typeFlagはビット格納した.wに同居 (専用バッファ節約)
+  uint32_t densitySortedIdx;   // float × N (pbf_densityが毎iteration更新)
+  uint32_t lambdaPbfSortedIdx; // float × N (pbf_densityが毎iteration更新)
+  uint32_t invSortedIdxIdx;    // uint × N。元idx→ソート後位置k(下位24bit)+nbrCount(上位8bit)。hash_sortが書きpbf_densityが更新
+
+  // ── 最終pos/velのソート済みコピー (pbf_viscosity 専用; issue #87 perf実験 続き。他シェーダーは宣言のみで不使用) ──
+  uint32_t posSortedIdx; // vec4 × N。typeFlagはビット格納した.wに同居。sdf_collision_velocityが書く
+  uint32_t velSortedIdx; // vec4 × N。sdf_collision_velocityが書く
 };
-static_assert(sizeof(SimPC) == 224, "SimPC must be 224 bytes"); // issue #46 直方体ドメイン対応 (200B) + issue #47 泡 (foamPosIdx等5フィールド, +20B) + 表面張力 (+4B)
+static_assert(sizeof(SimPC) == 252, "SimPC must be 252 bytes"); // 244B(issue#87近傍+ソート済みコピー) + pos/velソート済みコピー(issue #87続き, +8B)
 static_assert(offsetof(SimPC, cellCountIdx) == 20, "hash compat offset");
 static_assert(offsetof(SimPC, cellOffsetIdx) == 24, "hash compat offset");
 static_assert(offsetof(SimPC, hashCells) == 36, "hash compat offset");

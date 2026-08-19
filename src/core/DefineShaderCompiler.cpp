@@ -37,7 +37,8 @@ public:
 } // namespace
 
 std::vector<uint32_t> DefineShaderCompiler::compile(const std::string& shaderSourceName,
-                                                      const std::vector<std::pair<std::string, std::string>>& defines) {
+                                                      const std::vector<std::pair<std::string, std::string>>& defines,
+                                                      bool isVertexShader) {
   std::string path = std::string(SHADER_SRC_DIR) + "/" + shaderSourceName;
   std::ifstream file(path);
   if(!file.is_open()) throw std::runtime_error("DefineShaderCompiler: cannot open " + path);
@@ -50,7 +51,8 @@ std::vector<uint32_t> DefineShaderCompiler::compile(const std::string& shaderSou
   options.SetOptimizationLevel(shaderc_optimization_level_performance);
   for(const auto& [name, value] : defines) options.AddMacroDefinition(name, value);
 
-  shaderc::SpvCompilationResult result = compiler.CompileGlslToSpv(source, shaderc_compute_shader, shaderSourceName.c_str(), options);
+  const shaderc_shader_kind kind = isVertexShader ? shaderc_glsl_vertex_shader : shaderc_compute_shader;
+  shaderc::SpvCompilationResult result = compiler.CompileGlslToSpv(source, kind, shaderSourceName.c_str(), options);
   if(result.GetCompilationStatus() != shaderc_compilation_status_success)
     throw std::runtime_error("DefineShaderCompiler: compile failed (" + shaderSourceName + "): " + result.GetErrorMessage());
 

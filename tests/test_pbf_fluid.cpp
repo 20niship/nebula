@@ -582,3 +582,87 @@ TEST_CASE("TC12: surface tension cohesion pulls neighboring fluid particles toge
   CHECK(distWithTension < gap); // 表面張力ありは引き寄せられ初期距離より縮む
   CHECK(distWithoutTension >= gap * 0.95f); // 対照群 (力なし) はほぼ不変
 }
+
+// ── TC13: --large (2m四方・1cm解像度) の水たまりが雨なしで安定すること ─────────────
+// examples/fluid_milk_crown.cpp --large の水たまり設定(厚み10cmの直方体)を
+// 雨エミッタなしで再現し、着水粒子の外乱がない状態でも粒子が暴れ回らず
+// (bounding boxのz_maxが水たまりの厚み程度に収まり、NaN/発散しない)ことを検証する。
+TEST_CASE("TC13: --large scale pool settles without rain (bounding box z_max stays bounded)") {
+  HeadlessCtx ctx;
+  ctx.init();
+
+  // フットプリント縮小(元の2m四方=約39万粒子はctest TIMEOUT超過)。高さは2mのまま残し天井への発散を検知
+  const float worldSize     = 0.4f;
+  const float domainHeight  = 2.0f;
+  const float spacing       = 0.01f; // ≈1cm
+  const float poolThickness = 0.10f;
+
+  FluidConfig cfg;
+  cfg.particleRadius = spacing * 0.5f;
+  cfg.domainSize      = glm::vec3(worldSize, worldSize, domainHeight);
+  cfg.cellSize        = 2.0f * cfg.particleSpacing();
+  cfg.max_boundary    = 0;
+
+  const float poolHalfSize        = worldSize * 0.5f - spacing; // 壁際1粒子分の余白
+  const uint32_t poolCount        = (uint32_t)((2.0f * poolHalfSize) * (2.0f * poolHalfSize) * poolThickness / (spacing * spacing * spacing));
+  cfg.initialCapacityHint = poolCount + poolCount / 2u;
+
+  FluidEngine engine;
+  engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
+
+  auto gravity = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f);
+  engine.addForce(gravity);
+  engine.viscosityC    = 0.01f;
+  engine.pbfIterations = 2;
+  engine.numSubsteps   = 2;
+  engine.rho0          = cfg.computeRestDensity();
+  engine.linearDamping = 0.02f;
+  // cfmEpsilon/scorrK: 既定値(3000 / 0.001)はh≈1.25m規模でチューニングされており、
+  // このスケール(h=0.02m, rho0≈100万)ではCFM緩和項(denom)がgrad項優位になり
+  // 実質的に効かなくなって密度拘束が過剰に硬くなる(圧力補正が暴走し粒子が
+  // ドメイン天井まで吹き飛ぶ、実測で確認済み)。cfmEpsilonを大幅に緩め、
+  // 人工圧力(Tensile Instability対策)を無効化することで安定する。
+  engine.cfmEpsilon = 1e6f;
+  engine.scorrK     = 0.0f;
+  // surfaceTension は既定0のまま (このテストは表面張力なしのベース安定性を見る)
+
+  const float particleR = cfg.cellSize * 0.5f;
+  const float floorZ    = particleR + cfg.particleSpacing();
+
+  auto pool                = std::make_shared<AABBEmitter>();
+  pool->center             = glm::vec3(worldSize * 0.5f, worldSize * 0.5f, floorZ + poolThickness * 0.5f);
+  pool->size                = glm::vec3(2.0f * poolHalfSize, 2.0f * poolHalfSize, poolThickness);
+  pool->vel                = glm::vec3(0.0f);
+  pool->particles_per_step = poolCount;
+  pool->step_count         = -1;
+  engine.addEmitter(pool);
+
+  const float dt = 1.0f / 60.0f;
+  for(int f = 0; f < 90; ++f) { // 1.5秒分
+    engine.emitFromEmitters(dt);
+    VkCommandBuffer cmd = ctx.beginCmd();
+    engine.step(cmd, dt);
+    ctx.submitCmd(cmd);
+  }
+
+  REQUIRE(engine.nFluid() == poolCount);
+
+  std::vector<glm::vec4> pos(engine.nFluid());
+  ctx.readBuffer(engine.getPositionBuffer(), 0, pos.data(), pos.size() * sizeof(glm::vec4));
+
+  float zMax = -1e9f;
+  float zMin = 1e9f;
+  for(const auto& p : pos) {
+    REQUIRE(!std::isnan(p.z)); // 発散していないこと
+    zMax = std::max(zMax, p.z);
+    zMin = std::min(zMin, p.z);
+  }
+
+  // 水たまりは厚み10cm程度で床(z≈floorZ)付近に静止しているはず。
+  // 暴れて吹き飛んでいなければ z_max はドメイン高さ(2m)よりずっと低い値に収まる。
+  CHECK(zMax < 0.5f);
+  CHECK(zMin >= 0.0f);
+
+  engine.cleanup();
+  ctx.cleanup();
+}

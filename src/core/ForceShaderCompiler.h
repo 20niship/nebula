@@ -25,9 +25,11 @@
 class ForceShaderCompiler {
 public:
   // shaderSourceName: SHADER_SRC_DIR からの相対ファイル名 (例: "predict.comp")。
+  // extraDefines: 追加の#define注入 (例: FluidEngineの--largeモード用HALF_VEC4)。既定は空。
   // 失敗時 (BEGIN/ENDマーカー未検出・コンパイルエラー) は std::runtime_error を投げる。
   // POST_BEGIN/POST_ENDマーカーは任意 (見つからなければ何もしない)。
-  static std::vector<uint32_t> compile(const std::vector<std::shared_ptr<Force>>& forces, const std::string& shaderSourceName);
+  static std::vector<uint32_t> compile(const std::vector<std::shared_ptr<Force>>& forces, const std::string& shaderSourceName,
+                                        const std::vector<std::pair<std::string, std::string>>& extraDefines = {});
 
 private:
   // type() ごとに代表インスタンスを1つ選ぶ (先勝ち; 同一type()は同一GLSL文字列という前提)

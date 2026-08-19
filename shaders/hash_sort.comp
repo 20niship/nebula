@@ -2,8 +2,7 @@
 #extension GL_EXT_nonuniform_qualifier : enable
 #include "common.glsl"
 
-// Pass 3: cellOffset を消費しながら sortedIdx を埋める
-// cellOffset はこの pass で破壊されるが、次フレームで再計算されるので問題なし
+// Pass 3: cellOffset を消費しながら sortedIdx を埋める(cellOffsetは破壊されるが次フレームで再計算)
 
 layout(local_size_x = 256) in;
 
@@ -13,11 +12,30 @@ void main() {
 
     // hash_count.comp と対称に未使用スロット（typeFlag=6=TYPE_FLAG_UNUSED）を除外する
     // （cellCount と数を揃える必要がある）。
-    if (readUint(pc.typeFlagIdx, i) == 6u) return;
+    uint fi = readUint(pc.typeFlagIdx, i);
+    if (fi == 6u) return;
 
     vec4 predP = readVec4(pc.predPIdx, i);
     uint cid   = cellId(predP.xyz);
 
     uint slot = atomicAdd(buffers[pc.cellOffsetIdx].data[cid], 1u);
     buffers[pc.sortedIdxIdx].data[slot] = i;
+
+#ifdef NBR_SORTED_BUFFERS
+    // issue #87 perf実験: 逆写像とソート済みコピーを同じpassで書く (density/delta_pの近傍gather
+    // がsortedIdx経由の間接参照なしにkで直接コアレス読みできるようにする)。typeFlagは
+    // predPSorted.wにビット格納し専用バッファを節約 (predP.wはこの用途では未使用のため)。
+    // NBR_SORTED_BUFFERS未定義の呼び出し元(FluidEngine以外)はinvSortedIdxIdx/predPSortedIdxを
+    // pcに設定しない(=0)ため、このガード無しではbindlessインデックス0の別バッファを破壊する。
+    writeUint(pc.invSortedIdxIdx, i, slot);
+    writeVec4(pc.predPSortedIdx, slot, vec4(predP.xyz, float(fi)));
+    // 運動学的境界(fi==3)はsdf_collision_velocityがnFluid_のみdispatchのためposSorted/velSortedを書かない。
+    // substep内では境界のpos/velは不変なのでここで埋めておく(未初期化読みを防ぐ)。
+    if (fi == 3u) {
+        vec4 bp = readVec4(pc.posIdx, i);
+        vec4 bv = readVec4Vel(pc.velIdx, i);
+        writeVec4(pc.posSortedIdx, slot, vec4(bp.xyz, float(fi)));
+        writeVec4Vel(pc.velSortedIdx, slot, bv);
+    }
+#endif
 }

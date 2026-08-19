@@ -26,6 +26,9 @@ void main() {
 
     float poly6_coeff = 315.0 / (64.0 * 3.14159265 * h9);
     float spiky_coeff = 45.0  / (3.14159265 * h2 * h2 * h2); // 正値; 方向は手動で調整
+#ifdef NBR_SORTED_BUFFERS
+    uint kSelf = readUint(pc.invSortedIdxIdx, idx) & 0xFFFFFFu; // issue #87 perf実験: 自分自身のソート後位置(下位24bit; 上位8bitはnbrCount)
+#endif
 
     float rho = 0.0;
     vec3  grad_ci = vec3(0.0); // ∇_{p_i} C_i = (1/ρ_0) Σ_j ∇W_{ij}
@@ -37,6 +40,11 @@ void main() {
     // 27近傍セルのMorton符号を軸ごとに事前計算し、ループ内での重複計算を避ける
     uint mx[3], my[3], mz[3];
     mortonAxisTriples(gi, mx, my, mz);
+
+    // issue #87 perf実験: ここで見つけたカーネル半径内の近傍を nbrList に書き出し、
+    // pbf_delta_p が同じ27セル探索をやり直さず読むだけで済むようにする (MAX_NBR超過分は切り捨て)。
+    uint nbrBase = idx * MAX_NBR;
+    uint nbrN    = 0u;
 
     for (int dz = -1; dz <= 1; ++dz)
     for (int dy = -1; dy <= 1; ++dy)
@@ -51,21 +59,46 @@ void main() {
         uint start = readUint(pc.cellOffsetIdx, cid) - cnt;
 
         for (uint k = start; k < start + cnt; ++k) {
+#ifdef NBR_SORTED_BUFFERS
+            // issue #87 perf実験: sortedIdx経由のgatherをやめ、hash_sortが書いた
+            // ソート済みコピーをkで直接コアレス読みする(sortedIdxIdx自体は不要になる)。
+            // typeFlagはpredPSorted.wに値として格納済み(HALF_VEC4でも壊れないようビットパターンでなく整数値で持つ)。
+            vec4 pjv = readVec4(pc.predPSortedIdx, k);
+            uint fj  = uint(pjv.w + 0.5);
+#else
             uint j  = readUint(pc.sortedIdxIdx, k);
             uint fj = readUint(pc.typeFlagIdx, j);
+#endif
             if (fj != 1u && fj != 2u && fj != 3u && fj != 5u) continue; // 流体・布・境界・粉体
 
+#ifdef NBR_SORTED_BUFFERS
+            vec3 pj = pjv.xyz;
+#else
             vec3 pj = readVec4(pc.predPIdx, j).xyz;
+#endif
             vec3 r  = pi - pj;
             float r2 = dot(r, r);
             if (r2 >= h2) continue;
+
+#ifdef NBR_SORTED_BUFFERS
+            // issue #87 perf実験: pbf_delta_p が使う近傍(自分自身・重複位置を除く)を書き出す。
+            // delta_pの消費側フィルタ(流体・境界・粉体)に合わせてここで絞り込み、無駄な枠消費を防ぐ。
+            if (k != kSelf && r2 >= 1e-12 && (fj == 1u || fj == 3u || fj == 5u) && nbrN < MAX_NBR) {
+                writeUint(pc.nbrListIdx, nbrBase + nbrN, k);
+                ++nbrN;
+            }
+#endif
 
             // Poly6 カーネルで密度に加算
             float hr2 = h2 - r2;
             rho += poly6_coeff * hr2 * hr2 * hr2;
 
+#ifdef NBR_SORTED_BUFFERS
             // 境界粒子は λ 計算のグラジエント和には含めない
+            if (k == kSelf || (fj != 1u && fj != 5u)) continue;
+#else
             if (j == idx || (fj != 1u && fj != 5u)) continue;
+#endif
 
             // Spiky グラジエント: ∇_{p_i} W_{ij}
             float rlen = sqrt(r2);
@@ -79,6 +112,10 @@ void main() {
         }
     }
 
+#ifdef NBR_SORTED_BUFFERS
+    writeUint(pc.invSortedIdxIdx, idx, (nbrN << 24) | kSelf); // issue #87 perf実験: nbrCountを上位8bitに同居させ専用バッファを節約
+#endif
+
     // 密度制約 C_i = ρ_i/ρ_0 - 1
     float C = rho / rho0 - 1.0;
 
@@ -89,4 +126,9 @@ void main() {
 
     writeFloat(pc.densityIdx,   idx, rho);
     writeFloat(pc.lambdaPbfIdx, idx, lambda);
+#ifdef NBR_SORTED_BUFFERS
+    // issue #87 perf実験: pbf_delta_pがsorted経由で読めるよう複製
+    writeFloat(pc.densitySortedIdx,   kSelf, rho);
+    writeFloat(pc.lambdaPbfSortedIdx, kSelf, lambda);
+#endif
 }

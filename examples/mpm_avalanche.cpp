@@ -41,18 +41,6 @@ static float terrainHeight(float x, float z, float W) {
   return base + rough + texture;
 }
 
-// ── Morton 符号化 (MPMEngine.cpp と同一) ────────────────────────────────────
-
-static uint32_t mortonExpand(uint32_t v) {
-  v &= 0x000003ffu;
-  v = (v | (v << 16u)) & 0x030000ffu;
-  v = (v | (v << 8u)) & 0x0300f00fu;
-  v = (v | (v << 4u)) & 0x030c30c3u;
-  v = (v | (v << 2u)) & 0x09249249u;
-  return v;
-}
-static uint32_t mortonEncode(uint32_t x, uint32_t y, uint32_t z) { return mortonExpand(x) | (mortonExpand(y) << 1u) | (mortonExpand(z) << 2u); }
-
 // ── CLI ────────────────────────────────────────────────────────────────────
 
 struct AvalancheArgs : public argparse::Args {
@@ -170,24 +158,28 @@ private:
     return maxV;
   }
 
-  // ── 地形 SDF ───────────────────────────────────────────────────────
-  // smooth版を使用: 高周波 rough/texture を含まないのでSDF境界が安定
-  // さらに cs*0.5 の安全マージンを加算 → 粒子が固体内に入りにくくなる
-  std::vector<float> buildTerrainSDF(const MPMConfig& cfg) {
+  // 地形メッシュSDF(MESH_SDF、ワールド原点・無回転・静止として登録)。smooth版使用(高周波rough/texture除外でSDF境界を安定させる)+cs*0.5の安全マージン。ドメインが立方体(全軸同解像度)前提。
+  LocalMeshSDF buildTerrainMeshSDF(const MPMConfig& cfg) {
     const glm::uvec3 G = cfg.gridRes();
     const float cs      = cfg.cellSize;
     const float W        = cfg.domainSize.x; // 地形関数は等方(cube)前提のスカラーWを使用
-    std::vector<float> sdf(cfg.totalCells(), 1e9f);
+    const uint32_t res   = std::max({G.x, G.y, G.z});
+
+    LocalMeshSDF grid;
+    grid.res       = res;
+    grid.cellSize  = cs;
+    grid.localMin  = glm::vec3(0.0f);
+    grid.data.assign(size_t(res) * res * res, 1e9f);
     for(uint32_t iz = 0; iz < G.z; ++iz)
       for(uint32_t iy = 0; iy < G.y; ++iy)
         for(uint32_t ix = 0; ix < G.x; ++ix) {
-          float cx                      = (ix + 0.5f) * cs;
-          float cy                      = (iy + 0.5f) * cs;
-          float cz                      = (iz + 0.5f) * cs;
-          float h                       = terrainHeightSmooth(cx, cz, W) + cs * 0.5f; // 安全マージン
-          sdf[mortonEncode(ix, iy, iz)] = cy - h;
+          float cx = (ix + 0.5f) * cs;
+          float cy = (iy + 0.5f) * cs;
+          float cz = (iz + 0.5f) * cs;
+          float h  = terrainHeightSmooth(cx, cz, W) + cs * 0.5f; // 安全マージン
+          grid.data[(size_t(iz) * res + iy) * res + ix] = cy - h;
         }
-    return sdf;
+    return grid;
   }
 
   // ── 雪粒子配置 ──────────────────────────────────────────────────────
@@ -252,12 +244,13 @@ private:
     snow.q_cohesion = 500.0f;
     engine_.setMaterials({snow});
 
-    // 地形 SDF コライダー
-    engine_.setColliderSDF(buildTerrainSDF(cfg));
-
-    // ドメイン境界 (床・4壁)
+    // 地形メッシュSDF + ドメイン境界 (床・4壁) をまとめて1つのColliderSetに登録
     {
+      LocalMeshSDF terrainGrid = buildTerrainMeshSDF(cfg);
+      uint32_t sdfIdx          = engine_.uploadColliderMeshSDF(terrainGrid);
+
       ColliderSet cols;
+      cols.addMeshSDF(sdfIdx, terrainGrid, glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f), {0, 0, 0}, {0, 0, 0}, 0.0f, 0.6f);
       glm::vec3 D = cfg.domainSize;
       cols.addPlane({D.x * 0.5f, 0.0f, D.z * 0.5f}, {0, 1, 0}, 0.0f, 0.3f);
       cols.addPlane({0.0f, D.y * 0.5f, D.z * 0.5f}, {1, 0, 0}, 0.0f, 0.1f);

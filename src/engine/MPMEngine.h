@@ -83,11 +83,6 @@ public:
   // 転写モード: 0=PIC (散逸大), -1=APIC (散逸小), 1=FLIP (将来実装)
   float flip_ratio = 0.0f;
 
-  // NanoVDB SDF コライダー設定
-  // radius, cx, cy, cz は世界座標 (worldMin=0, worldMax=domainSize)
-  void setColliderSphere(float radius, float cx, float cy, float cz);
-  void clearCollider();
-
   // ── マテリアルテーブル設定 (Phase 1) ───────────────────────────────────
   // mats.size() 個のマテリアルを GPU にアップロードし materialCount を更新
   void setMaterials(const std::vector<MaterialParams>& mats);
@@ -113,12 +108,7 @@ public:
   // F=単位行列, B=0, stress=0 で初期化して maxParticleCount() まで追加
   void appendParticles(const std::vector<glm::vec4>& pos, const std::vector<glm::vec4>& vel);
 
-  // ── 任意形状 SDF コライダー ────────────────────────────────────────────
-  // Morton 順に並んだ float SDF 配列 (totalCells() 要素) を地形コライダーとして設定
-  // sdf[mortonEncode(ix,iy,iz)] = 符号付き距離 [m]  負値=障害物内部
-  void setColliderSDF(const std::vector<float>& mortonSDF);
-
-  // OBJを読みローカルSDFを焼いてbindlessバッファへアップロード、そのindexを返す。gridOutはColliderSet::addMeshSDF用のローカル空間パラメータ出力。scaleはOBJ読み込み時の等方拡大率。
+  // メッシュSDFコライダー: OBJを読みローカルSDFを焼いてbindlessバッファへアップロード、そのindexを返す。gridOutはColliderSet::addMeshSDF用のローカル空間パラメータ出力。scaleはOBJ読み込み時の等方拡大率。
   uint32_t loadColliderMesh(const std::string& objPath, LocalMeshSDF& gridOut, uint32_t res = 48, float scale = 1.0f);
   // 既に焼き済みのLocalMeshSDFをbindlessバッファへアップロードするだけ(loadColliderMeshの後半部分を単独利用したい場合用)。
   uint32_t uploadColliderMeshSDF(const LocalMeshSDF& grid);
@@ -165,9 +155,6 @@ private:
   uint32_t collidersIdx_  = 0;
   uint32_t colliderCount_ = 0; // 0 = 無効
 
-  // NanoVDB SDF コライダー
-  uint32_t nanoVDBIdx_ = 0; // 0 = 未設定 (シェーダー内でスキップ)
-
   // メッシュSDFコライダー: アップロードごとに一意なバッファ名を振るためのカウンタ
   uint32_t nextMeshSDFId_ = 0;
 
@@ -189,7 +176,6 @@ private:
   ComputePipeline kZeroGrid_;
   ComputePipeline kP2G_;
   ComputePipeline kGridUpdate_;
-  ComputePipeline kNanoVDBBC_; // NanoVDB SDF 境界条件 (kGridUpdate_ の後)
   ComputePipeline kG2P_;
 
   MPMSimPC buildPC(float subDt) const;

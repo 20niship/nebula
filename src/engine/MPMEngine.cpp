@@ -150,7 +150,6 @@ void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool d
   load(kMpmHashSort_, "mpm_hash_sort.comp");
   load(kZeroGrid_, "mpm_zero_grid.comp");
   load(kP2G_, "mpm_p2g.comp");
-  load(kNanoVDBBC_, "mpm_nanovdb_bc.comp");
   load(kG2P_, "mpm_g2p.comp");
 
   descriptorSetLayout = attrBuf_.descriptorSetLayout;
@@ -160,48 +159,14 @@ void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool d
 // ── クリーンアップ ────────────────────────────────────────────────────────
 
 void MPMEngine::cleanup() {
-  for(auto* k : {&kMpmZeroCells_, &kMpmHashCount_, &kHashScanLocal_, &kHashScanGlobal_, &kHashAddBase_, &kMpmHashSort_, &kZeroGrid_, &kP2G_, &kGridUpdate_, &kNanoVDBBC_, &kG2P_}) k->cleanup();
+  for(auto* k : {&kMpmZeroCells_, &kMpmHashCount_, &kHashScanLocal_, &kHashScanGlobal_, &kHashAddBase_, &kMpmHashSort_, &kZeroGrid_, &kP2G_, &kGridUpdate_, &kG2P_}) k->cleanup();
   cleanupEngineBase();
 }
 
 VkBuffer MPMEngine::getPositionBuffer() const { return attrBuf_.getBuffer("P"); }
 VkBuffer MPMEngine::getVelocityBuffer() const { return attrBuf_.getBuffer("v"); }
 
-// ── NanoVDB SDF コライダー ────────────────────────────────────────────────
-
-static uint32_t mortonExpand(uint32_t v) {
-  v &= 0x000003ffu;
-  v = (v ^ (v << 16u)) & 0xff0000ffu;
-  v = (v ^ (v << 8u)) & 0x0300f00fu;
-  v = (v ^ (v << 4u)) & 0x030c30c3u;
-  v = (v ^ (v << 2u)) & 0x09249249u;
-  return v;
-}
-static uint32_t mortonEncode(uint32_t x, uint32_t y, uint32_t z) { return mortonExpand(x) | (mortonExpand(y) << 1u) | (mortonExpand(z) << 2u); }
-
-void MPMEngine::setColliderSphere(float radius, float cx, float cy, float cz) {
-  const glm::uvec3 GR = cfg_.gridRes();
-  const float h        = cfg_.cellSize;
-  const uint32_t NC     = cfg_.totalCells();
-
-  std::vector<float> sdf(NC);
-  for(uint32_t iz = 0; iz < GR.z; iz++)
-    for(uint32_t iy = 0; iy < GR.y; iy++)
-      for(uint32_t ix = 0; ix < GR.x; ix++) {
-        float wx                      = (ix + 0.5f) * h;
-        float wy                      = (iy + 0.5f) * h;
-        float wz                      = (iz + 0.5f) * h;
-        float d                       = std::sqrt((wx - cx) * (wx - cx) + (wy - cy) * (wy - cy) + (wz - cz) * (wz - cz));
-        sdf[mortonEncode(ix, iy, iz)] = d - radius;
-      }
-
-  if(nanoVDBIdx_ == 0) {
-    nanoVDBIdx_ = attrBuf_.addAttribute("nanoVDB", sizeof(float), NC);
-  }
-  attrBuf_.upload("nanoVDB", sdf.data(), NC * sizeof(float), cmdPool_, queue_);
-}
-
-void MPMEngine::clearCollider() { nanoVDBIdx_ = 0; }
+// ── メッシュSDFコライダー ────────────────────────────────────────────────
 
 uint32_t MPMEngine::loadColliderMesh(const std::string& objPath, LocalMeshSDF& gridOut, uint32_t res, float scale) {
   BoundaryParticles bp;
@@ -227,13 +192,6 @@ uint32_t MPMEngine::uploadColliderMeshSDF(const LocalMeshSDF& grid) {
   uint32_t idx      = attrBuf_.addAttribute(name, sizeof(float), grid.data.size());
   attrBuf_.upload(name, grid.data.data(), grid.data.size() * sizeof(float), cmdPool_, queue_);
   return idx;
-}
-
-void MPMEngine::setColliderSDF(const std::vector<float>& mortonSDF) {
-  if(nanoVDBIdx_ == 0) {
-    nanoVDBIdx_ = attrBuf_.addAttribute("nanoVDB", sizeof(float), cfg_.totalCells());
-  }
-  attrBuf_.upload("nanoVDB", mortonSDF.data(), mortonSDF.size() * sizeof(float), cmdPool_, queue_);
 }
 
 void MPMEngine::appendParticles(const std::vector<glm::vec4>& pos, const std::vector<glm::vec4>& vel) {
@@ -413,7 +371,6 @@ MPMSimPC MPMEngine::buildPC(float subDt) const {
   pc.B0Idx            = B0Idx_;
   pc.B1Idx            = B1Idx_;
   pc.B2Idx            = B2Idx_;
-  pc.nanoVDBIdx       = nanoVDBIdx_;
   pc.gridMomIdx       = gridMomIdx_;
   pc.gridMassIdx      = gridMassIdx_;
   pc.restitution      = restitution;
@@ -493,11 +450,7 @@ void MPMEngine::step(VkCommandBuffer cmd, float dt) {
     dispatchMPM(cmd, kGridUpdate_, pc, NC);
     computeBarrier(cmd);
 
-    // ⑥ NanoVDB SDF 境界条件
-    dispatchMPM(cmd, kNanoVDBBC_, pc, NC);
-    computeBarrier(cmd);
-
-    // ⑦ G2P + F 更新 + 応力 + 位置更新
+    // ⑥ G2P + F 更新 + 応力 + 位置更新
     dispatchMPM(cmd, kG2P_, pc, N);
     if(sub < numSubsteps - 1) computeBarrier(cmd);
   }

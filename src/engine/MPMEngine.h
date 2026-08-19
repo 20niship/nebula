@@ -138,11 +138,6 @@ private:
   uint32_t B1Idx_ = 0;
   uint32_t B2Idx_ = 0;
 
-  // ハッシュグリッドバッファ
-  uint32_t cellCountIdx_  = 0;
-  uint32_t cellOffsetIdx_ = 0;
-  uint32_t sortedIdxIdx_  = 0;
-
   // MPM グリッドバッファ
   uint32_t gridMomIdx_  = 0;
   uint32_t gridMassIdx_ = 0;
@@ -164,15 +159,7 @@ private:
   std::mt19937 emitterRng_{12345};
   void emitFromEmitters(float dt);
 
-  // コンピュートパイプライン
-  // ハッシュ系 (MPM 版: posIdx を使う)
-  ComputePipeline kMpmZeroCells_;
-  ComputePipeline kMpmHashCount_;
-  ComputePipeline kHashScanLocal_;
-  ComputePipeline kHashScanGlobal_;
-  ComputePipeline kHashAddBase_;
-  ComputePipeline kMpmHashSort_;
-  // MPM メインパイプライン
+  // コンピュートパイプライン (MLS-MPM scatter化により空間ハッシュ系パイプラインは廃止)
   ComputePipeline kZeroGrid_;
   ComputePipeline kP2G_;
   ComputePipeline kGridUpdate_;
@@ -181,4 +168,6 @@ private:
   MPMSimPC buildPC(float subDt) const;
   void dispatchMPM(VkCommandBuffer cmd, ComputePipeline& k, const MPMSimPC& pc, uint32_t count);
   void computeBarrier(VkCommandBuffer cmd);
+  // NEBULA_TRACY時のみ有効: submit+queueWaitIdleしてZoneScopedN区間に実GPU時間を含める計測専用パス(通常ビルドではno-op)
+  void syncGpuForProfiling(VkCommandBuffer cmd);
 };

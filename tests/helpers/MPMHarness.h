@@ -35,14 +35,8 @@ public:
   // 応力は F/B バッファの w レーンにパックされる（Phase 0 以降）
   void uploadParticles(const std::vector<Particle>& particles);
 
-  // CPU側でハッシュグリッドを手動構築してアップロード (P2Gテスト用)
-  // P2Gシェーダーが使う cellCount/cellOffset/sortedIdx を設定する
-  void buildHashGridCPU(const std::vector<Particle>& particles);
-
-  // グリッドMom/Massを直接アップロード (GridUpdate/G2Pテスト用)
-  // gridMom[i] = (velocity_x, velocity_y, velocity_z, 0)
-  // gridMass[i] = mass
-  void uploadGrid(const std::vector<glm::vec4>& gridMom, const std::vector<float>& gridMass);
+  // gridMassは常に固定小数点符号化。gridMomはmomAsMomentum=trueならGridUpdate向け運動量として固定小数点符号化、false(既定)ならG2Pへ直接渡す速度としてplain floatでアップロードする
+  void uploadGrid(const std::vector<glm::vec4>& gridMom, const std::vector<float>& gridMass, bool momAsMomentum = false);
 
   // Push Constants を構築するヘルパー
   // 同時にデフォルト弾性マテリアル (slot 0) を GPU にアップロードする
@@ -100,9 +94,6 @@ private:
   uint32_t B0Idx_        = 0;
   uint32_t B1Idx_        = 0;
   uint32_t B2Idx_        = 0;
-  uint32_t cellCntIdx_   = 0;
-  uint32_t cellOffIdx_   = 0;
-  uint32_t sortedIdx_    = 0;
   uint32_t gridMomIdx_   = 0;
   uint32_t gridMassIdx_  = 0;
   uint32_t materialsIdx_ = 0;
@@ -111,14 +102,8 @@ private:
   std::shared_ptr<GravityForce> legacyGravity_;
   uint32_t forcesIdx_ = 0;
 
-  // コンピュートパイプライン
+  // コンピュートパイプライン (MLS-MPM scatter化により空間ハッシュ系パイプラインは廃止)
   ComputePipeline kZeroGrid_;    // mpm_zero_grid.comp
-  ComputePipeline kZeroCells_;   // zero_cells.comp (SimPC互換)
-  ComputePipeline kHashCount_;   // mpm_hash_count.comp
-  ComputePipeline kScanLocal_;   // hash_scan_local.comp (SimPC互換)
-  ComputePipeline kScanGlobal_;  // hash_scan_global.comp (SimPC互換)
-  ComputePipeline kHashAddBase_; // hash_add_base.comp (SimPC互換)
-  ComputePipeline kHashSort_;    // mpm_hash_sort.comp
   ComputePipeline kP2G_;         // mpm_p2g.comp
   ComputePipeline kGridUpdate_;  // mpm_grid_update.comp
   ComputePipeline kG2P_;         // mpm_g2p.comp

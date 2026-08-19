@@ -18,6 +18,11 @@ uint32_t mpmMortonExpand(uint32_t v) {
 
 uint32_t mpmMortonEncode(uint32_t x, uint32_t y, uint32_t z) { return mpmMortonExpand(x) | (mpmMortonExpand(y) << 1u) | (mpmMortonExpand(z) << 2u); }
 
+// mpm_common.glslのencodeFixed/decodeFixedと同一(P2G scatterのatomicAdd用固定小数点)
+static constexpr float kFixedPointScale = 65536.0f;
+static int32_t encodeFixedCPU(float v) { return int32_t(v * kFixedPointScale); }
+static float decodeFixedCPU(int32_t v) { return float(v) / kFixedPointScale; }
+
 // ── 内部ヘルパー ──────────────────────────────────────────────────────────────
 
 void MPMHarness::barrier(VkCommandBuffer cmd) {
@@ -45,7 +50,6 @@ void MPMHarness::init(const HeadlessCtx& ctx, uint32_t gridRes, float worldSize,
   maxParticles_ = maxParticles;
 
   const uint32_t NC = totalCells();
-  const uint32_t NG = nGroups();
   const uint32_t N  = maxParticles;
 
   attrBuf_.init(ctx.device, ctx.allocator, ctx.descriptorPool);
@@ -60,9 +64,6 @@ void MPMHarness::init(const HeadlessCtx& ctx, uint32_t gridRes, float worldSize,
   B0Idx_      = attrBuf_.addAttribute("B0", sizeof(glm::vec4), N);
   B1Idx_      = attrBuf_.addAttribute("B1", sizeof(glm::vec4), N);
   B2Idx_      = attrBuf_.addAttribute("B2", sizeof(glm::vec4), N);
-  cellCntIdx_ = attrBuf_.addAttribute("cellCnt", sizeof(uint32_t), NC);
-  cellOffIdx_ = attrBuf_.addAttribute("cellOff", sizeof(uint32_t), NC + NG);
-  sortedIdx_  = attrBuf_.addAttribute("sorted", sizeof(uint32_t), N);
   // gridMom: 2×NC — [0,NC) = v_new, [NC,2*NC) = v_old (FLIP 用)
   gridMomIdx_  = attrBuf_.addAttribute("gridMom", sizeof(glm::vec4), NC * 2);
   gridMassIdx_ = attrBuf_.addAttribute("gridMass", sizeof(float), NC);
@@ -75,12 +76,6 @@ void MPMHarness::init(const HeadlessCtx& ctx, uint32_t gridRes, float worldSize,
 
   auto load = [&](ComputePipeline& k, const std::string& name) { k.init(ctx.device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
   load(kZeroGrid_, "mpm_zero_grid.comp");
-  load(kZeroCells_, "zero_cells.comp");
-  load(kHashCount_, "mpm_hash_count.comp");
-  load(kScanLocal_, "hash_scan_local.comp");
-  load(kScanGlobal_, "hash_scan_global.comp");
-  load(kHashAddBase_, "hash_add_base.comp");
-  load(kHashSort_, "mpm_hash_sort.comp");
   load(kP2G_, "mpm_p2g.comp");
   load(kG2P_, "mpm_g2p.comp");
   {
@@ -127,64 +122,28 @@ void MPMHarness::uploadParticles(const std::vector<Particle>& particles) {
   attrBuf_.upload("B2", B2.data(), N * sizeof(glm::vec4), pool, queue);
 }
 
-// ── CPU側ハッシュグリッド構築 ─────────────────────────────────────────────────
+// GridUpdateはP2G(scatter)のatomicAdd出力=固定小数点整数を期待するため、通常floatの入力をここで符号化する
 
-void MPMHarness::buildHashGridCPU(const std::vector<Particle>& particles) {
-  const uint32_t N  = static_cast<uint32_t>(particles.size());
-  const uint32_t NC = totalCells();
-  const uint32_t NG = nGroups();
-  const float h     = cellSize();
-
-  std::vector<uint32_t> cellCnt(NC, 0u);
-  std::vector<uint32_t> cellOff(NC + NG, 0u);
-  std::vector<uint32_t> sorted(N, 0u);
-
-  // 各粒子のMorton cellを計算
-  std::vector<uint32_t> particleCellMorton(N);
-  for(uint32_t i = 0; i < N; ++i) {
-    glm::vec3 local       = particles[i].pos / h;
-    local                 = glm::clamp(local, glm::vec3(0.0f), glm::vec3(float(gridRes_ - 1)));
-    uint32_t gx           = uint32_t(local.x);
-    uint32_t gy           = uint32_t(local.y);
-    uint32_t gz           = uint32_t(local.z);
-    uint32_t morton       = mpmMortonEncode(gx, gy, gz);
-    particleCellMorton[i] = morton;
-    cellCnt[morton]++;
-  }
-
-  // P2Gシェーダー仕様: start = cellOff[cid] - cellCnt[cid]
-  // → cellOff[c] = 範囲の末尾インデックス+1 (end-exclusive scan)
-  uint32_t acc = 0;
-  for(uint32_t c = 0; c < NC; ++c) {
-    acc += cellCnt[c];
-    cellOff[c] = acc;
-  }
-
-  // sorted配列を各cellのstart位置から書き込む
-  std::vector<uint32_t> writePtr(NC);
-  for(uint32_t c = 0; c < NC; ++c) {
-    writePtr[c] = cellOff[c] - cellCnt[c];
-  }
-  for(uint32_t i = 0; i < N; ++i) {
-    uint32_t m            = particleCellMorton[i];
-    sorted[writePtr[m]++] = i;
-  }
-
-  auto pool  = ctx_->commandPool;
-  auto queue = ctx_->computeQueue;
-  attrBuf_.upload("cellCnt", cellCnt.data(), NC * sizeof(uint32_t), pool, queue);
-  attrBuf_.upload("cellOff", cellOff.data(), (NC + NG) * sizeof(uint32_t), pool, queue);
-  attrBuf_.upload("sorted", sorted.data(), N * sizeof(uint32_t), pool, queue);
-}
-
-// ── グリッドデータ直接アップロード ────────────────────────────────────────────
-
-void MPMHarness::uploadGrid(const std::vector<glm::vec4>& gridMom, const std::vector<float>& gridMass) {
+void MPMHarness::uploadGrid(const std::vector<glm::vec4>& gridMom, const std::vector<float>& gridMass, bool momAsMomentum) {
   const uint32_t NC = totalCells();
   auto pool         = ctx_->commandPool;
   auto queue        = ctx_->computeQueue;
-  attrBuf_.upload("gridMom", gridMom.data(), NC * sizeof(glm::vec4), pool, queue);
-  attrBuf_.upload("gridMass", gridMass.data(), NC * sizeof(float), pool, queue);
+
+  std::vector<int32_t> massFixed(NC);
+  for(uint32_t i = 0; i < NC; ++i) massFixed[i] = encodeFixedCPU(gridMass[i]);
+  attrBuf_.upload("gridMass", massFixed.data(), NC * sizeof(int32_t), pool, queue);
+
+  if(momAsMomentum) {
+    std::vector<int32_t> momFixed(NC * 4, 0);
+    for(uint32_t i = 0; i < NC; ++i) {
+      momFixed[i * 4]     = encodeFixedCPU(gridMom[i].x);
+      momFixed[i * 4 + 1] = encodeFixedCPU(gridMom[i].y);
+      momFixed[i * 4 + 2] = encodeFixedCPU(gridMom[i].z);
+    }
+    attrBuf_.upload("gridMom", momFixed.data(), NC * 4 * sizeof(int32_t), pool, queue);
+  } else {
+    attrBuf_.upload("gridMom", gridMom.data(), NC * sizeof(glm::vec4), pool, queue);
+  }
 }
 
 // ── Push Constants 構築 ───────────────────────────────────────────────────────
@@ -211,9 +170,6 @@ MPMSimPC MPMHarness::makePC(float dt, float rho0, float mu, float lam, float gra
   pc.F0Idx            = F0Idx_;
   pc.F1Idx            = F1Idx_;
   pc.typeFlagIdx      = 0;
-  pc.cellCountIdx     = cellCntIdx_;
-  pc.cellOffsetIdx    = cellOffIdx_;
-  pc.sortedIdxIdx     = sortedIdx_;
   pc.particleCount    = maxParticles_;
   pc.hashCells        = totalCells();
   pc.F2Idx            = F2Idx_;
@@ -264,7 +220,7 @@ void MPMHarness::runZeroGrid(const MPMSimPC& pc) {
 
 void MPMHarness::runP2G(const MPMSimPC& pc) {
   VkCommandBuffer cmd = ctx_->beginCmd();
-  dispatchMPM(cmd, kP2G_, pc, totalCells());
+  dispatchMPM(cmd, kP2G_, pc, maxParticles_);
   ctx_->submitCmd(cmd);
 }
 
@@ -283,7 +239,6 @@ void MPMHarness::runG2P(const MPMSimPC& pc) {
 void MPMHarness::runFullStep(const MPMSimPC& pc) {
   const uint32_t N  = maxParticles_;
   const uint32_t NC = totalCells();
-  const uint32_t NG = nGroups();
 
   VkCommandBuffer cmd = ctx_->beginCmd();
 
@@ -291,47 +246,15 @@ void MPMHarness::runFullStep(const MPMSimPC& pc) {
   dispatchMPM(cmd, kZeroGrid_, pc, NC);
   barrier(cmd);
 
-  // ② cellCountをゼロクリア
-  dispatchMPM(cmd, kZeroCells_, pc, NC);
+  // ② P2G (MLS-MPM scatter、空間ハッシュ不要)
+  dispatchMPM(cmd, kP2G_, pc, N);
   barrier(cmd);
 
-  // ③ ハッシュグリッド構築
-  dispatchMPM(cmd, kHashCount_, pc, N);
-  barrier(cmd);
-
-  // hash_scan_local: NG workgroups
-  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kScanLocal_.pipeline);
-  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kScanLocal_.pipelineLayout, 0, 1, &attrBuf_.descriptorSet, 0, nullptr);
-  vkCmdPushConstants(cmd, kScanLocal_.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(MPMSimPC), &pc);
-  vkCmdDispatch(cmd, NG, 1, 1);
-  barrier(cmd);
-
-  // hash_scan_global: 1 workgroup
-  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kScanGlobal_.pipeline);
-  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kScanGlobal_.pipelineLayout, 0, 1, &attrBuf_.descriptorSet, 0, nullptr);
-  vkCmdPushConstants(cmd, kScanGlobal_.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(MPMSimPC), &pc);
-  vkCmdDispatch(cmd, 1, 1, 1);
-  barrier(cmd);
-
-  // hash_add_base: NG workgroups
-  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashAddBase_.pipeline);
-  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashAddBase_.pipelineLayout, 0, 1, &attrBuf_.descriptorSet, 0, nullptr);
-  vkCmdPushConstants(cmd, kHashAddBase_.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(MPMSimPC), &pc);
-  vkCmdDispatch(cmd, NG, 1, 1);
-  barrier(cmd);
-
-  dispatchMPM(cmd, kHashSort_, pc, N);
-  barrier(cmd);
-
-  // ④ P2G
-  dispatchMPM(cmd, kP2G_, pc, NC);
-  barrier(cmd);
-
-  // ⑤ GridUpdate
+  // ③ GridUpdate
   dispatchMPM(cmd, kGridUpdate_, pc, NC);
   barrier(cmd);
 
-  // ⑥ G2P (NanoVDB BCはスキップ)
+  // ④ G2P
   dispatchMPM(cmd, kG2P_, pc, N);
 
   ctx_->submitCmd(cmd);
@@ -351,10 +274,11 @@ glm::vec4 MPMHarness::readParticleVel(uint32_t i) const {
   return r;
 }
 
+// gridMassはGridUpdateが書き戻さないため常にP2G(scatter)のatomicAdd出力=固定小数点整数のまま
 float MPMHarness::readGridMass(uint32_t mortonIdx) const {
-  float r = 0.0f;
-  ctx_->readBuffer(attrBuf_.getBuffer("gridMass"), mortonIdx * sizeof(float), &r, sizeof(r));
-  return r;
+  int32_t r = 0;
+  ctx_->readBuffer(attrBuf_.getBuffer("gridMass"), mortonIdx * sizeof(int32_t), &r, sizeof(r));
+  return decodeFixedCPU(r);
 }
 
 glm::vec3 MPMHarness::readGridVel(uint32_t mortonIdx) const {
@@ -389,27 +313,30 @@ glm::mat3 MPMHarness::readParticleStress(uint32_t i) const {
                    glm::vec3(txz, tyz, tzz)); // col2
 }
 
+// sumGridMass/sumGridMomはP2G直後(GridUpdate前)のraw出力=固定小数点整数を読むテスト専用
 float MPMHarness::sumGridMass() const {
   const uint32_t NC = totalCells();
-  std::vector<float> buf(NC);
-  ctx_->readBuffer(attrBuf_.getBuffer("gridMass"), 0, buf.data(), NC * sizeof(float));
+  std::vector<int32_t> buf(NC);
+  ctx_->readBuffer(attrBuf_.getBuffer("gridMass"), 0, buf.data(), NC * sizeof(int32_t));
   float s = 0.0f;
-  for(float v : buf) s += v;
+  for(int32_t v : buf) s += decodeFixedCPU(v);
   return s;
 }
 
 glm::vec3 MPMHarness::sumGridMom() const {
   const uint32_t NC = totalCells();
-  std::vector<glm::vec4> buf(NC);
-  ctx_->readBuffer(attrBuf_.getBuffer("gridMom"), 0, buf.data(), NC * sizeof(glm::vec4));
+  std::vector<int32_t> buf(NC * 4);
+  ctx_->readBuffer(attrBuf_.getBuffer("gridMom"), 0, buf.data(), NC * 4 * sizeof(int32_t));
   glm::vec3 s(0.0f);
-  for(auto& v : buf) s += glm::vec3(v);
+  for(uint32_t i = 0; i < NC; ++i) {
+    s += glm::vec3(decodeFixedCPU(buf[i * 4]), decodeFixedCPU(buf[i * 4 + 1]), decodeFixedCPU(buf[i * 4 + 2]));
+  }
   return s;
 }
 
 // ── クリーンアップ ────────────────────────────────────────────────────────────
 
 void MPMHarness::cleanup() {
-  for(auto* k : {&kZeroGrid_, &kZeroCells_, &kHashCount_, &kScanLocal_, &kScanGlobal_, &kHashAddBase_, &kHashSort_, &kP2G_, &kGridUpdate_, &kG2P_}) k->cleanup();
+  for(auto* k : {&kZeroGrid_, &kP2G_, &kGridUpdate_, &kG2P_}) k->cleanup();
   attrBuf_.cleanup();
 }

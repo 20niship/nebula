@@ -19,10 +19,13 @@ void main() {
     uint totalCells = pc.hashCells;
     if (gid >= totalCells) return;
 
-    float mass = readFloat(pc.gridMassIdx, gid);
+    // P2G(scatter)はgridMass/gridMomを固定小数点整数atomicAddで蓄積している。ここで最初に通常floatへデコードする
+    float mass = decodeFixed(readUint(pc.gridMassIdx, gid));
     if (mass < 1e-10) return;
 
-    vec3 mom = readVec4(pc.gridMomIdx, gid).xyz;
+    vec3 mom = vec3(decodeFixed(readUint(pc.gridMomIdx, gid * 4u)),
+                     decodeFixed(readUint(pc.gridMomIdx, gid * 4u + 1u)),
+                     decodeFixed(readUint(pc.gridMomIdx, gid * 4u + 2u)));
     vec3 v   = mom / mass;
 
     // グリッド速度キャップ: 過圧縮粒子の弾性応力蓄積による速度爆発を防ぐ

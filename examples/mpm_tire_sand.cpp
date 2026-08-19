@@ -1,6 +1,7 @@
 #include "App.h"
 #include "Collider.h"
 #include "MaterialParams.h"
+#include "core/Profiling.h"
 #include "engine/MPMEngine.h"
 #include "graphics/GraphicsPipeline.h"
 
@@ -263,8 +264,12 @@ private:
   }
 
   void drawFrame(int nShots) {
+    ZoneScoped;
     auto& f = base_.frames[base_.currentFrame];
-    vkWaitForFences(base_.ctx.device, 1, &f.inFlightFence, VK_TRUE, UINT64_MAX);
+    {
+      ZoneScopedN("WaitForFence");
+      vkWaitForFences(base_.ctx.device, 1, &f.inFlightFence, VK_TRUE, UINT64_MAX);
+    }
 
     uint32_t imageIdx;
     VkResult result = vkAcquireNextImageKHR(base_.ctx.device, base_.ctx.swapchain, UINT64_MAX, f.imageAvailable, VK_NULL_HANDLE, &imageIdx);
@@ -303,6 +308,7 @@ private:
       float angVelZ       = slipRatio_ * tireSpeed_ / tireRadius_;
       spinQuat_            = glm::angleAxis(angVelZ * dt_, glm::vec3(0.0f, 0.0f, 1.0f)) * spinQuat_;
       if(tirePosX_ - tireRadius_ < engine_.config().domainSize.x * 0.1f) tireMoving_ = false;
+      ZoneScopedN("RebuildColliders");
       rebuildColliders();
     }
     simTime_ += dt_;
@@ -310,7 +316,10 @@ private:
 
     f.timelineValue++;
     vkResetCommandBuffer(f.computeCmd, 0);
-    recordComputeCmd(f.computeCmd);
+    {
+      ZoneScopedN("RecordComputeCmd");
+      recordComputeCmd(f.computeCmd);
+    }
 
     VkTimelineSemaphoreSubmitInfo tsSig{};
     tsSig.sType                     = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
@@ -324,10 +333,16 @@ private:
     compSub.pCommandBuffers      = &f.computeCmd;
     compSub.signalSemaphoreCount = 1;
     compSub.pSignalSemaphores    = &f.timelineSemaphore;
-    vkQueueSubmit(base_.ctx.computeQueue, 1, &compSub, VK_NULL_HANDLE);
+    {
+      ZoneScopedN("QueueSubmitCompute");
+      vkQueueSubmit(base_.ctx.computeQueue, 1, &compSub, VK_NULL_HANDLE);
+    }
 
     vkResetCommandBuffer(f.graphicsCmd, 0);
-    recordGraphicsCmd(f.graphicsCmd, imageIdx);
+    {
+      ZoneScopedN("RecordGraphicsCmd");
+      recordGraphicsCmd(f.graphicsCmd, imageIdx);
+    }
 
     std::array<uint64_t, 2> waitVals = {0, f.timelineValue};
     VkTimelineSemaphoreSubmitInfo tsWait{};
@@ -348,7 +363,10 @@ private:
     grSub.pCommandBuffers      = &f.graphicsCmd;
     grSub.signalSemaphoreCount = 1;
     grSub.pSignalSemaphores    = &f.renderFinished;
-    vkQueueSubmit(base_.ctx.graphicsQueue, 1, &grSub, f.inFlightFence);
+    {
+      ZoneScopedN("QueueSubmitGraphics");
+      vkQueueSubmit(base_.ctx.graphicsQueue, 1, &grSub, f.inFlightFence);
+    }
 
     VkPresentInfoKHR present{};
     present.sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -357,7 +375,10 @@ private:
     present.swapchainCount     = 1;
     present.pSwapchains        = &base_.ctx.swapchain;
     present.pImageIndices      = &imageIdx;
-    if(nShots > 0) base_.saveScreenshot(imageIdx, nShots);
+    if(nShots > 0) {
+      ZoneScopedN("SaveScreenshot");
+      base_.saveScreenshot(imageIdx, nShots);
+    }
     result = vkQueuePresentKHR(base_.ctx.graphicsQueue, &present);
     if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || base_.framebufferResized) {
       base_.framebufferResized = false;

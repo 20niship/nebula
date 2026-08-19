@@ -64,7 +64,7 @@ SIMS = [
         "id": "tc1", "exe": "fluid_pbf",
         "title": "TC1: Dam Break",
         "env": {}, "extra_args": ["--scenario", "dam-break"],
-        "params": "N~110K | dam-break (left-top half)",
+        "params": "N~100K | dam-break (left-top half)",
     },
     {
         "id": "tc2", "exe": "fluid_pbf",
@@ -80,7 +80,7 @@ SIMS = [
         "id": "tc3", "exe": "fluid_pbf",
         "title": "TC3: Jelly (High Viscosity)",
         "env": {"SIM_VISCOSITY_C": "0.5"}, "extra_args": [],
-        "params": "N~110K | rho0=2097 | visc=0.50",
+        "params": "N~100K | rho0=2097 | visc=0.50",
     },
     {
         "id": "tc4", "exe": "cloth_3d",
@@ -224,6 +224,8 @@ def _load_font(size: int):
     for path in [
         "/System/Library/Fonts/Helvetica.ttc",
         "/System/Library/Fonts/Arial.ttf",
+        "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     ]:
         try:
             return ImageFont.truetype(path, size)
@@ -505,6 +507,8 @@ def main():
                         help="perf-json に埋め込む commit sha (未指定なら git rev-parse HEAD)")
     parser.add_argument("--sim-timeout", type=float, default=0,
                         help="1シムあたりの最大実行秒数 (0=無制限; CIでのハング対策)")
+    parser.add_argument("--skip-sim", action="store_true",
+                        help="シム実行/既存フレーム削除をスキップし、OUT_DIR に既に保存済みのフレームだけでグリッド合成・動画エンコードする")
     cli = parser.parse_args()
 
     n_frames    = cli.frames
@@ -524,9 +528,13 @@ def main():
         if sim["exe"] is None:
             continue
         t0 = time.time()
-        frames, returncode = (
-            run_pyro_sim(sim, n_frames, sim_timeout) if sim.get("kind") == "pyro" else run_sim(sim, n_frames, sim_timeout)
-        )
+        if cli.skip_sim:
+            pattern = "frame*.png" if sim.get("kind") == "pyro" else "frame*.ppm"
+            frames, returncode = [str(p) for p in sorted((OUT_DIR / sim["id"]).glob(pattern))], 0
+        else:
+            frames, returncode = (
+                run_pyro_sim(sim, n_frames, sim_timeout) if sim.get("kind") == "pyro" else run_sim(sim, n_frames, sim_timeout)
+            )
         elapsed = time.time() - t0
         sim_frames[sim["id"]] = frames
         timing[sim["id"]]     = (len(frames), elapsed, returncode)

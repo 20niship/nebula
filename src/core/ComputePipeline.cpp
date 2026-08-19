@@ -7,9 +7,10 @@ VkShaderModule ComputePipeline::loadShader(const std::string& path) {
   std::ifstream file(path, std::ios::binary | std::ios::ate);
   if(!file.is_open()) throw std::runtime_error("Cannot open shader: " + path);
   size_t size = file.tellg();
-  std::vector<char> code(size);
+  std::vector<uint8_t> code(size);
   file.seekg(0);
-  file.read(code.data(), size);
+  file.read(reinterpret_cast<char*>(code.data()), size);
+  if(!file) throw std::runtime_error("Failed to read shader: " + path);
 
   return createShaderModuleFromSpirv(reinterpret_cast<const uint32_t*>(code.data()), size / sizeof(uint32_t));
 }

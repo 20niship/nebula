@@ -1,4 +1,5 @@
 #include "SoftBodyEngine.h"
+#include "../core/Profiling.h"
 
 #include <algorithm>
 #include <cstring>
@@ -65,6 +66,8 @@ void SoftBodyEngine::cleanup() {
 }
 
 void SoftBodyEngine::step(VkCommandBuffer cmd, float dt) {
+  ZoneScoped;
+  FrameMark;
   if(totalCount_ == 0) return;
 
   uploadForces(dt);
@@ -132,10 +135,8 @@ void SoftBodyEngine::step(VkCommandBuffer cmd, float dt) {
         pc.batchEdgeStart = start;
         pc.batchEdgeEnd   = end;
 
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kSolveEdge_.pipeline);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kSolveEdge_.pipelineLayout, 0, 1, &ds, 0, nullptr);
-        vkCmdPushConstants(cmd, kSolveEdge_.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(SimPC), &pc);
-        vkCmdDispatch(cmd, (cnt + 255u) / 256u, 1, 1);
+        kSolveEdge_.dispatch(cmd, ds, pc, cnt);
+        computeBarrier(cmd);
       }
 
       // 四面体体積拘束 (グラフ彩色バッチ)
@@ -148,12 +149,9 @@ void SoftBodyEngine::step(VkCommandBuffer cmd, float dt) {
         pc.densityIdx   = start; // batchTetStart
         pc.lambdaPbfIdx = end;   // batchTetEnd
 
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kSolveVolume_.pipeline);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kSolveVolume_.pipelineLayout, 0, 1, &ds, 0, nullptr);
-        vkCmdPushConstants(cmd, kSolveVolume_.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(SimPC), &pc);
-        vkCmdDispatch(cmd, (cnt + 255u) / 256u, 1, 1);
+        kSolveVolume_.dispatch(cmd, ds, pc, cnt);
+        computeBarrier(cmd);
       }
-      computeBarrier(cmd);
     }
 
     // ④ 粒子間衝突 (ボディ間反発)

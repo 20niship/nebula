@@ -15,7 +15,9 @@ class DefineShaderCompiler {
 public:
   // shaderSourceName: SHADER_SRC_DIR からの相対ファイル名 (例: "hash_count.comp")。
   // defines: マクロ名→値 (例: {"ADAPTIVE_MASK", "15u"})。
+  // isVertexShader: true なら .vert として、false(既定)なら .comp としてコンパイルする。
   // 失敗時 (ファイルが開けない・コンパイルエラー) は std::runtime_error を投げる。
   static std::vector<uint32_t> compile(const std::string& shaderSourceName,
-                                        const std::vector<std::pair<std::string, std::string>>& defines);
+                                        const std::vector<std::pair<std::string, std::string>>& defines,
+                                        bool isVertexShader = false);
 };

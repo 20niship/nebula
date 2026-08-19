@@ -1,5 +1,6 @@
 #include "SimulationEngine.h"
 #include "../core/DefineShaderCompiler.h"
+#include "../core/Profiling.h"
 
 #include <algorithm>
 #include <cstring>
@@ -231,6 +232,8 @@ void SimulationEngine::computeBarrier(VkCommandBuffer cmd) {
 // ─── 1フレームのシミュレーション ──────────────────────────────────────────
 
 void SimulationEngine::step(VkCommandBuffer cmd, float dt) {
+  ZoneScoped;
+  FrameMark;
   auto ds = attrBuf_.descriptorSet;
 
   uploadForces(dt);
@@ -281,9 +284,7 @@ void SimulationEngine::step(VkCommandBuffer cmd, float dt) {
     kZeroLambdas_.dispatch(cmd, ds, pc, pc.edgeCount);
     computeBarrier(cmd);
 
-    // ④ XPBD 距離拘束 (全色 × solverIterations 反復)
-    // 最適化: グラフ彩色により同一反復内の異なる色は頂点を共有しない
-    // → 色ループ内バリアを廃止し反復ごとに 1 バリアのみ (120→10 に削減)
+    // ④ XPBD 距離拘束 (全色 × solverIterations 反復)。同色内は頂点非共有だが色をまたぐと共有するため色ごとにバリアが必要(無いと暴走の原因になる)
     for(int iter = 0; iter < solverIterations; ++iter) {
       for(int color = 0; color < nColors_; ++color) {
         uint32_t start = colorBatch_cpu_[color];
@@ -296,14 +297,9 @@ void SimulationEngine::step(VkCommandBuffer cmd, float dt) {
         // 色 8–11 はベンドエッジ: bendCompliance を使う
         pc.stretchCompliance = (color >= 8) ? bendCompliance : stretchCompliance;
 
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kSolveStretch_.pipeline);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kSolveStretch_.pipelineLayout, 0, 1, &ds, 0, nullptr);
-        vkCmdPushConstants(cmd, kSolveStretch_.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(SimPC), &pc);
-        vkCmdDispatch(cmd, (cnt + 255) / 256, 1, 1);
-        // バリア不要: 同一反復内で異なる色の辺は頂点非共有
+        kSolveStretch_.dispatch(cmd, ds, pc, cnt);
+        computeBarrier(cmd);
       }
-      // 反復間のバリア: 次の反復が今回の位置書き込みを読む
-      computeBarrier(cmd);
     }
 
     // ⑤ SDF 再適用 (拘束後の境界修正)
@@ -317,19 +313,9 @@ void SimulationEngine::step(VkCommandBuffer cmd, float dt) {
       computeBarrier(cmd);
       kHashCount_.dispatch(cmd, ds, pc, cfg_.clothVertCount());
       computeBarrier(cmd);
-      {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanLocal_.pipeline);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanLocal_.pipelineLayout, 0, 1, &ds, 0, nullptr);
-        vkCmdPushConstants(cmd, kHashScanLocal_.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(SimPC), &pc);
-        vkCmdDispatch(cmd, (cfg_.totalCells() + 255u) / 256u, 1, 1);
-      }
+      kHashScanLocal_.dispatch(cmd, ds, pc, cfg_.totalCells());
       computeBarrier(cmd);
-      {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanGlobal_.pipeline);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanGlobal_.pipelineLayout, 0, 1, &ds, 0, nullptr);
-        vkCmdPushConstants(cmd, kHashScanGlobal_.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(SimPC), &pc);
-        vkCmdDispatch(cmd, 1, 1, 1);
-      }
+      kHashScanGlobal_.dispatchRaw(cmd, ds, &pc, sizeof(SimPC), 1);
       computeBarrier(cmd); // exclusive prefix を書き戻してから kHashAddBase_ が読む
       kHashAddBase_.dispatch(cmd, ds, pc, cfg_.totalCells());
       computeBarrier(cmd);

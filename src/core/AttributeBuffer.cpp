@@ -1,6 +1,18 @@
 #include "AttributeBuffer.h"
 #include <cstring>
+#include <glm/gtc/packing.hpp>
 #include <stdexcept>
+
+namespace {
+std::vector<uint32_t> packVec4Array(const glm::vec4* data, size_t n) {
+  std::vector<uint32_t> out(n * 2);
+  for(size_t i = 0; i < n; ++i) {
+    out[i * 2]     = glm::packHalf2x16(glm::vec2(data[i].x, data[i].y));
+    out[i * 2 + 1] = glm::packHalf2x16(glm::vec2(data[i].z, data[i].w));
+  }
+  return out;
+}
+} // namespace
 
 // Declared in tests/helpers/VkWrapper.mm (ObjC++ NSException catcher).
 // On non-Apple or non-test builds this symbol may not exist; keep it isolated here.
@@ -235,6 +247,33 @@ void AttributeBuffer::uploadScattered(const std::string& name, const void* packe
   vkQueueWaitIdle(queue);
   vkFreeCommandBuffers(device_, cmdPool, 1, &cmd);
   vmaDestroyBuffer(allocator_, stageBuf, stageAlloc);
+}
+
+void AttributeBuffer::uploadVec4(const std::string& name, const glm::vec4* data, uint32_t n, VkCommandPool cmdPool, VkQueue queue, bool half) {
+  if(half) {
+    std::vector<uint32_t> packed = packVec4Array(data, n);
+    upload(name, packed.data(), sizeof(uint32_t) * packed.size(), cmdPool, queue);
+  } else {
+    upload(name, data, sizeof(glm::vec4) * n, cmdPool, queue);
+  }
+}
+
+void AttributeBuffer::uploadVec4At(const std::string& name, const glm::vec4& v, uint32_t slot, VkCommandPool cmdPool, VkQueue queue, bool half) {
+  if(half) {
+    uint32_t packed[2] = {glm::packHalf2x16(glm::vec2(v.x, v.y)), glm::packHalf2x16(glm::vec2(v.z, v.w))};
+    uploadAt(name, packed, sizeof(packed), (VkDeviceSize)slot * sizeof(packed), cmdPool, queue);
+  } else {
+    uploadAt(name, &v, sizeof(glm::vec4), (VkDeviceSize)slot * sizeof(glm::vec4), cmdPool, queue);
+  }
+}
+
+void AttributeBuffer::uploadVec4Scattered(const std::string& name, const std::vector<glm::vec4>& data, const std::vector<uint32_t>& dstIndices, VkCommandPool cmdPool, VkQueue queue, bool half) {
+  if(half) {
+    std::vector<uint32_t> packed = packVec4Array(data.data(), data.size());
+    uploadScattered(name, packed.data(), sizeof(uint32_t) * 2, dstIndices, cmdPool, queue);
+  } else {
+    uploadScattered(name, data.data(), sizeof(glm::vec4), dstIndices, cmdPool, queue);
+  }
 }
 
 void AttributeBuffer::resizeAttribute(const std::string& name, uint32_t newCount, VkCommandPool cmdPool, VkQueue queue) {

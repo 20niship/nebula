@@ -2,10 +2,7 @@
 #extension GL_EXT_nonuniform_qualifier : enable
 #include "common.glsl"
 
-// Phase 4 PBF: λ_i から位置補正 ΔP_i を計算して predP に加算
-// 人工圧力 s_corr で Tensile Instability を抑制
-// pc.stretchCompliance = ρ_0
-// pc.cellSize          = h
+// Phase 4 PBF: λ_i から位置補正 ΔP_i を計算しpredPに加算(人工圧力s_corrでTensile Instability抑制; pc.stretchCompliance=ρ_0, pc.cellSize=h)
 
 layout(local_size_x = 256) in;
 
@@ -34,6 +31,12 @@ void main() {
     float h2  = h * h;
     float rho0 = pc.stretchCompliance;
     float lambda_i = readFloat(pc.lambdaPbfIdx, idx);
+#ifdef NBR_SORTED_BUFFERS
+    // issue #87 perf実験: 自分自身のソート後位置(下位24bit)とnbrCount(上位8bit)を1語から取り出す
+    uint packedSelf = readUint(pc.invSortedIdxIdx, idx);
+    uint kSelf = packedSelf & 0xFFFFFFu;
+    uint nbrN  = packedSelf >> 24;
+#endif
 
     float spiky_coeff = 45.0 / (3.14159265 * h2 * h2 * h2);
     float poly6_coeff = 315.0 / (64.0 * 3.14159265 * h2 * h2 * h2 * h2 * h);
@@ -50,10 +53,24 @@ void main() {
     vec3 cohesion = vec3(pc.surfaceTension * 0.0001, 0.0, 0.0); // DEBUG TEMP
     float rho_i  = readFloat(pc.densityIdx, idx);
 
+#ifdef NBR_SORTED_BUFFERS
+    // issue #87 perf実験: 27セル探索は pbf_density が同イテレーション内で済ませており、
+    // nbrList には(元indexではなく)sorted位置kを格納しているのでソート済みコピーを直接読む。
+    // nbrListに入る候補は既にpbf_density側で流体・境界・粉体のみに絞り込み済みなので
+    // ここでの型フィルタは不要 (typeFlagはpredPSorted.wに値として格納)。
+    uint nbrBase = idx * MAX_NBR;
+
+    for (uint kk = 0u; kk < nbrN; ++kk) {
+        uint k   = readUint(pc.nbrListIdx, nbrBase + kk);
+        vec4 pjv = readVec4(pc.predPSortedIdx, k);
+        uint fj  = uint(pjv.w + 0.5);
+
+        vec3 pj = pjv.xyz;
+#else
+    // NBR_SORTED_BUFFERS未定義の呼び出し元(FluidEngine以外)向けフォールバック: nbrList/ソート済み
+    // コピーは書かれていないため、pbf_density同様に自前で27セル探索する。
     ivec3 gi = ivec3(clamp((pi - pc.worldMin) / pc.cellSize,
                            vec3(0.0), vec3(pc.gridRes) - vec3(1.0)));
-
-    // 27近傍セルのMorton符号を軸ごとに事前計算し、ループ内での重複計算を避ける
     uint mx[3], my[3], mz[3];
     mortonAxisTriples(gi, mx, my, mz);
 
@@ -69,42 +86,55 @@ void main() {
         uint start = readUint(pc.cellOffsetIdx, cid) - cnt;
 
         for (uint k = start; k < start + cnt; ++k) {
-            uint j  = readUint(pc.sortedIdxIdx, k);
-            if (j == idx) continue;
-            uint fj = readUint(pc.typeFlagIdx, j);
-            if (fj != 1u && fj != 3u && fj != 5u) continue; // 流体・境界・粉体
+        uint j  = readUint(pc.sortedIdxIdx, k);
+        if (j == idx) continue;
+        uint fj = readUint(pc.typeFlagIdx, j);
+        if (fj != 1u && fj != 3u && fj != 5u) continue; // 流体・境界・粉体
 
-            vec3 pj = readVec4(pc.predPIdx, j).xyz;
-            vec3 r  = pi - pj;
-            float r2 = dot(r, r);
-            if (r2 >= h2 || r2 < 1e-12) continue;
+        vec3 pj = readVec4(pc.predPIdx, j).xyz;
+#endif
+        vec3 r  = pi - pj;
+        float r2 = dot(r, r);
+        if (r2 >= h2 || r2 < 1e-12) continue;
 
-            float rlen = sqrt(r2);
-            float hr   = h - rlen;
-            // Spiky グラジエント: ∇_{p_i} W = -45/(π h^6) (h-r)^2 r̂_{ji}
-            // r = pi - pj (j→i 方向)、負符号でグラジエントは i→j 方向になる
-            vec3 grad_w = -(spiky_coeff * hr * hr / rlen) * r;
+        float rlen = sqrt(r2);
+        float hr   = h - rlen;
+        // Spiky グラジエント: ∇_{p_i} W = -45/(π h^6) (h-r)^2 r̂_{ji}
+        // r = pi - pj (j→i 方向)、負符号でグラジエントは i→j 方向になる
+        vec3 grad_w = -(spiky_coeff * hr * hr / rlen) * r;
 
-            // 境界粒子の λ_j = 0 (固定)。粉体は流体と同様に λ を使用。
-            float lambda_j = (fj == 1u || fj == 5u) ? readFloat(pc.lambdaPbfIdx, j) : 0.0;
+#ifdef NBR_SORTED_BUFFERS
+        // 境界粒子の λ_j = 0 (固定)。粉体は流体と同様に λ を使用。
+        float lambda_j = (fj == 1u || fj == 5u) ? readFloat(pc.lambdaPbfSortedIdx, k) : 0.0;
+#else
+        float lambda_j = (fj == 1u || fj == 5u) ? readFloat(pc.lambdaPbfIdx, j) : 0.0;
+#endif
 
-            // 人工圧力 s_corr = -k * (W(r)/W(Δq))^4
-            float hr2  = h2 - r2;
-            float W_ij = poly6_coeff * hr2 * hr2 * hr2;
-            float ratio = (W_dq > 1e-30) ? (W_ij / W_dq) : 0.0;
-            float s_corr = -k_corr * ratio * ratio * ratio * ratio;
+        // 人工圧力 s_corr = -k * (W(r)/W(Δq))^4
+        float hr2  = h2 - r2;
+        float W_ij = poly6_coeff * hr2 * hr2 * hr2;
+        float ratio = (W_dq > 1e-30) ? (W_ij / W_dq) : 0.0;
+        float s_corr = -k_corr * ratio * ratio * ratio * ratio;
 
-            deltaP += (lambda_i + lambda_j + s_corr) * grad_w;
+        deltaP += (lambda_i + lambda_j + s_corr) * grad_w;
 
-            // 表面張力: 流体粒子同士のみ (境界/粉体には適用しない)
-            if (pc.surfaceTension > 0.0 && fj == 1u) {
-                float rho_j = readFloat(pc.densityIdx, j);
-                float k_ij  = 2.0 * rho0 / max(rho_i + rho_j, 1e-6);
-                float Cr    = cohesionKernel(rlen, h);
-                cohesion   += -pc.surfaceTension * k_ij * Cr * (r / rlen);
-            }
+        // 表面張力: 流体粒子同士のみ (境界/粉体には適用しない)
+        if (pc.surfaceTension > 0.0 && fj == 1u) {
+#ifdef NBR_SORTED_BUFFERS
+            float rho_j = readFloat(pc.densitySortedIdx, k);
+#else
+            float rho_j = readFloat(pc.densityIdx, j);
+#endif
+            float k_ij  = 2.0 * rho0 / max(rho_i + rho_j, 1e-6);
+            float Cr    = cohesionKernel(rlen, h);
+            cohesion   += -pc.surfaceTension * k_ij * Cr * (r / rlen);
+        }
+#ifdef NBR_SORTED_BUFFERS
+    }
+#else
         }
     }
+#endif
 
     deltaP /= rho0;
     deltaP += cohesion;
@@ -117,4 +147,8 @@ void main() {
 
     vec4 newP = vec4(pi + deltaP, pi4.w);
     writeVec4(pc.predPIdx, idx, newP);
+#ifdef NBR_SORTED_BUFFERS
+    // 次iterationのdensityが読む。predPSorted.wはtypeFlag格納用(HALF_VEC4でも壊れない値として)なのでpi4.wでなくfiを詰める
+    writeVec4(pc.predPSortedIdx, kSelf, vec4(pi + deltaP, float(fi)));
+#endif
 }

@@ -5,9 +5,7 @@ layout(set = 0, binding = 0) buffer StorageBuffers {
     uint data[];
 } buffers[];
 
-// C++側 src/core/SimPC.h と同一オフセット順であること (offsetof の static_assert 参照)。
-// hash compat: cellCountIdx(20)/cellOffsetIdx(24)/hashCells(36) は MPMSimPC (mpm_common.glsl)
-// と完全一致。gridRes/worldMin/worldMax はこの3フィールドより後ろにあるため一致不要。
+// SimPC.h と同一オフセット。cellCountIdx/cellOffsetIdx/hashCells は MPMSimPC と hash compat。
 layout(push_constant) uniform PC {
     // Bindless indices
     uint  posIdx;
@@ -59,9 +57,7 @@ layout(push_constant) uniform PC {
     // 吸収ポート (fluid_absorb 専用; 他シェーダーは宣言のみで不使用)
     uint  absorberBufIdx;   // 吸収形状バッファの bindless index (8 floats × absorberCount)
     uint  absorberCount;    // 有効な吸収形状数 (0 = 吸収パスをスキップ)
-    // 流体パーティクル領域の開始オフセット (= FluidEngine の cfg_.max_boundary)。
-    // 既定値0=オフセットなしのため、設定しない他エンジンのシェーダーは影響を受けない。
-    uint  fluidStart;
+    uint  fluidStart; // cfg_.max_boundary; 0=他エンジンで未使用
     // 泡 (foam/spray/bubble) 二次パーティクル (pbf_foam_generate/pbf_foam_advect 専用; issue #47)
     uint  foamPosIdx;
     uint  foamVelIdx;
@@ -70,11 +66,33 @@ layout(push_constant) uniform PC {
     uint  maxDiffuseParticles;
     // 表面張力 (pbf_delta_p 専用; Akinci 2013 cohesion。他シェーダーは宣言のみで不使用)
     float surfaceTension;
+    // 近傍リストキャッシュ (pbf_density/pbf_delta_p 専用; issue #87 perf実験)
+    uint  nbrListIdx;
+    // 粒子バッファの物理ソート済みコピー (pbf_density/pbf_delta_p 専用; issue #87 perf実験)
+    uint  predPSortedIdx;
+    uint  densitySortedIdx;
+    uint  lambdaPbfSortedIdx;
+    uint  invSortedIdxIdx;
+    // 最終pos/velのソート済みコピー (pbf_viscosity 専用; issue #87 perf実験 続き)
+    uint  posSortedIdx;
+    uint  velSortedIdx;
 } pc;
 
-// ── vec4 読み書き（FP32, MoltenVK 関数化バグ回避のためマクロ）────
-// FP16 は worldSize=20m で位置精度 ~2cm となり PBF 補正量と同オーダーになって
-// シミュレーションが発散するため FP32 を維持する
+#ifndef MAX_NBR
+#define MAX_NBR 48u
+#endif
+
+// HALF_VEC4: FluidEngine --large 専用。小ドメインのみ安全 (大ドメインは位置精度不足で発散)。
+#ifdef HALF_VEC4
+#define readVec4(bufIdx, i) vec4( \
+    unpackHalf2x16(buffers[(bufIdx)].data[(i) * 2u]), \
+    unpackHalf2x16(buffers[(bufIdx)].data[(i) * 2u + 1u]))
+
+#define writeVec4(bufIdx, i, v) { \
+    uint _wb = (i) * 2u; \
+    buffers[(bufIdx)].data[_wb     ] = packHalf2x16((v).xy); \
+    buffers[(bufIdx)].data[_wb + 1u] = packHalf2x16((v).zw); }
+#else
 #define readVec4(bufIdx, i) vec4( \
     uintBitsToFloat(buffers[(bufIdx)].data[(i) * 4u     ]), \
     uintBitsToFloat(buffers[(bufIdx)].data[(i) * 4u + 1u]), \
@@ -87,6 +105,21 @@ layout(push_constant) uniform PC {
     buffers[(bufIdx)].data[_wb + 1u] = floatBitsToUint((v).y); \
     buffers[(bufIdx)].data[_wb + 2u] = floatBitsToUint((v).z); \
     buffers[(bufIdx)].data[_wb + 3u] = floatBitsToUint((v).w); }
+#endif
+
+// HALF_VEC4_V: v/omega のみ half (大ドメイン安定用; HALF_VEC4 時は自動的に適用)
+#if defined(HALF_VEC4) || defined(HALF_VEC4_V)
+#define readVec4Vel(bufIdx, i) vec4( \
+    unpackHalf2x16(buffers[(bufIdx)].data[(i) * 2u]), \
+    unpackHalf2x16(buffers[(bufIdx)].data[(i) * 2u + 1u]))
+#define writeVec4Vel(bufIdx, i, v) { \
+    uint _wv = (i) * 2u; \
+    buffers[(bufIdx)].data[_wv     ] = packHalf2x16((v).xy); \
+    buffers[(bufIdx)].data[_wv + 1u] = packHalf2x16((v).zw); }
+#else
+#define readVec4Vel(bufIdx, i)      readVec4(bufIdx, i)
+#define writeVec4Vel(bufIdx, i, v)  writeVec4(bufIdx, i, v)
+#endif
 
 #define readUint(bufIdx, i)      buffers[(bufIdx)].data[(i)]
 #define writeUint(bufIdx, i, v)  buffers[(bufIdx)].data[(i)] = (v)
@@ -94,24 +127,8 @@ layout(push_constant) uniform PC {
 #define readFloat(bufIdx, i)     uintBitsToFloat(buffers[(bufIdx)].data[(i)])
 #define writeFloat(bufIdx, i, v) buffers[(bufIdx)].data[(i)] = floatBitsToUint(v)
 
-// ── アダプティブ(直方体)Morton符号 ────────────────────────────────
-// 通常のMorton(Z-order)符号化は3軸を常に固定3ビット周期でinterleaveするため、
-// 異方性ドメイン(軸ごとの実セル数の差が大きい)では最大軸のビット幅で全軸を
-// 揃えた立方体を確保する必要があり大きな無駄が生じる。アダプティブ版は
-// 「全軸が共通して持つ下位ビット(commonBits=min(bx,by,bz))」だけ従来通り
-// 3軸interleaveし、残りは軸ごとに連結するだけに留める。局所性(27近傍探索
-// でのメモリ距離)は数値実験で通常Mortonと完全に同一と確認済みだが、セル数は
-// bx+by+bz ビット分 (=2^bx*2^by*2^bz) まで縮小できる。
-//
-// ADAPTIVE_MASK/ADAPTIVE_COMMON_BITS/ADAPTIVE_SHIFT_X,Y,Z はシェーダー内で
-// 計算せず、ドメイン形状(gridRes)から一度だけ C++側(src/core/Domain.h の
-// AdaptiveMortonParams/computeAdaptiveMortonParams()) で算出した値を、各
-// エンジンの実行時コンパイル(DefineShaderCompiler)で #define として注入する。
-// このファイルはビルド時に静的コンパイルされるシェーダーにも #include される
-// ため、未定義でもコンパイルが通るようフォールバック値を用意しておく
-// (実際に cellId()/mortonAxisTriples() を呼ぶシェーダーは必ず実行時コンパイル
-// 側で正しい値を注入すること。フォールバックの0のままだと mask=0 となり
-// 近傍探索が壊れるため、フォールバックはあくまで「未使用シェーダーの保険」)。
+// アダプティブ Morton: 異方性ドメイン向け。定数は C++ 側から実行時コンパイルで注入。
+// フォールバック 0 は「cellId() を呼ばないシェーダー用の保険」; 実使用シェーダーでは必ず注入すること。
 #ifndef ADAPTIVE_MASK
 #define ADAPTIVE_MASK 0u
 #define ADAPTIVE_COMMON_BITS 0u
@@ -120,8 +137,6 @@ layout(push_constant) uniform PC {
 #define ADAPTIVE_SHIFT_Z 0u
 #endif
 
-// 下位 commonBits ビットの3軸interleave部分に使う標準Morton展開
-// (標準10bit展開、gridRes=64の6bitでも正しく動作)。
 uint mortonExpand(uint v) {
     v = (v | (v << 16u)) & 0x030000FFu;
     v = (v | (v <<  8u)) & 0x0300F00Fu;
@@ -140,14 +155,7 @@ uint cellId(vec3 p) {
     return cx | cy | cz;
 }
 
-// ── 27近傍セル走査用: 軸ごとのアダプティブMorton成分を事前計算 ──────────
-// dx,dy,dz∈{-1,0,1}の27通りを毎回 cellId() 相当で計算すると、同じ軸値
-// (gi.x-1, gi.x, gi.x+1 等) に対する重複計算が26/27発生する。
-// 軸ごとに3値だけ計算しておき、ループ内では mx[dx+1]|my[dy+1]|mz[dz+1] で
-// 組み合わせる(interleave部の<<1u/<<2uと上位連結部のシフトは各軸の値自体に
-// 焼き込み済みのため、呼び出し側で追加シフトは不要)。
-// 範囲外座標 (gi±1 が [0,gridRes) の外) の要素は呼び出し側の境界チェックで
-// 使用されないため、値自体は計算しても捨てられるだけで安全。
+// 27近傍: 軸ごとに3値を事前計算してループ内で |演算。26/27の重複計算を削減。
 void mortonAxisTriples(ivec3 gi, out uint mx[3], out uint my[3], out uint mz[3]) {
     for(int k = 0; k < 3; ++k) {
         uint vx = uint(gi.x - 1 + k);

@@ -48,6 +48,7 @@ jobs:
           export VK_ICD_FILENAMES="$ICD"
           # GLFW ウィンドウを開くサンプル用に仮想ディスプレイ (Xvfb) を用意する
           xvfb-run -a python3 capture_sim.py --frames 60 \
+            --sim-timeout 300 \
             --perf-json "$GITHUB_WORKSPACE/benchmarks/baseline.json" \
             --commit-sha "${{ github.sha }}"
 

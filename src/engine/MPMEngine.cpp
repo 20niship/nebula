@@ -1,4 +1,5 @@
 #include "MPMEngine.h"
+#include "../core/Profiling.h"
 
 #include <cmath>
 #include <cstring>
@@ -402,6 +403,8 @@ MPMSimPC MPMEngine::buildPC(float subDt) const {
 // ── ステップ ──────────────────────────────────────────────────────────────
 
 void MPMEngine::step(VkCommandBuffer cmd, float dt) {
+  ZoneScoped;
+  FrameMark;
   // Emitter (GPU upload は compute dispatch の前に完結)
   emitFromEmitters(dt);
 

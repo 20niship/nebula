@@ -15,10 +15,6 @@
 #include "EngineBase.h"
 #include "SimPC.h"
 
-// issue #46: ドメインは domainSize(vec3, 物理サイズ[m]) + cellSize(float, 全軸共通の
-// セルサイズ[m]) で指定する。h = cellSize, 粒子間隔 d = particleSpacing() = 2*particleRadius
-// 推奨: h >= 2d → cellSize >= 2 * particleSpacing()
-// issue #78: 粒子サイズの知識源を particleRadius 一本に統合(旧 fluid_nx/ny/nz は廃止)。
 struct FluidConfig {
   float particleRadius = 20.0f / 192.0f / 2.0f; // 唯一のサイズ知識源 (spacing = 2*radius)
 
@@ -26,9 +22,13 @@ struct FluidConfig {
   float cellSize = 20.0f / 64.0f;            // 全軸共通のセルサイズ [m] (旧 grid_res の逆算値)
   uint32_t max_boundary = 50000;
 
-  // 泡 (spray/foam/bubble) 二次パーティクルの固定容量 (issue #47)。
-  // 0 = 無効（バッファ確保・パイプラインdispatchとも完全スキップ、既存挙動に影響なし）
-  uint32_t maxDiffuseParticles = 0;
+  uint32_t maxDiffuseParticles = 0; // 0=無効 (バッファ・dispatch 完全スキップ)
+
+  // fluidCount() の理論値は大ドメインで実使用量を大幅に超えるため、実量に近い値を指定して初期確保を抑える。
+  uint32_t initialCapacityHint = 0;
+
+  bool halfVec4    = false; // 全 vec4 half (小ドメイン専用; 大ドメインでは位置精度不足で発散)
+  bool halfVec4Vel = false; // v/omega のみ half (大ドメインでも安定; P/predP は FP32 維持)
 
   float particleSpacing() const { return particleRadius * 2.0f; }
   // domain体積を粒子スペーシングの立方体で埋め尽くした場合の粒子数 (GPUバッファ確保上限)
@@ -63,8 +63,6 @@ struct FluidConfig {
   }
 };
 
-// 重力は addForce() で GravityForce を登録すること (issue #30 レビュー対応:
-// gravity の public メンバは廃止)。
 class FluidEngine : public EngineBase {
 public:
   void init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const FluidConfig& cfg = {});
@@ -79,10 +77,7 @@ public:
   void clearEmitters();
   uint32_t nFluid() const { return nFluid_; }
 
-  // 現在確保済みの全パーティクル用バッファ容量（境界固定領域 + 流体可変長領域 +
-  // ディスパッチ端数パディング）。growFluidCapacity() による動的拡張（Issue #13）で
-  // 増加し得るため、呼び出し側（CPU側の readback 先バッファ等）は cfg().fluidCount() 等の
-  // 静的な初期値ではなく、毎フレームこれを見てサイズを追従させること。
+  // growFluidCapacity() で増加するため呼び出し側は毎フレーム参照すること。
   uint32_t totalParticleCapacity() const { return totalBufferCapacity(); }
 
   void loadBoundary(const std::string& objPath, float spacing);
@@ -107,9 +102,6 @@ public:
   int pbfIterations = 2;
   int numSubsteps   = 2;
 
-  // ── PBF 論文準拠の追加パラメータ ──────────────────────────────────────────
-  // ε=3000 / damping=0.6 は元のハードコード値。論文忠実化(ε↓・人工圧力有効化)は
-  // 発散したため一旦この既定に戻している。チューニングは ImGui または CLI 引数で行う。
   float cfmEpsilon       = 3000.0f; // CFM 緩和 ε (式11)。元のハードコード値
   float scorrK           = 0.001f;  // 人工圧力 k (式13; 0=無効)
   float surfaceTension   = 0.0f;    // 表面張力係数 σ (Akinci 2013 cohesion; 0=無効)
@@ -143,11 +135,7 @@ public:
   // 吸収形状を登録（毎フレーム step() の前に呼ぶ; absorbers が空なら吸収パスをスキップ）
   void setAbsorbers(const std::vector<AbsorberDesc>& absorbers);
 
-  // ── 泡 (spray/foam/bubble) 二次パーティクル (issue #47) ───────────────────
-  // Ihmsen et al. 2012 "Unified Spray, Foam, and Bubbles" のポテンシャル関数を
-  // 簡略化して用いる。生成数 n = dt*(kTa*Ψ(Ita,taLo,taHi) + kWc*Ψ(Iwc,wcLo,wcHi))
-  //                              * Ψ(Ike,keLo,keHi)   (Ψ = クランプ付き線形正規化)
-  struct FoamParams {
+  struct FoamParams { // Ihmsen 2012 ポテンシャル関数ベース
     float kTa = 4000.0f, kWc = 4000.0f;                // 生成係数 (trapped-air / wave-crest)
     float taLo = 5.0f, taHi = 20.0f;                    // trapped-air 正規化範囲
     float wcLo = 1.0f, wcHi = 5.0f;                     // wave-crest 正規化範囲
@@ -163,26 +151,22 @@ public:
 
   // 泡パラメータを登録（毎フレーム呼ぶ必要はない。setAbsorbers と同様 upload のみ）
   void setFoamParams(const FoamParams& params);
-  // ランタイムON/OFF。false のとき kFoamGenerate_/kFoamAdvect_ は完全にdispatchされない
-  // (maxDiffuseParticles==0 の場合と異なりバッファは確保済みのまま保持される)
-  bool foamEnabled = false;
+  bool foamEnabled = false; // false のとき dispatch スキップ (バッファは保持)
 
-  uint32_t foamPosIdx() const { return foamPosIdx_; }   // 描画側から参照 (vec4: xyz=pos, w=残り寿命)
-  uint32_t foamVelIdx() const { return foamVelIdx_; }   // vec4: xyz=vel, w=初期寿命
-  uint32_t foamKindIdx() const { return foamKindIdx_; } // uint: 0=死/未使用,1=spray,2=foam,3=bubble
+  uint32_t foamPosIdx() const { return pc_.foamPosIdx; }   // 描画側から参照 (vec4: xyz=pos, w=残り寿命)
+  uint32_t foamVelIdx() const { return pc_.foamVelIdx; }   // vec4: xyz=vel, w=初期寿命
+  uint32_t foamKindIdx() const { return pc_.foamKindIdx; } // uint: 0=死/未使用,1=spray,2=foam,3=bubble
 
-  // テスト/デバッグ用: kFoamGenerate_ を経由せず特定スロットへ直接書き込む
-  // (advect パス単体テスト等で使用; issue #47)
   void debugSetFoamSlot(uint32_t slot, glm::vec4 pos, glm::vec4 vel, uint32_t kind);
 
   VkDescriptorSetLayout descriptorSetLayout = VK_NULL_HANDLE;
   VkDescriptorSet descriptorSet             = VK_NULL_HANDLE;
-  uint32_t posIdx                           = 0;
-  uint32_t velIdx                           = 0;
+  uint32_t posIdx() const { return pc_.posIdx; }
+  uint32_t velIdx() const { return pc_.velIdx; }
   // 外部シェーダー（fluid_absorb.comp 等）からも参照されるバッファインデックス
-  uint32_t predPIdx    = 0;
-  uint32_t invMassIdx  = 0;
-  uint32_t typeFlagIdx = 0;
+  uint32_t predPIdx() const { return pc_.predPIdx; }
+  uint32_t invMassIdx() const { return pc_.invMassIdx; }
+  uint32_t typeFlagIdx() const { return pc_.typeFlagIdx; }
 
   VkBuffer getPositionBuffer() const;
   // 泡バッファの直接読み戻し用 (テスト/デバッグ; issue #47)
@@ -205,33 +189,16 @@ public:
 private:
   FluidConfig cfg_;
 
-  // ── 動的粒子数確保 (Issue #13) ──────────────────────────────────────────
-  // バッファレイアウト: [0, max_boundary) 境界(固定) | [max_boundary, max_boundary+fluidCapacity_) 流体(可変長)
-  //                     | 末尾 kDispatchPad 要素は端数ワークグループの安全マージン
   uint32_t fluidCapacity_                = 0;   // 現在確保済みの流体パーティクル容量 (>= nFluid_)
   static constexpr uint32_t kDispatchPad = 256; // ローカルワークグループサイズと同じ
   uint32_t totalBufferCapacity() const { return cfg_.max_boundary + fluidCapacity_ + kDispatchPad; }
   void growFluidCapacity(uint32_t minRequired);
 
-  uint32_t cellCountIdx_  = 0;
-  uint32_t cellOffsetIdx_ = 0;
-  uint32_t sortedIdxIdx_  = 0;
-  uint32_t densityIdx_    = 0;
-  uint32_t lambdaPbfIdx_  = 0;
-  uint32_t omegaIdx_      = 0; // 渦度 ω バッファ (vec4 × N)
-  uint32_t lifeIdx_       = 0; // 残り寿命 (float × N; <0=無限)
+  // 近傍リストキャッシュ (issue #87 perf実験): 48だと高密度シーン(TC13, h=2*spacing)で近傍が切り捨てられ発散するため96
+  static constexpr uint32_t kMaxNeighbors = 96;
+  // lifeIdx_ は廃止: 寿命はv.w(velIdx)に格納 (task2: バッファ統合)
   uint32_t emitterIdxIdx_ = 0; // 放出元エミッタindex (uint × N)
   bool lifetimeEnabled_   = false; // lifetime>0のEmitterが登録されたら有効(lifetimeパスを実行)
-
-  // 吸収パス用プライベートメンバー
-  uint32_t absorberBufIdx_ = 0; // absorbers バッファの bindless index
-  uint32_t absorberCount_  = 0; // 現フレームの有効吸収形状数
-
-  // 泡 (spray/foam/bubble) 二次パーティクル用プライベートメンバー (issue #47)
-  uint32_t foamPosIdx_    = 0;
-  uint32_t foamVelIdx_    = 0;
-  uint32_t foamKindIdx_   = 0; // 末尾1要素は生成カーソル (atomicAdd)
-  uint32_t foamParamsIdx_ = 0;
 
   ComputePipeline kPredictSdf_;
   ComputePipeline kSdfVelocity_; // issue #66: SDF境界再衝突+速度更新を統合(旧kSdfCollision_+kUpdateVelocity_)
@@ -246,7 +213,7 @@ private:
   ComputePipeline kHashAddBase_;
   ComputePipeline kVorticityOmega_;
   ComputePipeline kVorticityForce_;
-  ComputePipeline kAbsorb_;       // 吸収パス（fluid_absorb.comp; absorberCount_>0 のときのみ使用）
+  ComputePipeline kAbsorb_;       // 吸収パス（fluid_absorb.comp; pc_.absorberCount>0 のときのみ使用）
   ComputePipeline kFoamGenerate_; // 泡生成パス（pbf_foam_generate.comp; foamEnabled かつ maxDiffuseParticles>0 のときのみ使用）
   ComputePipeline kFoamAdvect_;   // 泡移流・分類パス（pbf_foam_advect.comp; 同上）
   ComputePipeline kLifetime_;     // 寿命パス（fluid_lifetime.comp; lifetimeEnabled_ のときのみ使用）
@@ -273,4 +240,7 @@ private:
   void reclaimDeadSlots_();          // slotDeath_<=simTime_ の生存スロットを空きへ回収する
 
   void computeBarrier(VkCommandBuffer cmd);
+
+  // バッファindex類はinit()/setAbsorbers()で一度だけ設定され、step()内で毎substep書き換わる値のみ更新される
+  SimPC pc_{};
 };

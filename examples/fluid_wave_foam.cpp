@@ -2,6 +2,7 @@
 // ドメイン左側で単振動(SHM)する壁パドルが波を起こし、右側に並べた複数の Bunny
 // メッシュへ波が衝突して泡を生成する。海面のリアルなレンダリング検証を想定。
 #include "App.h"
+#include "core/DefineShaderCompiler.h"
 #include "core/Emitter.h"
 #include "core/Force.h"
 #include "engine/BoundaryParticles.h"
@@ -27,49 +28,22 @@
 static const std::string SHADER_DIR_STR = SHADER_DIR;
 static const std::string ASSET_DIR_STR  = ASSET_DIR;
 
-// run()/initVulkan() の両方から参照する定数 (旧: 同名のローカル変数が
-// それぞれの関数内で重複定義されていた)。
-constexpr float HALF_Y   = 3.0f; // 流体薄層の奥行き半幅 [m]
-constexpr float Y_MARGIN = 1.0f; // パドル/水面がドメインY境界にちょうど触れないようにする余白 [m]
-// パドル境界パーティクルの配置間隔は、流体粒子間隔 d=particleSpacing() に対する比率で決める
-// (固定値0.15mだと d=0.12m(nx=200時) より粗く、境界の方が疎になってしまう)。
-// PBFの境界拘束は密度制約(rho=Σ poly6(r))に基づく「柔らかい」拘束で、境界パーティクルが
-// 疎だと同じ体積でも計算される密度が低く出て C=rho/rho0-1 が小さいまま→λが弱く
-// →deltaPによる押し返しが弱く、パドルの往復のたびに背後へ回り込んだ流体がほぼ無抵抗で
-// 貫通してしまう不具合を実測 (--n-shots で AABB/貫通粒子数をprintして確認) で確認した。
-// 境界を流体より密に (d比0.75) 敷き詰めることで、壁際の計算密度を底上げし拘束を強化する。
+constexpr float HALF_Y                 = 3.0f; // 流体薄層の奥行き半幅 [m]
+constexpr float Y_MARGIN               = 1.0f; // パドル/水面がドメインY境界にちょうど触れないようにする余白 [m]
 constexpr float BOUNDARY_SPACING_RATIO = 0.75f;
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
 
 struct WaveFoamArgs : public argparse::Args {
-  float& world_size = kwarg("world-size", "simulation domain size [m] (X/Z)").set_default(24.0f);
-  // h=cellSize は d=particleSpacing()=world_size/nx の2倍を推奨値とする
-  // (FluidEngine.h の h>=2d 推奨に合わせる: nx=200 なら grid_res=nx/2=100)。
-  // grid_res=64 (h/d≈3.1) だと1セルあたりの粒子数が (h/d)^3≈30 に膨らみ、
-  // pbf_density/pbf_delta_p の27近傍セル探索が O(1セルあたりの粒子数) で
-  // 効いてくるため、実測で ~2.6倍 遅くなることを確認した (issue #47 検証時)。
-  // セル総数(hashCells)は grid_res を上げると増えるが、そちらのクリア/構築
-  // コストより1セルあたりの粒子数超過の方が支配的だった。
-  // 粒子数 ~10万 (nx=200,nz=24 で海の体積から逆算) を優先する設定。
-  // grid_res は h=2d 推奨 (nx/2=100) を維持。~14fps程度になることを確認済み
-  // (issue #47 検証, Apple M2 Pro)。フレームレートより粒子解像度を優先する。
-  // 粒子間距離 d=world_size/nx (=粒子半径相当) を旧値の1.5倍にするため、nx を
-  // 旧200から1/1.5倍の134に変更 (d: 0.12m→0.179m、約1.49倍)。grid_res は
-  // h=2d 推奨を維持するため nx/2=67 に連動して下げている。
-  int& grid_res = kwarg("grid-res", "spatial hash grid resolution").set_default(67);
-  int& fluid_nx = kwarg("nx", "fluid particle grid X (密度基準)").set_default(134);
-  // nz は水深方向の層数にほぼ等しい (waterDepth = fluid_nz * d より layers=waterDepth/d=fluid_nz)。
-  // 層数を10程度にするため旧4から10へ変更 (副次的に粒子数も約2.5倍になる)。
-  // 一時的に40まで上げたが、waterDepth(=nz*d)が domainSizeZ(world_size/6=4m) を
-  // 超過し(7.16m)、境界付近で粒子が異常密集して性能が10倍以上悪化する不具合が
-  // 判明したため10に戻す。粒子数の追加調整は kExtraParticleMultiplier
-  // (下記 particles_per_step 算出箇所) で行い、水深とは切り離す。
-  int& fluid_nz               = kwarg("nz", "fluid particle grid Z / 水深基準").set_default(10);
-  float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 60.0f);
-  float& paddle_amp           = kwarg("paddle-amp", "波発生パドル SHM 振幅 [m]").set_default(3.0f);
-  float& paddle_omega         = kwarg("paddle-omega", "波発生パドル SHM 角振動数 [rad/s]").set_default(1.2f);
-  int& max_diffuse            = kwarg("max-diffuse", "泡(spray/foam/bubble)の最大パーティクル数 (0=無効)").set_default(20000);
+  float& world_size           = kwarg("world-size", "simulation domain size [m] (X/Z)").set_default(24.0f);
+  float& particle_radius      = kwarg("particle-radius", "流体粒子半径 [m]").set_default(24.0f / (134.0f * 2.0f));
+  float& water_depth          = kwarg("water-depth", "初期水深 [m]").set_default(11.0f * (24.0f / 134.0f));
+  float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 120.0f);
+  float& paddle_amp           = kwarg("paddle-amp", "波発生パドル 振幅 [m]").set_default(3.0f);
+  float& paddle_omega         = kwarg("paddle-omega", "波発生パドル 角振動数 [rad/s]").set_default(1.2f);
+  int& max_diffuse            = kwarg("max-diffuse", "泡の最大パーティクル数").set_default(20000);
+  bool& large                 = flag("large", "高解像度プリセット: particle-radius÷2, max-diffuse×4");
+  bool& half                  = flag("half", "half floatにしてメモリ帯域を削減");
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
 };
@@ -118,10 +92,6 @@ struct KinematicPaddle {
   uint32_t gpuOffset = 0;               // GPU バッファ先頭インデックス (常に0)
   uint32_t count     = 0;
 
-  // 起動直後にいきなり最大速度 (amplitude*omega) で動き出すと、静止していた
-  // 流体塊への衝撃的な初速入力となり PBF が発散し得る (issue #47 検証時に実測:
-  // GPU タイムアウト後シミュレーションが完全停止する不具合を確認)。
-  // rampTime 秒かけて滑らかに立ち上げることで衝撃を緩和する。
   static constexpr float rampTime = 2.0f; // [s]
   static float ramp(float t) {
     float x = std::clamp(t / rampTime, 0.0f, 1.0f);
@@ -140,21 +110,27 @@ public:
     dt_                 = args.dt;
     base_.screenshotDir = args.screenshot_dir;
 
+    // --large: 粒子半径を半分(解像度2倍)、泡数を4倍にする高解像度プリセット
+    // waterDepth は radius に反比例しないため --large でも変わらない
+    const float particleRadius = args.large ? args.particle_radius * 0.5f : args.particle_radius;
+    const int max_diff         = args.large ? args.max_diffuse * 4 : args.max_diffuse;
+
     const float domainSizeY = HALF_Y * 2.0f + Y_MARGIN * 2.0f;
-    const float domainSizeZ = args.world_size / 6.0f; // Z方向の高さは world_size の1/6 (旧1/3から半減)
+    const float domainSizeZ = args.world_size / 6.0f;
 
     FluidConfig cfg;
-    cfg.particleRadius      = (args.world_size / float(args.fluid_nx)) / 2.0f;
+    cfg.particleRadius      = particleRadius;
+    cfg.cellSize            = particleRadius * 4.0f; // h=2d 推奨 (d=spacing=2r)
     cfg.domainSize          = glm::vec3(args.world_size, domainSizeY, domainSizeZ);
-    cfg.cellSize            = args.world_size / float(args.grid_res);
+    cfg.halfVec4Vel         = args.half;
     cfg.max_boundary        = 20000;
-    cfg.maxDiffuseParticles = uint32_t(args.max_diffuse);
+    cfg.maxDiffuseParticles = uint32_t(max_diff);
 
     paddle_.amplitude = args.paddle_amp;
     paddle_.omega     = args.paddle_omega;
 
-    base_.initWindow("Vulkan Sim - Wave Paddle + Bunny + Foam (issue #47)");
-    initVulkan(cfg, args.fluid_nz);
+    base_.initWindow(args.large ? "Vulkan Sim - Wave Paddle + Foam (Large)" : "Vulkan Sim - Wave Paddle + Bunny + Foam (issue #47)");
+    initVulkan(cfg, args.water_depth);
     mainLoop(args.n_shots);
     cleanup();
   }
@@ -174,7 +150,7 @@ private:
   float dt_      = 1.0f / 60.0f;
   float simTime_ = 0.0f;
 
-  void initVulkan(const FluidConfig& cfg, int fluidNz) {
+  void initVulkan(const FluidConfig& cfg, float waterDepth) {
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
@@ -185,17 +161,16 @@ private:
     engine_.linearDamping    = 0.003f;
     engine_.vorticityEnabled = false;
     engine_.vorticityEpsilon = 0.15f;
-    engine_.pbfIterations    = 6;
-    engine_.numSubsteps      = 4;
+    engine_.pbfIterations    = 3;
+    engine_.numSubsteps      = 2;
 
     gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f); // Z-up
 
     engine_.addForce(gravity_);
 
-    const float w           = cfg.domainSize.x;      // ドメイン X/Z サイズ (world_size)
-    const float d           = cfg.particleSpacing(); // 流体粒子間隔（密度の基準）
-    const float waterDepth  = float(fluidNz) * d;
-    const float domainSizeY = cfg.domainSize.y; // run() で HALF_Y*2+Y_MARGIN*2 に設定済み
+    const float w           = cfg.domainSize.x;
+    const float d           = cfg.particleSpacing();
+    const float domainSizeY = cfg.domainSize.y;
     const float centerY     = domainSizeY * 0.5f;
 
     // ── 波発生パドル (ドメイン左側、X方向に単振動) ────────────────────────────
@@ -225,47 +200,11 @@ private:
     paddleNewPos_.resize(paddle_.count);
     paddleNewVel_.resize(paddle_.count);
 
-    // ── Bunny 障害物 (ドメイン右側に3体、床から突き出た岩礁のように配置) ────────
-    // std::vector<glm::vec4> boundaryPts = paddle_.restPositions;
-    // const float bunnyNativeHeight      = kBunnyMaxYup.y - kBunnyMinYup.y; // Y-up ローカル座標での高さ (実測)
-    // const float bunnyTargetHeight      = w * 0.13f;                       // world_size に対する目標高さ（隣接バニー同士が重ならない大きさ）
-    // const float bunnyScale             = bunnyTargetHeight / bunnyNativeHeight;
-    // struct BunnyPlacement {
-    //   float x, yOff;
-    // };
-    // const std::array<BunnyPlacement, 3> bunnies = {{
-    //   {w * 0.60f, -0.2f},
-    //   {w * 0.75f, 0.2f},
-    //   {w * 0.90f, -0.1f},
-    // }};
-    // BoundaryParticles bp;
-    // for(const auto& b : bunnies) {
-    //   glm::vec3 floorCenter(b.x, centerY + b.yOff, 0.0f);
-    //   glm::vec3 offset  = bunnyOffsetForFloorCenter(floorCenter, bunnyScale);
-    //   BoundaryMesh mesh = bp.loadOBJ(ASSET_DIR_STR + "/bunny.obj", bSpacing, bunnyScale, offset, /*yup_to_zup=*/true);
-    //   boundaryPts.insert(boundaryPts.end(), mesh.particles.begin(), mesh.particles.end());
-    // }
-    // engine_.loadBoundaryParticles(boundaryPts);
     // ── パドルを境界パーティクルとして登録 ────────────────────────────────
-    // initKinematicBoundaryStaging() は毎フレーム位置/速度を更新するための
-    // staging buffer を確保するだけで、P/predP/v/invMass/typeFlag の初期値は
-    // 書き込まない。これらは loadBoundaryParticles() でしか設定されないため、
-    // この呼び出しが無いと nBoundary が 0 のままになり、invMass/typeFlag が
-    // 未初期化 (=境界扱いされない) のパドルは流体に一切干渉しない
-    // (パーティクルがただ落下するだけで押し出されない不具合の直接原因)。
     engine_.loadBoundaryParticles(paddle_.restPositions);
     engine_.initKinematicBoundaryStaging(paddle_.count);
 
     // ── 流体: パドルのすぐ右に浅い「海」を配置 ──────────────────────────────
-    // パドル静止位置の前面 (paddleRestX + halfExtents.x) のすぐ右に水面を置く。
-    // 旧実装は oceanXStart = paddleRestX + amplitude + 0.8f としており、
-    // パドル前面の最大到達位置 (paddleRestX + halfExtents.x + amplitude) より
-    // さらに右 (デフォルト値で約0.55m先) から水を始めていたため、境界登録が
-    // 直っていてもパドルが振動域内で水に一切接触せず、押し出す動きが起きない
-    // 不具合があった。
-    // Bunny を無効化した現状、water は w*0.51 までしか満たしておらず右半分が
-    // 完全に空のままだった。ドメイン幅全体で波を起こすため、右壁際まで満たす
-    // (右壁ぎりぎりに置くと SDF 境界反射で波が跳ね返ってくるので少し余白を残す)。
     const float oceanMargin = 2.0f * d; // パドル静止面とのごく小さいクリアランス
     const float oceanXStart = paddleRestX + paddleHalfExtents.x + oceanMargin;
     const float oceanXEnd   = w - 1.0f; // ドメイン右壁の手前まで満たす
@@ -280,10 +219,6 @@ private:
     engine_.addEmitter(src);
 
     // ── 泡 (spray/foam/bubble) ────────────────────────────────────────────
-    // パドルが起こす波はかなり激しい(振幅3.0m)ため、既定値のままだと生成が
-    // 多すぎて advect の負荷が高くなる。生成しきい値を上げ・生成係数を下げて
-    // 抑制しつつ、maxDiffuseParticlesが0だとdispatch自体スキップされるため
-    // args.max_diffuse (既定20000) を有効にする。
     foamParams_.kTa                 = 1500.0f; // 既定4000→生成量を抑制
     foamParams_.kWc                 = 1500.0f;
     foamParams_.taLo                = 8.0f; // 既定5→表面の乱れが大きい箇所のみ生成
@@ -298,11 +233,19 @@ private:
     engine_.setFoamParams(foamParams_);
 
     // fluid_particle_wave.vert / foam_particle_wave.vert は本シーン専用のカメラ
-    // (共有版より約2倍近く、Z軸まわりにさらに斜めから見下ろす) を使う複製シェーダー。
-    // 共有シェーダーを直接変更すると screw_fluid 等 他の全シーンのカメラも
-    // 変わってしまうため、複製して差し替えている。
-    graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/fluid_particle_wave.vert.spv", SHADER_DIR_STR + "/fluid.frag.spv");
-    foamGraphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/foam_particle_wave.vert.spv", SHADER_DIR_STR + "/foam.frag.spv", VK_PRIMITIVE_TOPOLOGY_POINT_LIST, /*enableBlend=*/true);
+    if(cfg.halfVec4 || cfg.halfVec4Vel) {
+      // vがpackHalf2x16詰めのため、静的SPV(FP32想定)のままだとストライド不一致でゴミ値を読む。FluidEngine::init()のextraForceDefines_と同じ判定。
+      const std::vector<std::pair<std::string, std::string>> halfDefines =
+          cfg.halfVec4 ? std::vector<std::pair<std::string, std::string>>{{"HALF_VEC4", "1"}, {"HALF_VEC4_V", "1"}}
+                       : std::vector<std::pair<std::string, std::string>>{{"HALF_VEC4_V", "1"}};
+      auto fluidVert = DefineShaderCompiler::compile("fluid_particle_wave.vert", halfDefines, /*isVertexShader=*/true);
+      auto foamVert  = DefineShaderCompiler::compile("foam_particle_wave.vert", halfDefines, /*isVertexShader=*/true);
+      graphicsPipe_.initVertFromSpirv(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, fluidVert, SHADER_DIR_STR + "/fluid.frag.spv");
+      foamGraphicsPipe_.initVertFromSpirv(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, foamVert, SHADER_DIR_STR + "/foam.frag.spv", VK_PRIMITIVE_TOPOLOGY_POINT_LIST, /*enableBlend=*/true);
+    } else {
+      graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/fluid_particle_wave.vert.spv", SHADER_DIR_STR + "/fluid.frag.spv");
+      foamGraphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/foam_particle_wave.vert.spv", SHADER_DIR_STR + "/foam.frag.spv", VK_PRIMITIVE_TOPOLOGY_POINT_LIST, /*enableBlend=*/true);
+    }
 
     base_.createFrameData();
     base_.initImGui();
@@ -362,8 +305,8 @@ private:
     vkCmdSetScissor(cmd, 0, 1, &sc);
 
     SimPC pc{};
-    pc.posIdx   = engine_.posIdx;
-    pc.velIdx   = engine_.velIdx;
+    pc.posIdx   = engine_.posIdx();
+    pc.velIdx   = engine_.velIdx();
     pc.worldMin = glm::vec3(0.0f);
     pc.worldMax = engine_.config().domainSize;
 

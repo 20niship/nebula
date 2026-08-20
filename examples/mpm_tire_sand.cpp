@@ -19,42 +19,6 @@
 
 static const std::string SHADER_DIR_STR = SHADER_DIR;
 
-// ローカルY軸=車軸。巻き順だけでは外向き統一できないため重心逆向きなら法線反転する(test_mpm.cppのmakeCubeTrisと同じ流儀)。
-static std::vector<MeshTriangle> makeCylinderTris(float radius, float halfHeight, int nSegments = 32) {
-  std::vector<glm::vec3> ringLo(nSegments), ringHi(nSegments);
-  for(int i = 0; i < nSegments; ++i) {
-    float a  = 2.0f * float(M_PI) * float(i) / float(nSegments);
-    float cx = radius * std::cos(a);
-    float cz = radius * std::sin(a);
-    ringLo[i] = {cx, -halfHeight, cz};
-    ringHi[i] = {cx, halfHeight, cz};
-  }
-  const glm::vec3 centerLo(0.0f, -halfHeight, 0.0f);
-  const glm::vec3 centerHi(0.0f, halfHeight, 0.0f);
-
-  std::vector<MeshTriangle> tris;
-  auto pushTri = [&](glm::vec3 a, glm::vec3 b, glm::vec3 c) {
-    MeshTriangle t;
-    t.v[0]              = a;
-    t.v[1]              = b;
-    t.v[2]              = c;
-    glm::vec3 n         = glm::normalize(glm::cross(b - a, c - a));
-    glm::vec3 centroid  = (a + b + c) / 3.0f;
-    if(glm::dot(n, centroid) < 0.0f) n = -n;
-    t.n = n;
-    tris.push_back(t);
-  };
-
-  for(int i = 0; i < nSegments; ++i) {
-    int j = (i + 1) % nSegments;
-    pushTri(centerLo, ringLo[i], ringLo[j]); // 底面キャップ
-    pushTri(centerHi, ringHi[j], ringHi[i]); // 上面キャップ
-    pushTri(ringLo[i], ringLo[j], ringHi[j]); // 側面
-    pushTri(ringLo[i], ringHi[j], ringHi[i]);
-  }
-  return tris;
-}
-
 // ── CLI ───────────────────────────────────────────────────────────────────
 
 struct TireSandArgs : public argparse::Args {
@@ -123,8 +87,7 @@ private:
   float sandThickness_ = 0.05f;
   bool tireMoving_    = false;
 
-  uint32_t tireSdfIdx_ = 0;
-  LocalMeshSDF tireSdfGrid_;
+  float tireHalfHeight_ = 0.0f;
   glm::quat baseRot_  = glm::quat(1.0f, 0.0f, 0.0f, 0.0f); // ローカルY(車軸)をワールドZへ向ける固定回転
   glm::quat spinQuat_ = glm::quat(1.0f, 0.0f, 0.0f, 0.0f); // 転がりによる蓄積スピン(ワールドZ軸まわり)
 
@@ -169,7 +132,7 @@ private:
     glm::vec3 pos(tirePosX_, tireCenterY_, ws.z * 0.5f);
     // すべりなし転がり角速度(接地点速度0)に slipRatio_ を掛けてスピンさせ、スリップで土を巻き上げる
     glm::vec3 angVel = tireMoving_ ? glm::vec3(0.0f, 0.0f, slipRatio_ * tireSpeed_ / tireRadius_) : glm::vec3(0.0f);
-    cols.addMeshSDF(tireSdfIdx_, tireSdfGrid_, pos, meshRot(), vel, angVel, 0.1f, 0.6f);
+    cols.addCylinder(pos, tireRadius_, tireHalfHeight_, 0.1f, 0.6f, vel, meshRot(), angVel);
     engine_.setColliders(cols);
   }
 
@@ -188,8 +151,7 @@ private:
     engine_.setMaterials({presetSand(5e4f, 0.3f, 1600.0f)});
 
     baseRot_      = glm::angleAxis(glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f)); // ローカルY(高さ)→ワールドZ(車軸)
-    tireSdfGrid_  = bakeLocalMeshSDF(makeCylinderTris(tireRadius_, tireWidth * 0.5f), 40);
-    tireSdfIdx_   = engine_.uploadColliderMeshSDF(tireSdfGrid_);
+    tireHalfHeight_ = tireWidth * 0.5f;
     tireCenterY_  = tireRadius_ + sandThickness_ - tireEmbed_;
     tirePosX_     = cfg.domainSize.x * 0.85f;
     rebuildColliders();

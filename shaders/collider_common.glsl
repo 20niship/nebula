@@ -9,6 +9,7 @@
 #define COLL_BOX      2u
 #define COLL_CAPSULE  3u
 #define COLL_MESH_SDF 4u
+#define COLL_CYLINDER 5u
 
 // クォータニオンでベクトルvを回転 (buffers[]不使用の純粋数学なので関数化してよい)
 vec3 quatRotate(vec4 q, vec3 v) {
@@ -78,26 +79,56 @@ float sphereSDF(vec3 p, vec3 cpos, float cr, out vec3 out_n) {
     return dist - cr;
 }
 
-// AABB ボックス SDF (halfExt を cnrm として渡す)
-float boxSDF(vec3 p, vec3 cpos, vec3 halfExt, out vec3 out_n) {
-    vec3  rel = p - cpos;
-    vec3  q   = abs(rel) - halfExt;
-    float sdf = length(max(q, vec3(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0);
+// 有向ボックス距離関数(解析幾何、SDFグリッド不使用): quatでローカル空間へ回転変換してから軸並行box距離公式を適用し、法線をワールドへ戻す
+float boxSDF(vec3 p, vec3 cpos, vec3 halfExt, vec4 q, out vec3 out_n) {
+    vec3  rel = quatRotate(quatConj(q), p - cpos);
+    vec3  d   = abs(rel) - halfExt;
+    float sdf = length(max(d, vec3(0.0))) + min(max(d.x, max(d.y, d.z)), 0.0);
+    vec3 nLocal;
     if (sdf < 0.0) {
         // 内部: 最近傍面の外向き法線
         vec3 diff = halfExt - abs(rel);
         if (diff.x < diff.y && diff.x < diff.z)
-            out_n = vec3(sign(rel.x + 1e-8), 0.0, 0.0);
+            nLocal = vec3(sign(rel.x + 1e-8), 0.0, 0.0);
         else if (diff.y < diff.z)
-            out_n = vec3(0.0, sign(rel.y + 1e-8), 0.0);
+            nLocal = vec3(0.0, sign(rel.y + 1e-8), 0.0);
         else
-            out_n = vec3(0.0, 0.0, sign(rel.z + 1e-8));
+            nLocal = vec3(0.0, 0.0, sign(rel.z + 1e-8));
     } else {
-        vec3 qPos = max(q, vec3(0.0));
-        float qLen = length(qPos);
-        out_n = (qLen > 1e-8) ? normalize(qPos * sign(rel + vec3(1e-8)))
-                               : normalize(sign(rel + vec3(1e-8)));
+        vec3 dPos = max(d, vec3(0.0));
+        float dLen = length(dPos);
+        nLocal = (dLen > 1e-8) ? normalize(dPos * sign(rel + vec3(1e-8)))
+                                : normalize(sign(rel + vec3(1e-8)));
     }
+    out_n = quatRotate(q, nLocal);
+    return sdf;
+}
+
+// 有向・平底円柱距離関数(解析幾何、SDFグリッド不使用): ローカルY軸=軸方向。boxSDFと同じ流儀でquat変換+piecewise法線
+float cylinderSDF(vec3 p, vec3 cpos, float radius, float halfHeight, vec4 q, out vec3 out_n) {
+    vec3 rel = quatRotate(quatConj(q), p - cpos);
+    float r  = length(rel.xz);
+    vec2  d  = vec2(r - radius, abs(rel.y) - halfHeight); // (半径方向の超過, 軸方向の超過)
+    float sdf = min(max(d.x, d.y), 0.0) + length(max(d, vec2(0.0)));
+    vec2 rdir = (r > 1e-8) ? (rel.xz / r) : vec2(1.0, 0.0);
+    vec3 nLocal;
+    if (d.x < 0.0 && d.y < 0.0) {
+        // 内部: 側面/端面のうち近い方
+        if (d.x > d.y)
+            nLocal = vec3(rdir.x, 0.0, rdir.y);
+        else
+            nLocal = vec3(0.0, sign(rel.y + 1e-8), 0.0);
+    } else {
+        vec2 dPos = max(d, vec2(0.0));
+        float dLen = length(dPos);
+        if (dLen > 1e-8) {
+            vec2 rc = rdir * dPos.x;
+            nLocal = normalize(vec3(rc.x, sign(rel.y + 1e-8) * dPos.y, rc.y));
+        } else {
+            nLocal = vec3(0.0, 1.0, 0.0);
+        }
+    }
+    out_n = quatRotate(q, nLocal);
     return sdf;
 }
 

@@ -920,3 +920,120 @@ TEST_CASE("MPM GPU - 9-2: Mesh SDF collider applies rotation (particle rests on 
 
   ctx.cleanup();
 }
+
+TEST_CASE("MPM GPU - 9-3: Native Box collider applies rotation (particle rests on rotated face without penetrating)") {
+  HeadlessCtx ctx;
+  ctx.init();
+
+  MPMConfig cfg;
+  cfg.nx = cfg.ny = cfg.nz = 0;
+  cfg.maxParticles         = 16;
+  cfg.domainSize           = glm::vec3(10.0f, 10.0f, 10.0f);
+  cfg.cellSize             = 0.2f;
+
+  const glm::vec3 center(5.0f, 3.0f, 5.0f);
+  const float halfExtent = 1.0f;
+  const glm::quat rot(glm::angleAxis(glm::radians(45.0f), glm::vec3(0.0f, 0.0f, 1.0f)));
+  const glm::vec3 dropCenter(5.0f, 6.0f, 5.0f);
+  const float expectedTopY = center.y + halfExtent * std::sqrt(2.0f);
+
+  MPMEngine engine;
+  engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
+  ColliderSet cols;
+  cols.addBox(center, glm::vec3(halfExtent), 0.1f, 0.3f, {0, 0, 0}, rot, {0, 0, 0});
+  auto result = dropOntoCollider(ctx, engine, cfg, cols, dropCenter);
+  engine.cleanup();
+
+  glm::quat invRot = glm::conjugate(rot);
+  for(const auto& p4 : result) {
+    CHECK(!std::isnan(p4.y));
+    CHECK(p4.y > expectedTopY - 0.15f);
+    CHECK(p4.y < expectedTopY + 0.15f);
+    glm::vec3 localP = invRot * (glm::vec3(p4) - center);
+    glm::vec3 q       = glm::abs(localP) - glm::vec3(halfExtent);
+    float sdf = glm::length(glm::max(q, glm::vec3(0.0f))) + std::min(std::max(q.x, std::max(q.y, q.z)), 0.0f);
+    CHECK(sdf > -0.05f); // 解析SDF(グリッド近似なし)なので9-2よりタイトな許容誤差でよい
+    CHECK(sdf < 0.2f);
+  }
+
+  ctx.cleanup();
+}
+
+TEST_CASE("MPM GPU - 9-4: Native Cylinder collider (flat cap, no rotation) holds particle without penetrating") {
+  HeadlessCtx ctx;
+  ctx.init();
+
+  MPMConfig cfg;
+  cfg.nx = cfg.ny = cfg.nz = 0;
+  cfg.maxParticles         = 16;
+  cfg.domainSize           = glm::vec3(10.0f, 10.0f, 10.0f);
+  cfg.cellSize             = 0.2f;
+
+  const glm::vec3 center(5.0f, 3.0f, 5.0f);
+  const float radius     = 1.0f;
+  const float halfHeight = 1.0f;
+  const glm::vec3 dropCenter(5.0f, 6.0f, 5.0f);
+  const float expectedTopY = center.y + halfHeight;
+
+  MPMEngine engine;
+  engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
+  ColliderSet cols;
+  cols.addCylinder(center, radius, halfHeight, 0.1f, 0.3f);
+  auto result = dropOntoCollider(ctx, engine, cfg, cols, dropCenter);
+  engine.cleanup();
+
+  for(const auto& p4 : result) {
+    CHECK(!std::isnan(p4.y));
+    CHECK(p4.y > expectedTopY - 0.15f);
+    CHECK(p4.y < expectedTopY + 0.15f);
+    glm::vec3 localP = glm::vec3(p4) - center;
+    float r  = glm::length(glm::vec2(localP.x, localP.z));
+    glm::vec2 q = glm::vec2(r - radius, std::abs(localP.y) - halfHeight);
+    float sdf = std::min(std::max(q.x, q.y), 0.0f) + glm::length(glm::max(q, glm::vec2(0.0f)));
+    CHECK(sdf > -0.05f);
+    CHECK(sdf < 0.2f);
+  }
+
+  ctx.cleanup();
+}
+
+TEST_CASE("MPM GPU - 9-5: Native Cylinder collider applies rotation (lying on its side)") {
+  HeadlessCtx ctx;
+  ctx.init();
+
+  MPMConfig cfg;
+  cfg.nx = cfg.ny = cfg.nz = 0;
+  cfg.maxParticles         = 16;
+  cfg.domainSize           = glm::vec3(10.0f, 10.0f, 10.0f);
+  cfg.cellSize             = 0.2f;
+
+  const glm::vec3 center(5.0f, 3.0f, 5.0f);
+  const float radius     = 1.0f;
+  const float halfHeight = 1.0f;
+  // ローカルY軸(円柱の軸)をワールドX軸へ倒す(横倒し)。円柱の"上"は中心+半径の高さになる
+  const glm::quat rot(glm::angleAxis(glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f)));
+  const glm::vec3 dropCenter(5.0f, 6.0f, 5.0f);
+  const float expectedTopY = center.y + radius;
+
+  MPMEngine engine;
+  engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
+  ColliderSet cols;
+  cols.addCylinder(center, radius, halfHeight, 0.1f, 0.3f, {0, 0, 0}, rot, {0, 0, 0});
+  auto result = dropOntoCollider(ctx, engine, cfg, cols, dropCenter);
+  engine.cleanup();
+
+  glm::quat invRot = glm::conjugate(rot);
+  for(const auto& p4 : result) {
+    CHECK(!std::isnan(p4.y));
+    CHECK(p4.y > expectedTopY - 0.15f);
+    CHECK(p4.y < expectedTopY + 0.15f);
+    glm::vec3 localP = invRot * (glm::vec3(p4) - center);
+    float r  = glm::length(glm::vec2(localP.x, localP.z));
+    glm::vec2 q = glm::vec2(r - radius, std::abs(localP.y) - halfHeight);
+    float sdf = std::min(std::max(q.x, q.y), 0.0f) + glm::length(glm::max(q, glm::vec2(0.0f)));
+    CHECK(sdf > -0.05f);
+    CHECK(sdf < 0.2f);
+  }
+
+  ctx.cleanup();
+}

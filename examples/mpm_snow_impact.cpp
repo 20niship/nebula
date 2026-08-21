@@ -27,6 +27,10 @@ struct MpmSnowImpactArgs : public argparse::Args {
   float& box_speed            = kwarg("box-speed", "obstacle box speed [m/s]").set_default(6.0f);
   float& box_scale            = kwarg("box-scale", "obstacle box half-extent scale (1=original)").set_default(0.5f);
   int& launch_frame           = kwarg("launch-frame", "box starts moving automatically at this frame (-1=manual button only)").set_default(60);
+  bool& large                 = flag("large", "高解像度プリセット: pn×2(粒子8倍)・cell-size÷2・box-speed×2・substeps×2");
+  std::string& collider_mesh  = kwarg("collider-mesh", "衝突オブジェクトのOBJパス(未指定なら従来のボックス)").set_default(std::string(""));
+  float& collider_mesh_scale  = kwarg("collider-mesh-scale", "collider-meshの等方拡大率").set_default(8.0f);
+  float& spin_rate            = kwarg("spin-rate", "移動中の自転角速度[rad/s] (0=回転なし、collider-mesh専用)").set_default(0.0f);
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
 };
@@ -36,21 +40,29 @@ struct MpmSnowImpactArgs : public argparse::Args {
 class MpmSnowImpactApp {
 public:
   void run(const MpmSnowImpactArgs& args) {
+    // --large: pn×2(粒子8倍)・cell-size÷2(粒子/セル比を維持しgridResを2の累乗に保つ)・box-speed×2・substeps×2(速い衝突を細かいtimestepでトンネリングなく解く)
+    const int pn         = args.large ? args.pn * 2 : args.pn;
+    const float cellSize = args.large ? args.cell_size * 0.5f : args.cell_size;
+    const int substeps   = args.large ? args.substeps * 2 : args.substeps;
+
     dt_                 = args.dt;
     base_.screenshotDir = args.screenshot_dir;
-    boxSpeed_           = args.box_speed;
+    boxSpeed_           = args.large ? args.box_speed * 2.0f : args.box_speed;
     boxScale_           = args.box_scale;
     launchFrame_        = args.launch_frame;
+    colliderMeshPath_   = args.collider_mesh;
+    colliderMeshScale_  = args.collider_mesh_scale;
+    spinRate_           = args.spin_rate;
 
     MPMConfig cfg;
-    cfg.nx         = uint32_t(args.pn);
-    cfg.ny         = uint32_t(args.pn);
-    cfg.nz         = uint32_t(args.pn);
+    cfg.nx         = uint32_t(pn);
+    cfg.ny         = uint32_t(pn);
+    cfg.nz         = uint32_t(pn);
     cfg.domainSize = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
-    cfg.cellSize   = args.cell_size;
+    cfg.cellSize   = cellSize;
 
-    base_.initWindow("MPM Snow Impact – 移動箱コライダー衝突");
-    initVulkan(cfg, args.substeps);
+    base_.initWindow(args.large ? "MPM Snow Impact – 移動箱コライダー衝突 (Large)" : "MPM Snow Impact – 移動箱コライダー衝突");
+    initVulkan(cfg, substeps);
     mainLoop(args.n_shots);
     cleanup();
   }
@@ -70,12 +82,25 @@ private:
   float boxScale_ = 0.5f;
   bool boxMoving_ = false;
 
+  std::string colliderMeshPath_;
+  float colliderMeshScale_ = 8.0f;
+  float spinRate_          = 0.0f;
+  uint32_t meshSdfIdx_      = 0;
+  LocalMeshSDF meshSdfGrid_;
+  glm::quat meshRot_ = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+
   void rebuildColliders() {
     const glm::vec3 ws = engine_.config().domainSize;
     ColliderSet cols;
     cols.addPlane({0.0f, 0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, 0.1f, 0.5f);
     glm::vec3 vel = boxMoving_ ? glm::vec3(-boxSpeed_, 0.0f, 0.0f) : glm::vec3(0.0f);
-    cols.addBox({boxPosX_, 1.5f * boxScale_, ws.z * 0.5f}, {0.5f * boxScale_, 1.5f * boxScale_, ws.z * 0.3f * boxScale_}, 0.1f, 0.6f, vel);
+    glm::vec3 pos(boxPosX_, 1.5f * boxScale_, ws.z * 0.5f);
+    if(meshSdfIdx_ != 0) {
+      glm::vec3 angVel = boxMoving_ ? glm::vec3(0.0f, 0.0f, spinRate_) : glm::vec3(0.0f);
+      cols.addMeshSDF(meshSdfIdx_, meshSdfGrid_, pos, meshRot_, vel, angVel, 0.1f, 0.6f);
+    } else {
+      cols.addBox(pos, {0.5f * boxScale_, 1.5f * boxScale_, ws.z * 0.3f * boxScale_}, 0.1f, 0.6f, vel);
+    }
     engine_.setColliders(cols);
   }
 
@@ -97,6 +122,10 @@ private:
     snow.model  = uint32_t(MaterialModel::VON_MISES);
     snow.q_max  = 3000.0f;
     engine_.setMaterials({snow});
+
+    if(!colliderMeshPath_.empty()) {
+      meshSdfIdx_ = engine_.loadColliderMesh(colliderMeshPath_, meshSdfGrid_, 48, colliderMeshScale_);
+    }
 
     boxPosX_ = cfg.domainSize.x * 0.85f;
     rebuildColliders();
@@ -224,6 +253,7 @@ private:
     // 箱の位置を更新してからコライダーを再アップロード (compute より前)
     if(boxMoving_) {
       boxPosX_ -= boxSpeed_ * dt_;
+      if(spinRate_ != 0.0f) meshRot_ = glm::angleAxis(spinRate_ * dt_, glm::vec3(0.0f, 0.0f, 1.0f)) * meshRot_;
       if(boxPosX_ - 0.5f * boxScale_ < 0.5f) boxMoving_ = false;
       rebuildColliders();
     }

@@ -4,50 +4,54 @@
 // ── Bindless バッファ配列 ──────────────────────────────────────────────────
 layout(set = 0, binding = 0) buffer StorageBuffers { uint data[]; } buffers[];
 
-// ── MPMSimPC Push Constants (188 bytes) ───────────────────────
-// C++側 src/core/MPMSimPC.h と同一オフセット順であること。reserved20/24/28は旧cellCountIdx/cellOffsetIdx/sortedIdxIdx(MLS-MPM化で未使用化)。
+// ── MPMSimPC Push Constants (176 bytes) ───────────────────────
+// C++側 src/core/MPMSimPC.h と同一オフセット順であること。vec3系フィールド直前のスカラー数を
+// 4の倍数に揃えてパディングなしで16byte境界に一致させている(順序変更時は要再検証)。
 layout(push_constant) uniform PC {
     uint  posIdx;        // 0   vec4×N  (xyz=pos, w=Vp)
     uint  velIdx;        // 4   vec4×N  (xyz=vel, w=material id)
     uint  F0Idx;         // 8   vec4×N  F 列0 (xyz) + σ_xx (w)
     uint  F1Idx;         // 12  vec4×N  F 列1 (xyz) + σ_yy (w)
     uint  typeFlagIdx;   // 16  (reserved)
-    uint  reserved20;    // 20  旧cellCountIdx
-    uint  reserved24;    // 24  旧cellOffsetIdx
-    uint  reserved28;    // 28  旧sortedIdxIdx
-    uint  particleCount; // 32  ライブ粒子数
-    uint  hashCells;     // 36  空間ハッシュ/MPMグリッドバッファの実要素数 (=cubeRes^3) ← hash compat
-    uint  F2Idx;         // 40  F 列2 (xyz) + σ_zz (w)
-    uint  materialsIdx;  // 44  MaterialParams SSBO (0=無効)
-    float dt;            // 48
-    float cellSize;      // 52  全軸共通のセルサイズ [m]
-    uint  forceBufIdx;   // 56  Force配列(ForceGPU×forceCount)のbindless index (issue #30; 旧gravity)
-    float mu_lame;       // 60  グローバルデフォルト μ
-    uvec3 gridRes;        // 64  各軸の実セル数 (nx,ny,nz)
-    float lambda_lame;    // 76  グローバルデフォルト λ
-    vec3  worldMin;        // 80  ドメイン下限座標 [m]
-    float particleVolume;  // 92  グローバルデフォルト Vp
-    vec3  worldMax;        // 96  ドメイン上限座標 [m]
-    float M_friction;      // 108 グローバルデフォルト DP M
-    float q_cohesion;    // 112 グローバルデフォルト DP q_c
-    float q_max;         // 116 グローバルデフォルト VM q_max
-    float flip_ratio;    // 120 0=PIC, 1=FLIP, -1=APIC
-    uint  colliderIdx;   // 124 Collider SSBO (Phase 3)
-    uint  colliderCount; // 128 コライダー数 (Phase 3)
-    uint  B0Idx;         // 132 B 列0 (xyz, APIC) + σ_xy (w)
-    uint  B1Idx;         // 136 B 列1 (xyz, APIC) + σ_xz (w)
-    uint  B2Idx;         // 140 B 列2 (xyz, APIC) + σ_yz (w)
-    uint  reserved144;   // 144 旧NanoVDB SDF境界条件用、未使用化(MESH_SDFに統一)
-    uint  gridMomIdx;    // 148
-    uint  gridMassIdx;   // 152
-    float restitution;   // 156
-    float wall_friction; // 160
-    uint  plasticModel;  // 164 グローバルモデル (Phase 1 まで有効)
-    uint  materialCount; // 168 materials エントリ数
-    float rho0;          // 172 グローバルデフォルト密度
-    float p0_mcc;        // 176
-    float xi_hard;       // 180
-    uint  forceCount;    // 184 有効なForce数 (issue #30; 旧maxParticlesFrac予約枠)
+    uint  particleCount; // 20  ライブ粒子数
+    uint  hashCells;     // 24  空間ハッシュ/MPMグリッドバッファの実要素数 (=cubeRes^3)
+    uint  F2Idx;         // 28  F 列2 (xyz) + σ_zz (w)
+    uint  materialsIdx;  // 32  MaterialParams SSBO (0=無効)
+    float dt;            // 36
+    float cellSize;      // 40  全軸共通のセルサイズ [m]
+    uint  forceBufIdx;   // 44  Force配列(ForceGPU×forceCount)のbindless index (issue #30; 旧gravity)
+
+    uvec3 gridRes; // 48  各軸の実セル数 (nx,ny,nz)
+    float mu_lame; // 60  グローバルデフォルト μ
+
+    float lambda_lame;   // 64  グローバルデフォルト λ
+    float particleVolume; // 68  グローバルデフォルト Vp
+    float M_friction;    // 72  グローバルデフォルト DP M
+    float q_cohesion;    // 76  グローバルデフォルト DP q_c
+
+    vec3  worldMin; // 80  ドメイン下限座標 [m]
+    float q_max;    // 92  グローバルデフォルト VM q_max
+
+    float flip_ratio;    // 96  0=PIC, 1=FLIP, -1=APIC
+    uint  colliderIdx;   // 100 Collider SSBO (Phase 3)
+    uint  colliderCount; // 104 コライダー数 (Phase 3)
+    uint  B0Idx;         // 108 B 列0 (xyz, APIC) + σ_xy (w)
+
+    vec3  worldMax; // 112 ドメイン上限座標 [m]
+    uint  B1Idx;    // 124 B 列1 (xyz, APIC) + σ_xz (w)
+
+    uint  B2Idx;         // 128 B 列2 (xyz, APIC) + σ_yz (w)
+    uint  reserved144;   // 132 旧NanoVDB SDF境界条件用、未使用化(MESH_SDFに統一)
+    uint  gridMomIdx;    // 136
+    uint  gridMassIdx;   // 140
+    float restitution;   // 144
+    float wall_friction; // 148
+    uint  plasticModel;  // 152 グローバルモデル (Phase 1 まで有効)
+    uint  materialCount; // 156 materials エントリ数
+    float rho0;          // 160 グローバルデフォルト密度
+    float p0_mcc;        // 164
+    float xi_hard;       // 168
+    uint  forceCount;    // 172 有効なForce数 (issue #30; 旧maxParticlesFrac予約枠)
 } pc;
 
 // ── Buffer read/write マクロ ──────────────────────────────────────────────
@@ -201,11 +205,6 @@ float bspline2g(float d) {
     return 0.0;
 }
 
-// ── 固定小数点atomicAdd (scatter P2G用) ─────────────────────────────────────
-// GLSLコアのatomicAdd(uint)のみで質量/運動量の並列蓄積を実現するための符号化。
-// int↔uintは同一ビットパターンを保持するため、uintとしてatomicAddしても2の補数の
-// 符号付き加算として正しく動作する(shader_atomic_float拡張非依存、MoltenVK含め全platform対応)。
-// スケール2^16: 現実的な質量/運動量値(数百以下)に対しint32上限(±2^31)まで十分な余裕を確保
 #define FIXED_POINT_SCALE 65536.0
 #define encodeFixed(v) uint(int((v) * FIXED_POINT_SCALE))
 #define decodeFixed(u) (float(int(u)) / FIXED_POINT_SCALE)

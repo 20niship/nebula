@@ -100,6 +100,7 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/solve_stretch.comp
     ${SHADER_SRC_DIR}/particle.vert
     ${SHADER_SRC_DIR}/particle.frag
+    ${SHADER_SRC_DIR}/particle_mpm_packed.vert
     ${SHADER_SRC_DIR}/cloth.vert
     ${SHADER_SRC_DIR}/cloth.frag
     ${SHADER_SRC_DIR}/string2d.vert

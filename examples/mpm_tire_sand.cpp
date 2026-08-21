@@ -158,7 +158,7 @@ private:
 
     placeSand(cfg, sandNx, sandNz, sandLayers);
 
-    graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/particle.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");
+    graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/particle_mpm_packed.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");
     base_.createFrameData();
     base_.initImGui();
   }

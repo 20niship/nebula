@@ -18,10 +18,10 @@ void main() {
     uint p = gl_GlobalInvocationID.x;
     if (p >= pc.particleCount) return;
 
-    vec4  pp = readVec4(pc.posIdx, p);
+    vec4  pp = readPackedVec4(pc.posIdx, p);
     vec3  xp = pp.xyz;
     float Vp = pp.w;
-    vec4  vp4 = readVec4(pc.velIdx, p);
+    vec4  vp4 = readPackedVec4(pc.velIdx, p);
     vec3  vp  = vp4.xyz;
 
     uint  mat_pid  = floatBitsToUint(vp4.w);

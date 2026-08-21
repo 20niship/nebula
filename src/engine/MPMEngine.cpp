@@ -7,8 +7,20 @@
 #include <random>
 #include <algorithm>
 #include <glm/glm.hpp>
+#include <glm/gtc/packing.hpp>
 #include <random>
 #include <vector>
+
+// pos/vel half-float パック(12B/要素、実験用): xyzをpackHalf2x16、wはfloatBitsToUint往復(mpm_common.glslのwritePackedVec4と同一仕様)
+static std::vector<uint32_t> packVec4ToHalf(const std::vector<glm::vec4>& src) {
+  std::vector<uint32_t> dst(src.size() * 3);
+  for(size_t i = 0; i < src.size(); ++i) {
+    dst[i * 3]     = glm::packHalf2x16(glm::vec2(src[i].x, src[i].y));
+    dst[i * 3 + 1] = glm::packHalf2x16(glm::vec2(src[i].z, 0.0f));
+    dst[i * 3 + 2] = glm::floatBitsToUint(src[i].w);
+  }
+  return dst;
+}
 
 // ── バリア ────────────────────────────────────────────────────────────────
 
@@ -63,14 +75,14 @@ void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool d
   // ── パーティクルバッファ ───────────────────────────────────────────────
   // F0-2: xyz = 変形勾配 F の列, w = 対角応力 (σ_xx / σ_yy / σ_zz)
   // B0-2: xyz = APIC アフィン行列 B の列 (Phase 2), w = 非対角応力 (σ_xy / σ_xz / σ_yz)
-  posIdx = attrBuf_.addAttribute("P", sizeof(glm::vec4), N);
-  velIdx = attrBuf_.addAttribute("v", sizeof(glm::vec4), N);
-  F0Idx_ = attrBuf_.addAttribute("F0", sizeof(glm::vec4), N);
-  F1Idx_ = attrBuf_.addAttribute("F1", sizeof(glm::vec4), N);
-  F2Idx_ = attrBuf_.addAttribute("F2", sizeof(glm::vec4), N);
-  B0Idx_ = attrBuf_.addAttribute("B0", sizeof(glm::vec4), N);
-  B1Idx_ = attrBuf_.addAttribute("B1", sizeof(glm::vec4), N);
-  B2Idx_ = attrBuf_.addAttribute("B2", sizeof(glm::vec4), N);
+  posIdx = attrBuf_.addAttribute("P", sizeof(uint32_t) * 3, N); // half-floatパック実験(12B/要素)
+  velIdx = attrBuf_.addAttribute("v", sizeof(uint32_t) * 3, N);
+  F0Idx_ = attrBuf_.addAttribute("F0", sizeof(uint32_t) * 3, N); // half-floatパック実験(12B/要素)
+  F1Idx_ = attrBuf_.addAttribute("F1", sizeof(uint32_t) * 3, N);
+  F2Idx_ = attrBuf_.addAttribute("F2", sizeof(uint32_t) * 3, N);
+  B0Idx_ = attrBuf_.addAttribute("B0", sizeof(uint32_t) * 3, N);
+  B1Idx_ = attrBuf_.addAttribute("B1", sizeof(uint32_t) * 3, N);
+  B2Idx_ = attrBuf_.addAttribute("B2", sizeof(uint32_t) * 3, N);
 
   // ── MPM グリッドバッファ ───────────────────────────────────────────────
   // gridMom は 2 × NC を確保: [0, NC) = v_new, [NC, 2*NC) = v_old (FLIP 用)
@@ -141,14 +153,20 @@ void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool d
         }
 
     auto up = [&](const std::string& name, const void* data, size_t bytes) { attrBuf_.upload(name, data, bytes, cmdPool_, queue_); };
-    up("P", pos.data(), N * sizeof(glm::vec4));
-    up("v", vel.data(), N * sizeof(glm::vec4));
-    up("F0", F0.data(), N * sizeof(glm::vec4));
-    up("F1", F1.data(), N * sizeof(glm::vec4));
-    up("F2", F2.data(), N * sizeof(glm::vec4));
-    up("B0", B0.data(), N * sizeof(glm::vec4));
-    up("B1", B1.data(), N * sizeof(glm::vec4));
-    up("B2", B2.data(), N * sizeof(glm::vec4));
+    std::vector<uint32_t> posPacked = packVec4ToHalf(pos);
+    std::vector<uint32_t> velPacked = packVec4ToHalf(vel);
+    up("P", posPacked.data(), posPacked.size() * sizeof(uint32_t));
+    up("v", velPacked.data(), velPacked.size() * sizeof(uint32_t));
+    auto upPacked = [&](const std::string& name, const std::vector<glm::vec4>& v) {
+      std::vector<uint32_t> packed = packVec4ToHalf(v);
+      up(name, packed.data(), packed.size() * sizeof(uint32_t));
+    };
+    upPacked("F0", F0);
+    upPacked("F1", F1);
+    upPacked("F2", F2);
+    upPacked("B0", B0);
+    upPacked("B1", B1);
+    upPacked("B2", B2);
   }
 
   initForces();
@@ -213,16 +231,19 @@ void MPMEngine::appendParticles(const std::vector<glm::vec4>& pos, const std::ve
   std::vector<glm::vec4> B1(nNew, glm::vec4(0));
   std::vector<glm::vec4> B2(nNew, glm::vec4(0));
 
-  VkDeviceSize byteOff = VkDeviceSize(nParticles_) * sizeof(glm::vec4);
-  auto up              = [&](const std::string& name, const void* data) { attrBuf_.uploadAt(name, data, VkDeviceSize(nNew) * sizeof(glm::vec4), byteOff, cmdPool_, queue_); };
-  up("P", pos.data());
-  up("v", vel.data());
-  up("F0", F0.data());
-  up("F1", F1.data());
-  up("F2", F2.data());
-  up("B0", B0.data());
-  up("B1", B1.data());
-  up("B2", B2.data());
+  VkDeviceSize packedOff = VkDeviceSize(nParticles_) * sizeof(uint32_t) * 3;
+  auto upPacked = [&](const std::string& name, const std::vector<glm::vec4>& v) {
+    std::vector<uint32_t> packed = packVec4ToHalf(v);
+    attrBuf_.uploadAt(name, packed.data(), VkDeviceSize(nNew) * sizeof(uint32_t) * 3, packedOff, cmdPool_, queue_);
+  };
+  upPacked("P", pos);
+  upPacked("v", vel);
+  upPacked("F0", F0);
+  upPacked("F1", F1);
+  upPacked("F2", F2);
+  upPacked("B0", B0);
+  upPacked("B1", B1);
+  upPacked("B2", B2);
 
   nParticles_ += nNew;
 }
@@ -328,16 +349,19 @@ void MPMEngine::emitFromEmitters(float dt) {
       B2v[j] = glm::vec4(0);
     }
 
-    VkDeviceSize byteOff = VkDeviceSize(nParticles_) * sizeof(glm::vec4);
-    auto up              = [&](const std::string& name, const void* data) { attrBuf_.uploadAt(name, data, VkDeviceSize(nNew) * sizeof(glm::vec4), byteOff, cmdPool_, queue_); };
-    up("P", pos.data());
-    up("v", vel.data());
-    up("F0", F0v.data());
-    up("F1", F1v.data());
-    up("F2", F2v.data());
-    up("B0", B0v.data());
-    up("B1", B1v.data());
-    up("B2", B2v.data());
+    VkDeviceSize packedOff = VkDeviceSize(nParticles_) * sizeof(uint32_t) * 3;
+    auto upPacked = [&](const std::string& name, const std::vector<glm::vec4>& v) {
+      std::vector<uint32_t> packed = packVec4ToHalf(v);
+      attrBuf_.uploadAt(name, packed.data(), VkDeviceSize(nNew) * sizeof(uint32_t) * 3, packedOff, cmdPool_, queue_);
+    };
+    upPacked("P", pos);
+    upPacked("v", vel);
+    upPacked("F0", F0v);
+    upPacked("F1", F1v);
+    upPacked("F2", F2v);
+    upPacked("B0", B0v);
+    upPacked("B1", B1v);
+    upPacked("B2", B2v);
 
     nParticles_ += uint32_t(nNew);
     done++;

@@ -72,7 +72,7 @@ void main() {
     uint p = gl_GlobalInvocationID.x;
     if (p >= pc.particleCount) return;
 
-    vec4  pp = readVec4(pc.posIdx, p);
+    vec4  pp = readPackedVec4(pc.posIdx, p);
     vec3  xp = pp.xyz;
     float Vp = pp.w;
 
@@ -121,7 +121,7 @@ void main() {
 
     // ── per-particle material パラメータ読み込み ─────────────────────────
     // MoltenVK: buffers[] は main() でのみアクセス可（関数内不可）
-    vec4 velWrd = readVec4(pc.velIdx, p);
+    vec4 velWrd = readPackedVec4(pc.velIdx, p);
     uint matId  = floatBitsToUint(velWrd.w);
 
     float mat_mu, mat_lam, mat_bulkK, mat_M, mat_qc, mat_qmax, mat_visc;
@@ -265,8 +265,8 @@ void main() {
     if (x_new.z > hi.z) { x_new.z = hi.z; v_new.z = min(v_new.z, 0.0); }
 
     // ── 書き戻し ─────────────────────────────────────────────────────────
-    writeVec4(pc.posIdx, p, vec4(x_new, Vp));
-    writeVec4(pc.velIdx, p, vec4(v_new, velWrd.w));  // w=material id を保持
+    writePackedVec4(pc.posIdx, p, vec4(x_new, Vp));
+    writePackedVec4(pc.velIdx, p, vec4(v_new, velWrd.w));  // w=material id を保持
     writeMat3xyz(p, F_new, pc.F0Idx, pc.F1Idx, pc.F2Idx);
     writeStressW(p, tau_new);
     // APIC B 行列を xyz レーンに書き戻す (w レーンの応力は writeStressW が保持)

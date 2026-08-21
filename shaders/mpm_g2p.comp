@@ -215,10 +215,6 @@ void main() {
 
     vec3 x_new = xp + pc.dt * v_new;
 
-    // ── MESH_SDFコライダー 粒子レベル境界補正 ────────────────────────────
-    // mpm_grid_update はグリッドノードを修正するが、離散化されたMESH_SDF境界近傍では
-    // 粒子が固体セルに入り込むことがある(解析コライダーは厳密SDFなので対象外)。
-    // G2P内で粒子位置・速度を直接補正し固体内部での弾性エネルギー蓄積(速度爆発の根本原因)を防ぐ。
     for (uint ci = 0u; ci < pc.colliderCount; ci++) {
         uint cbase = ci * 24u;
         if (buffers[pc.colliderIdx].data[cbase] != COLL_MESH_SDF) continue;

@@ -4,19 +4,17 @@
 // ── Bindless バッファ配列 ──────────────────────────────────────────────────
 layout(set = 0, binding = 0) buffer StorageBuffers { uint data[]; } buffers[];
 
-// ── MPMSimPC Push Constants (188 bytes, hash compat) ───────────────────────
-// C++側 src/core/MPMSimPC.h と同一オフセット順であること (offsetof の static_assert 参照)。
-// hash compat: cellCountIdx(20)/cellOffsetIdx(24)/hashCells(36) は SimPC (common.glsl) と
-// 完全一致。gridRes/worldMin/worldMax はこの3フィールドより後ろにあるため一致不要。
+// ── MPMSimPC Push Constants (188 bytes) ───────────────────────
+// C++側 src/core/MPMSimPC.h と同一オフセット順であること。reserved20/24/28は旧cellCountIdx/cellOffsetIdx/sortedIdxIdx(MLS-MPM化で未使用化)。
 layout(push_constant) uniform PC {
     uint  posIdx;        // 0   vec4×N  (xyz=pos, w=Vp)
     uint  velIdx;        // 4   vec4×N  (xyz=vel, w=material id)
     uint  F0Idx;         // 8   vec4×N  F 列0 (xyz) + σ_xx (w)
     uint  F1Idx;         // 12  vec4×N  F 列1 (xyz) + σ_yy (w)
     uint  typeFlagIdx;   // 16  (reserved)
-    uint  cellCountIdx;  // 20  ← hash compat
-    uint  cellOffsetIdx; // 24  ← hash compat
-    uint  sortedIdxIdx;  // 28  ← hash compat
+    uint  reserved20;    // 20  旧cellCountIdx
+    uint  reserved24;    // 24  旧cellOffsetIdx
+    uint  reserved28;    // 28  旧sortedIdxIdx
     uint  particleCount; // 32  ライブ粒子数
     uint  hashCells;     // 36  空間ハッシュ/MPMグリッドバッファの実要素数 (=cubeRes^3) ← hash compat
     uint  F2Idx;         // 40  F 列2 (xyz) + σ_zz (w)
@@ -39,7 +37,7 @@ layout(push_constant) uniform PC {
     uint  B0Idx;         // 132 B 列0 (xyz, APIC) + σ_xy (w)
     uint  B1Idx;         // 136 B 列1 (xyz, APIC) + σ_xz (w)
     uint  B2Idx;         // 140 B 列2 (xyz, APIC) + σ_yz (w)
-    uint  nanoVDBIdx;    // 144 NanoVDB SDF バッファ (0=無効)
+    uint  reserved144;   // 144 旧NanoVDB SDF境界条件用、未使用化(MESH_SDFに統一)
     uint  gridMomIdx;    // 148
     uint  gridMassIdx;   // 152
     float restitution;   // 156
@@ -75,25 +73,19 @@ layout(push_constant) uniform PC {
 // 3 本の vec4 バッファ xyz レーンに各列を格納 (w は別用途)
 // MoltenVK: buffers[] を使う処理は関数ではなくマクロで展開する
 #define readMat3(p, c0i, c1i, c2i) \
-    mat3(readVec4((c0i), (p)).xyz, readVec4((c1i), (p)).xyz, readVec4((c2i), (p)).xyz)
+    mat3(readPackedXYZ((c0i), (p)), readPackedXYZ((c1i), (p)), readPackedXYZ((c2i), (p)))
 
 // xyz のみ書き込み、w レーン（応力パック）を保持する
 #define writeMat3xyz(p, M, c0i, c1i, c2i) { \
-    buffers[(c0i)].data[(p)*4u   ] = floatBitsToUint((M)[0].x); \
-    buffers[(c0i)].data[(p)*4u+1u] = floatBitsToUint((M)[0].y); \
-    buffers[(c0i)].data[(p)*4u+2u] = floatBitsToUint((M)[0].z); \
-    buffers[(c1i)].data[(p)*4u   ] = floatBitsToUint((M)[1].x); \
-    buffers[(c1i)].data[(p)*4u+1u] = floatBitsToUint((M)[1].y); \
-    buffers[(c1i)].data[(p)*4u+2u] = floatBitsToUint((M)[1].z); \
-    buffers[(c2i)].data[(p)*4u   ] = floatBitsToUint((M)[2].x); \
-    buffers[(c2i)].data[(p)*4u+1u] = floatBitsToUint((M)[2].y); \
-    buffers[(c2i)].data[(p)*4u+2u] = floatBitsToUint((M)[2].z); }
+    writePackedXYZ((c0i), (p), (M)[0]); \
+    writePackedXYZ((c1i), (p), (M)[1]); \
+    writePackedXYZ((c2i), (p), (M)[2]); }
 
 // 後方互換: xyz + w=0 を全書き込み
 #define writeMat3(p, M, c0i, c1i, c2i) { \
-    writeVec4((c0i), (p), vec4((M)[0], 0.0)); \
-    writeVec4((c1i), (p), vec4((M)[1], 0.0)); \
-    writeVec4((c2i), (p), vec4((M)[2], 0.0)); }
+    writePackedVec4((c0i), (p), vec4((M)[0], 0.0)); \
+    writePackedVec4((c1i), (p), vec4((M)[1], 0.0)); \
+    writePackedVec4((c2i), (p), vec4((M)[2], 0.0)); }
 
 // ── 対称 Kirchhoff 応力 w レーン パック ──────────────────────────────────
 // F0.w=σ_xx, F1.w=σ_yy, F2.w=σ_zz
@@ -102,24 +94,24 @@ layout(push_constant) uniform PC {
 // readStressW: 対称 mat3 を w レーンから再構成
 // mat3(a,b,c,d,e,f,g,h,i) は列優先: col0=(a,b,c), col1=(d,e,f), col2=(g,h,i)
 #define readStressW(p) mat3( \
-    uintBitsToFloat(buffers[pc.F0Idx].data[(p)*4u+3u]), \
-    uintBitsToFloat(buffers[pc.B0Idx].data[(p)*4u+3u]), \
-    uintBitsToFloat(buffers[pc.B1Idx].data[(p)*4u+3u]), \
-    uintBitsToFloat(buffers[pc.B0Idx].data[(p)*4u+3u]), \
-    uintBitsToFloat(buffers[pc.F1Idx].data[(p)*4u+3u]), \
-    uintBitsToFloat(buffers[pc.B2Idx].data[(p)*4u+3u]), \
-    uintBitsToFloat(buffers[pc.B1Idx].data[(p)*4u+3u]), \
-    uintBitsToFloat(buffers[pc.B2Idx].data[(p)*4u+3u]), \
-    uintBitsToFloat(buffers[pc.F2Idx].data[(p)*4u+3u]) )
+    readPackedW(pc.F0Idx, (p)), \
+    readPackedW(pc.B0Idx, (p)), \
+    readPackedW(pc.B1Idx, (p)), \
+    readPackedW(pc.B0Idx, (p)), \
+    readPackedW(pc.F1Idx, (p)), \
+    readPackedW(pc.B2Idx, (p)), \
+    readPackedW(pc.B1Idx, (p)), \
+    readPackedW(pc.B2Idx, (p)), \
+    readPackedW(pc.F2Idx, (p)) )
 
 // writeStressW: 対称 mat3 の 6 独立成分を w レーンに書き込み
 #define writeStressW(p, tau) { \
-    buffers[pc.F0Idx].data[(p)*4u+3u] = floatBitsToUint((tau)[0][0]); \
-    buffers[pc.F1Idx].data[(p)*4u+3u] = floatBitsToUint((tau)[1][1]); \
-    buffers[pc.F2Idx].data[(p)*4u+3u] = floatBitsToUint((tau)[2][2]); \
-    buffers[pc.B0Idx].data[(p)*4u+3u] = floatBitsToUint((tau)[0][1]); \
-    buffers[pc.B1Idx].data[(p)*4u+3u] = floatBitsToUint((tau)[0][2]); \
-    buffers[pc.B2Idx].data[(p)*4u+3u] = floatBitsToUint((tau)[1][2]); }
+    writePackedW(pc.F0Idx, (p), (tau)[0][0]); \
+    writePackedW(pc.F1Idx, (p), (tau)[1][1]); \
+    writePackedW(pc.F2Idx, (p), (tau)[2][2]); \
+    writePackedW(pc.B0Idx, (p), (tau)[0][1]); \
+    writePackedW(pc.B1Idx, (p), (tau)[0][2]); \
+    writePackedW(pc.B2Idx, (p), (tau)[1][2]); }
 
 // ── マテリアルパラメータ (GLSL 側, MaterialParams.h と std430 互換) ─────────
 // model 定数
@@ -208,6 +200,33 @@ float bspline2g(float d) {
     if (ad < 1.5) return -sign(d) * (1.5 - ad);
     return 0.0;
 }
+
+// ── 固定小数点atomicAdd (scatter P2G用) ─────────────────────────────────────
+// GLSLコアのatomicAdd(uint)のみで質量/運動量の並列蓄積を実現するための符号化。
+// int↔uintは同一ビットパターンを保持するため、uintとしてatomicAddしても2の補数の
+// 符号付き加算として正しく動作する(shader_atomic_float拡張非依存、MoltenVK含め全platform対応)。
+// スケール2^16: 現実的な質量/運動量値(数百以下)に対しint32上限(±2^31)まで十分な余裕を確保
+#define FIXED_POINT_SCALE 65536.0
+#define encodeFixed(v) uint(int((v) * FIXED_POINT_SCALE))
+#define decodeFixed(u) (float(int(u)) / FIXED_POINT_SCALE)
+
+// ── パーティクルバッファ half-float パック (12B/要素、実験用) ────────────────
+// xyz(位置/速度/F列/B列)をpackHalf2x16で圧縮、wは既存のfloatBitsToUint往復を維持
+// (Vp/material id/応力とも精度劣化なし)。xyz用とw用を分離しているのは、F0-2/B0-2で
+// xyz(readMat3/writeMat3xyz)とw(readStressW/writeStressW)を別々に読み書きするため
+#define writePackedXYZ(bufIdx, i, xyz) { \
+    uint _pxb = (i) * 3u; \
+    buffers[(bufIdx)].data[_pxb]      = packHalf2x16((xyz).xy); \
+    buffers[(bufIdx)].data[_pxb + 1u] = packHalf2x16(vec2((xyz).z, 0.0)); }
+#define writePackedW(bufIdx, i, w) buffers[(bufIdx)].data[(i) * 3u + 2u] = floatBitsToUint(w)
+#define readPackedXYZ(bufIdx, i) vec3( \
+    unpackHalf2x16(buffers[(bufIdx)].data[(i) * 3u]).x, \
+    unpackHalf2x16(buffers[(bufIdx)].data[(i) * 3u]).y, \
+    unpackHalf2x16(buffers[(bufIdx)].data[(i) * 3u + 1u]).x)
+#define readPackedW(bufIdx, i) uintBitsToFloat(buffers[(bufIdx)].data[(i) * 3u + 2u])
+
+#define writePackedVec4(bufIdx, i, v) { writePackedXYZ(bufIdx, i, (v).xyz); writePackedW(bufIdx, i, (v).w); }
+#define readPackedVec4(bufIdx, i) vec4(readPackedXYZ(bufIdx, i), readPackedW(bufIdx, i))
 
 // ── 3×3 対称 Jacobi 固有値分解 ───────────────────────────────────────────
 void jacobiEigen3(mat3 A, out vec3 D, out mat3 V) {

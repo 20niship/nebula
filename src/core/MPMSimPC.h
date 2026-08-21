@@ -2,15 +2,7 @@
 #include <cstdint>
 #include <glm/glm.hpp>
 
-// MPM 専用 Push Constants — 188 bytes
-// hash compat: cellCountIdx(20)/cellOffsetIdx(24)/hashCells(36) は SimPC と完全一致
-// → hash_scan_local/global/add_base/zero_cells シェーダーを無修正で再利用可能
-// (この4シェーダーが実際に参照するのはこの3フィールドのみ。他のフィールドはオフセットが
-//  一致している必要はない)
-//
-// issue #46 (直方体ドメイン対応): worldMin/worldMax を vec3 化し、各軸独立の gridRes(uvec3)
-// を追加した。hashCells は旧 gridRes(スカラー) を改名したもので、空間ハッシュ/MPMグリッド
-// バッファの実要素数 (= domain::hashCells()、cubeRes^3。nx*ny*nzではない) を表す。
+// MPM 専用 Push Constants — 188 bytes。reserved20/24/28は旧cellCountIdx/cellOffsetIdx/sortedIdxIdx(MLS-MPM化で空間ハッシュ/ソート廃止に伴い未使用化、offset-churn回避のためreserved化のみ)。hashCellsは旧gridRes(スカラー)を改名したもので空間ハッシュ/MPMグリッドバッファの実要素数(=domain::hashCells()、cubeRes^3。nx*ny*nzではない)を表す。
 struct MPMSimPC {
   // ── Bindless バッファインデックス (48 bytes) ──────────────────────────
   uint32_t posIdx;        // 0   vec4×N  (xyz=position, w=initial volume Vp)
@@ -18,9 +10,9 @@ struct MPMSimPC {
   uint32_t F0Idx;         // 8   vec4×N  F 列0 (xyz) + σ_xx (w)
   uint32_t F1Idx;         // 12  vec4×N  F 列1 (xyz) + σ_yy (w)
   uint32_t typeFlagIdx;   // 16  uint×N  (reserved)
-  uint32_t cellCountIdx;  // 20  ← hash compat ★
-  uint32_t cellOffsetIdx; // 24  ← hash compat ★
-  uint32_t sortedIdxIdx;  // 28  ← hash compat ★
+  uint32_t reserved20;    // 20  旧cellCountIdx
+  uint32_t reserved24;    // 24  旧cellOffsetIdx
+  uint32_t reserved28;    // 28  旧sortedIdxIdx
   uint32_t particleCount; // 32  (ライブパーティクル数)
   uint32_t hashCells;     // 36  空間ハッシュ/MPMグリッドバッファの実要素数 ← hash compat ★
   uint32_t F2Idx;         // 40  F 列2 (xyz) + σ_zz (w)
@@ -55,7 +47,7 @@ struct MPMSimPC {
   uint32_t B2Idx;         // 140 APIC B行列 列2 (xyz) + σ_yz (w)
 
   // ── Grid buffer indices (16 bytes) ───────────────────────────────────
-  uint32_t nanoVDBIdx;  // 144 NanoVDB SDF バッファ (0=無効)
+  uint32_t reserved144; // 144 旧NanoVDB SDF境界条件用(mpm_nanovdb_bc.comp削除に伴い未使用化、colliderIdx/MESH_SDFに統一)
   uint32_t gridMomIdx;  // 148 vec4×CELLS グリッド運動量/速度
   uint32_t gridMassIdx; // 152 float×CELLS グリッド質量
   float restitution;    // 156
@@ -72,6 +64,3 @@ struct MPMSimPC {
   uint32_t forceCount; // 184 有効なForce数 (issue #30; 旧maxParticlesFrac予約枠)
 };
 static_assert(sizeof(MPMSimPC) == 188, "MPMSimPC must be 188 bytes");
-static_assert(offsetof(MPMSimPC, cellCountIdx) == 20, "hash compat offset");
-static_assert(offsetof(MPMSimPC, cellOffsetIdx) == 24, "hash compat offset");
-static_assert(offsetof(MPMSimPC, hashCells) == 36, "hash compat offset");

@@ -1,16 +1,48 @@
 #include "MPMEngine.h"
 #include "../core/Profiling.h"
+#include "BoundaryParticles.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <glm/glm.hpp>
+#include <glm/gtc/packing.hpp>
 #include <map>
 #include <random>
 #include <vector>
 
+// pos/vel half-float パック(12B/要素、実験用): xyzをpackHalf2x16、wはfloatBitsToUint往復(mpm_common.glslのwritePackedVec4と同一仕様)
+static std::vector<uint32_t> packVec4ToHalf(const std::vector<glm::vec4>& src) {
+  std::vector<uint32_t> dst(src.size() * 3);
+  for(size_t i = 0; i < src.size(); ++i) {
+    dst[i * 3]     = glm::packHalf2x16(glm::vec2(src[i].x, src[i].y));
+    dst[i * 3 + 1] = glm::packHalf2x16(glm::vec2(src[i].z, 0.0f));
+    dst[i * 3 + 2] = glm::floatBitsToUint(src[i].w);
+  }
+  return dst;
+}
+
 // ── バリア ────────────────────────────────────────────────────────────────
+
+void MPMEngine::syncGpuForProfiling(VkCommandBuffer cmd) {
+#ifdef NEBULA_TRACY
+  vkEndCommandBuffer(cmd);
+  VkSubmitInfo si{};
+  si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+  si.commandBufferCount = 1;
+  si.pCommandBuffers    = &cmd;
+  vkQueueSubmit(queue_, 1, &si, VK_NULL_HANDLE);
+  vkQueueWaitIdle(queue_);
+  vkResetCommandBuffer(cmd, 0);
+  VkCommandBufferBeginInfo bi{};
+  bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+  bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+  vkBeginCommandBuffer(cmd, &bi);
+#else
+  (void)cmd;
+#endif
+}
 
 void MPMEngine::computeBarrier(VkCommandBuffer cmd) {
   VkMemoryBarrier b{};
@@ -92,24 +124,18 @@ void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool d
   const uint32_t N  = cfg_.maxParticleCount(); // バッファ上限
   nParticles_       = cfg_.particleCount();    // ライブパーティクル数
   const uint32_t NC = cfg_.totalCells();
-  const uint32_t NG = cfg_.nGroups();
 
   // ── パーティクルバッファ ───────────────────────────────────────────────
   // F0-2: xyz = 変形勾配 F の列, w = 対角応力 (σ_xx / σ_yy / σ_zz)
   // B0-2: xyz = APIC アフィン行列 B の列 (Phase 2), w = 非対角応力 (σ_xy / σ_xz / σ_yz)
-  posIdx = attrBuf_.addAttribute("P", sizeof(glm::vec4), N);
-  velIdx = attrBuf_.addAttribute("v", sizeof(glm::vec4), N);
-  F0Idx_ = attrBuf_.addAttribute("F0", sizeof(glm::vec4), N);
-  F1Idx_ = attrBuf_.addAttribute("F1", sizeof(glm::vec4), N);
-  F2Idx_ = attrBuf_.addAttribute("F2", sizeof(glm::vec4), N);
-  B0Idx_ = attrBuf_.addAttribute("B0", sizeof(glm::vec4), N);
-  B1Idx_ = attrBuf_.addAttribute("B1", sizeof(glm::vec4), N);
-  B2Idx_ = attrBuf_.addAttribute("B2", sizeof(glm::vec4), N);
-
-  // ── ハッシュグリッドバッファ ───────────────────────────────────────────
-  cellCountIdx_  = attrBuf_.addAttribute("cellCnt", sizeof(uint32_t), NC);
-  cellOffsetIdx_ = attrBuf_.addAttribute("cellOff", sizeof(uint32_t), NC + NG);
-  sortedIdxIdx_  = attrBuf_.addAttribute("sorted", sizeof(uint32_t), N);
+  posIdx = attrBuf_.addAttribute("P", sizeof(uint32_t) * 3, N); // half-floatパック実験(12B/要素)
+  velIdx = attrBuf_.addAttribute("v", sizeof(uint32_t) * 3, N);
+  F0Idx_ = attrBuf_.addAttribute("F0", sizeof(uint32_t) * 3, N); // half-floatパック実験(12B/要素)
+  F1Idx_ = attrBuf_.addAttribute("F1", sizeof(uint32_t) * 3, N);
+  F2Idx_ = attrBuf_.addAttribute("F2", sizeof(uint32_t) * 3, N);
+  B0Idx_ = attrBuf_.addAttribute("B0", sizeof(uint32_t) * 3, N);
+  B1Idx_ = attrBuf_.addAttribute("B1", sizeof(uint32_t) * 3, N);
+  B2Idx_ = attrBuf_.addAttribute("B2", sizeof(uint32_t) * 3, N);
 
   // ── MPM グリッドバッファ ───────────────────────────────────────────────
   // gridMom は 2 × NC を確保: [0, NC) = v_new, [NC, 2*NC) = v_old (FLIP 用)
@@ -180,29 +206,28 @@ void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool d
         }
 
     auto up = [&](const std::string& name, const void* data, size_t bytes) { attrBuf_.upload(name, data, bytes, cmdPool_, queue_); };
-    up("P", pos.data(), N * sizeof(glm::vec4));
-    up("v", vel.data(), N * sizeof(glm::vec4));
-    up("F0", F0.data(), N * sizeof(glm::vec4));
-    up("F1", F1.data(), N * sizeof(glm::vec4));
-    up("F2", F2.data(), N * sizeof(glm::vec4));
-    up("B0", B0.data(), N * sizeof(glm::vec4));
-    up("B1", B1.data(), N * sizeof(glm::vec4));
-    up("B2", B2.data(), N * sizeof(glm::vec4));
+    std::vector<uint32_t> posPacked = packVec4ToHalf(pos);
+    std::vector<uint32_t> velPacked = packVec4ToHalf(vel);
+    up("P", posPacked.data(), posPacked.size() * sizeof(uint32_t));
+    up("v", velPacked.data(), velPacked.size() * sizeof(uint32_t));
+    auto upPacked = [&](const std::string& name, const std::vector<glm::vec4>& v) {
+      std::vector<uint32_t> packed = packVec4ToHalf(v);
+      up(name, packed.data(), packed.size() * sizeof(uint32_t));
+    };
+    upPacked("F0", F0);
+    upPacked("F1", F1);
+    upPacked("F2", F2);
+    upPacked("B0", B0);
+    upPacked("B1", B1);
+    upPacked("B2", B2);
   }
 
   initForces();
 
   // ── シェーダーパイプライン ─────────────────────────────────────────────
   auto load = [&](ComputePipeline& k, const char* name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
-  load(kMpmZeroCells_, "zero_cells.comp");
-  load(kMpmHashCount_, "mpm_hash_count.comp");
-  load(kHashScanLocal_, "hash_scan_local.comp");
-  load(kHashScanGlobal_, "hash_scan_global.comp");
-  load(kHashAddBase_, "hash_add_base.comp");
-  load(kMpmHashSort_, "mpm_hash_sort.comp");
   load(kZeroGrid_, "mpm_zero_grid.comp");
   load(kP2G_, "mpm_p2g.comp");
-  load(kNanoVDBBC_, "mpm_nanovdb_bc.comp");
   load(kG2P_, "mpm_g2p.comp");
 
   descriptorSetLayout = attrBuf_.descriptorSetLayout;
@@ -212,7 +237,7 @@ void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool d
 // ── クリーンアップ ────────────────────────────────────────────────────────
 
 void MPMEngine::cleanup() {
-  for(auto* k : {&kMpmZeroCells_, &kMpmHashCount_, &kHashScanLocal_, &kHashScanGlobal_, &kHashAddBase_, &kMpmHashSort_, &kZeroGrid_, &kP2G_, &kGridUpdate_, &kNanoVDBBC_, &kG2P_}) k->cleanup();
+  for(auto* k : {&kZeroGrid_, &kP2G_, &kGridUpdate_, &kG2P_}) k->cleanup();
 #ifdef NEBULA_GPU_PROFILING
   if(profPool_ != VK_NULL_HANDLE) vkDestroyQueryPool(device_, profPool_, nullptr);
 #endif
@@ -222,47 +247,32 @@ void MPMEngine::cleanup() {
 VkBuffer MPMEngine::getPositionBuffer() const { return attrBuf_.getBuffer("P"); }
 VkBuffer MPMEngine::getVelocityBuffer() const { return attrBuf_.getBuffer("v"); }
 
-// ── NanoVDB SDF コライダー ────────────────────────────────────────────────
+// ── メッシュSDFコライダー ────────────────────────────────────────────────
 
-static uint32_t mortonExpand(uint32_t v) {
-  v &= 0x000003ffu;
-  v = (v ^ (v << 16u)) & 0xff0000ffu;
-  v = (v ^ (v << 8u)) & 0x0300f00fu;
-  v = (v ^ (v << 4u)) & 0x030c30c3u;
-  v = (v ^ (v << 2u)) & 0x09249249u;
-  return v;
-}
-static uint32_t mortonEncode(uint32_t x, uint32_t y, uint32_t z) { return mortonExpand(x) | (mortonExpand(y) << 1u) | (mortonExpand(z) << 2u); }
+uint32_t MPMEngine::loadColliderMesh(const std::string& objPath, LocalMeshSDF& gridOut, uint32_t res, float scale) {
+  BoundaryParticles bp;
+  BoundaryMesh mesh = bp.loadOBJ(objPath, 1e6f, scale, glm::vec3(0.0f), false);
 
-void MPMEngine::setColliderSphere(float radius, float cx, float cy, float cz) {
-  const glm::uvec3 GR = cfg_.gridRes();
-  const float h        = cfg_.cellSize;
-  const uint32_t NC     = cfg_.totalCells();
-
-  std::vector<float> sdf(NC);
-  for(uint32_t iz = 0; iz < GR.z; iz++)
-    for(uint32_t iy = 0; iy < GR.y; iy++)
-      for(uint32_t ix = 0; ix < GR.x; ix++) {
-        float wx                      = (ix + 0.5f) * h;
-        float wy                      = (iy + 0.5f) * h;
-        float wz                      = (iz + 0.5f) * h;
-        float d                       = std::sqrt((wx - cx) * (wx - cx) + (wy - cy) * (wy - cy) + (wz - cz) * (wz - cz));
-        sdf[mortonEncode(ix, iy, iz)] = d - radius;
-      }
-
-  if(nanoVDBIdx_ == 0) {
-    nanoVDBIdx_ = attrBuf_.addAttribute("nanoVDB", sizeof(float), NC);
+  std::vector<MeshTriangle> tris;
+  tris.reserve(mesh.triVerts.size() / 3);
+  for(size_t i = 0; i + 2 < mesh.triVerts.size(); i += 3) {
+    MeshTriangle t;
+    t.v[0] = mesh.triVerts[i];
+    t.v[1] = mesh.triVerts[i + 1];
+    t.v[2] = mesh.triVerts[i + 2];
+    t.n    = glm::normalize(glm::cross(t.v[1] - t.v[0], t.v[2] - t.v[0]));
+    tris.push_back(t);
   }
-  attrBuf_.upload("nanoVDB", sdf.data(), NC * sizeof(float), cmdPool_, queue_);
+
+  gridOut = bakeLocalMeshSDF(tris, res);
+  return uploadColliderMeshSDF(gridOut);
 }
 
-void MPMEngine::clearCollider() { nanoVDBIdx_ = 0; }
-
-void MPMEngine::setColliderSDF(const std::vector<float>& mortonSDF) {
-  if(nanoVDBIdx_ == 0) {
-    nanoVDBIdx_ = attrBuf_.addAttribute("nanoVDB", sizeof(float), cfg_.totalCells());
-  }
-  attrBuf_.upload("nanoVDB", mortonSDF.data(), mortonSDF.size() * sizeof(float), cmdPool_, queue_);
+uint32_t MPMEngine::uploadColliderMeshSDF(const LocalMeshSDF& grid) {
+  std::string name = "meshSDF_" + std::to_string(nextMeshSDFId_++);
+  uint32_t idx      = attrBuf_.addAttribute(name, sizeof(float), grid.data.size());
+  attrBuf_.upload(name, grid.data.data(), grid.data.size() * sizeof(float), cmdPool_, queue_);
+  return idx;
 }
 
 void MPMEngine::appendParticles(const std::vector<glm::vec4>& pos, const std::vector<glm::vec4>& vel) {
@@ -277,16 +287,19 @@ void MPMEngine::appendParticles(const std::vector<glm::vec4>& pos, const std::ve
   std::vector<glm::vec4> B1(nNew, glm::vec4(0));
   std::vector<glm::vec4> B2(nNew, glm::vec4(0));
 
-  VkDeviceSize byteOff = VkDeviceSize(nParticles_) * sizeof(glm::vec4);
-  auto up              = [&](const std::string& name, const void* data) { attrBuf_.uploadAt(name, data, VkDeviceSize(nNew) * sizeof(glm::vec4), byteOff, cmdPool_, queue_); };
-  up("P", pos.data());
-  up("v", vel.data());
-  up("F0", F0.data());
-  up("F1", F1.data());
-  up("F2", F2.data());
-  up("B0", B0.data());
-  up("B1", B1.data());
-  up("B2", B2.data());
+  VkDeviceSize packedOff = VkDeviceSize(nParticles_) * sizeof(uint32_t) * 3;
+  auto upPacked = [&](const std::string& name, const std::vector<glm::vec4>& v) {
+    std::vector<uint32_t> packed = packVec4ToHalf(v);
+    attrBuf_.uploadAt(name, packed.data(), VkDeviceSize(nNew) * sizeof(uint32_t) * 3, packedOff, cmdPool_, queue_);
+  };
+  upPacked("P", pos);
+  upPacked("v", vel);
+  upPacked("F0", F0);
+  upPacked("F1", F1);
+  upPacked("F2", F2);
+  upPacked("B0", B0);
+  upPacked("B1", B1);
+  upPacked("B2", B2);
 
   nParticles_ += nNew;
 }
@@ -315,6 +328,7 @@ void MPMEngine::setParticleMaterialIds(const std::vector<uint32_t>& matIds) {
 // ── 解析コライダー ────────────────────────────────────────────────────────
 
 void MPMEngine::setColliders(const ColliderSet& cols) {
+  ZoneScoped;
   colliderCount_ = cols.count();
   if(colliderCount_ > 0) {
     attrBuf_.upload("colliders", cols.data().data(), cols.count() * sizeof(ColliderPrimitive), cmdPool_, queue_);
@@ -391,16 +405,19 @@ void MPMEngine::emitFromEmitters(float dt) {
       B2v[j] = glm::vec4(0);
     }
 
-    VkDeviceSize byteOff = VkDeviceSize(nParticles_) * sizeof(glm::vec4);
-    auto up              = [&](const std::string& name, const void* data) { attrBuf_.uploadAt(name, data, VkDeviceSize(nNew) * sizeof(glm::vec4), byteOff, cmdPool_, queue_); };
-    up("P", pos.data());
-    up("v", vel.data());
-    up("F0", F0v.data());
-    up("F1", F1v.data());
-    up("F2", F2v.data());
-    up("B0", B0v.data());
-    up("B1", B1v.data());
-    up("B2", B2v.data());
+    VkDeviceSize packedOff = VkDeviceSize(nParticles_) * sizeof(uint32_t) * 3;
+    auto upPacked = [&](const std::string& name, const std::vector<glm::vec4>& v) {
+      std::vector<uint32_t> packed = packVec4ToHalf(v);
+      attrBuf_.uploadAt(name, packed.data(), VkDeviceSize(nNew) * sizeof(uint32_t) * 3, packedOff, cmdPool_, queue_);
+    };
+    upPacked("P", pos);
+    upPacked("v", vel);
+    upPacked("F0", F0v);
+    upPacked("F1", F1v);
+    upPacked("F2", F2v);
+    upPacked("B0", B0v);
+    upPacked("B1", B1v);
+    upPacked("B2", B2v);
 
     nParticles_ += uint32_t(nNew);
     done++;
@@ -417,9 +434,6 @@ MPMSimPC MPMEngine::buildPC(float subDt) const {
   pc.F0Idx            = F0Idx_;
   pc.F1Idx            = F1Idx_;
   pc.typeFlagIdx      = 0;
-  pc.cellCountIdx     = cellCountIdx_;
-  pc.cellOffsetIdx    = cellOffsetIdx_;
-  pc.sortedIdxIdx     = sortedIdxIdx_;
   pc.particleCount    = nParticles_; // ライブパーティクル数
   pc.hashCells        = cfg_.totalCells();
   pc.F2Idx            = F2Idx_;
@@ -442,7 +456,6 @@ MPMSimPC MPMEngine::buildPC(float subDt) const {
   pc.B0Idx            = B0Idx_;
   pc.B1Idx            = B1Idx_;
   pc.B2Idx            = B2Idx_;
-  pc.nanoVDBIdx       = nanoVDBIdx_;
   pc.gridMomIdx       = gridMomIdx_;
   pc.gridMassIdx      = gridMassIdx_;
   pc.restitution      = restitution;
@@ -462,13 +475,18 @@ void MPMEngine::step(VkCommandBuffer cmd, float dt) {
   ZoneScoped;
   FrameMark;
   // Emitter (GPU upload は compute dispatch の前に完結)
-  emitFromEmitters(dt);
+  {
+    ZoneScopedN("EmitFromEmitters");
+    emitFromEmitters(dt);
+  }
 
-  uploadForces(dt);
+  {
+    ZoneScopedN("UploadForces");
+    uploadForces(dt);
+  }
 
   const uint32_t N  = nParticles_; // ライブパーティクル数
   const uint32_t NC = cfg_.totalCells();
-  const uint32_t NG = cfg_.nGroups();
   float subDt       = dt / float(std::max(1, numSubsteps));
 
 #ifdef NEBULA_GPU_PROFILING
@@ -481,127 +499,61 @@ void MPMEngine::step(VkCommandBuffer cmd, float dt) {
 
   for(int sub = 0; sub < numSubsteps; ++sub) {
     MPMSimPC pc = buildPC(subDt);
-    auto ds     = attrBuf_.descriptorSet;
 
     // ① グリッドバッファをゼロクリア
-#ifdef NEBULA_GPU_PROFILING
-    profBegin(cmd);
-#endif
-    dispatchMPM(cmd, kZeroGrid_, pc, NC);
-    computeBarrier(cmd);
-#ifdef NEBULA_GPU_PROFILING
-    profEnd(cmd, "ZeroGrid");
-#endif
-
-    // ② cellCount バッファをゼロクリア
-#ifdef NEBULA_GPU_PROFILING
-    profBegin(cmd);
-#endif
-    dispatchMPM(cmd, kMpmZeroCells_, pc, NC);
-    computeBarrier(cmd);
-#ifdef NEBULA_GPU_PROFILING
-    profEnd(cmd, "ZeroCells");
-#endif
-
-    // ③ 空間ハッシュ構築 (5パス)
-#ifdef NEBULA_GPU_PROFILING
-    profBegin(cmd);
-#endif
-    dispatchMPM(cmd, kMpmHashCount_, pc, N);
-    computeBarrier(cmd);
-#ifdef NEBULA_GPU_PROFILING
-    profEnd(cmd, "HashCount");
-#endif
-
-#ifdef NEBULA_GPU_PROFILING
-    profBegin(cmd);
-#endif
     {
-      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanLocal_.pipeline);
-      vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanLocal_.pipelineLayout, 0, 1, &ds, 0, nullptr);
-      vkCmdPushConstants(cmd, kHashScanLocal_.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(MPMSimPC), &pc);
-      vkCmdDispatch(cmd, NG, 1, 1);
+      ZoneScopedN("ZeroGrid");
+#ifdef NEBULA_GPU_PROFILING
+      profBegin(cmd);
+#endif
+      dispatchMPM(cmd, kZeroGrid_, pc, NC);
+      computeBarrier(cmd);
+#ifdef NEBULA_GPU_PROFILING
+      profEnd(cmd, "ZeroGrid");
+#endif
+      syncGpuForProfiling(cmd);
     }
-    computeBarrier(cmd);
-#ifdef NEBULA_GPU_PROFILING
-    profEnd(cmd, "HashScanLocal");
-#endif
 
-#ifdef NEBULA_GPU_PROFILING
-    profBegin(cmd);
-#endif
+    // ② P2G (MLS-MPM: パーティクル並列scatter、固定小数点atomicAdd。空間ハッシュ不要)
     {
-      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanGlobal_.pipeline);
-      vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanGlobal_.pipelineLayout, 0, 1, &ds, 0, nullptr);
-      vkCmdPushConstants(cmd, kHashScanGlobal_.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(MPMSimPC), &pc);
-      vkCmdDispatch(cmd, 1, 1, 1);
+      ZoneScopedN("P2G");
+#ifdef NEBULA_GPU_PROFILING
+      profBegin(cmd);
+#endif
+      dispatchMPM(cmd, kP2G_, pc, N);
+      computeBarrier(cmd);
+#ifdef NEBULA_GPU_PROFILING
+      profEnd(cmd, "P2G");
+#endif
+      syncGpuForProfiling(cmd);
     }
-    computeBarrier(cmd);
-#ifdef NEBULA_GPU_PROFILING
-    profEnd(cmd, "HashScanGlobal");
-#endif
 
-#ifdef NEBULA_GPU_PROFILING
-    profBegin(cmd);
-#endif
+    // ③ グリッド速度更新 (正規化 + 重力 + 壁BC)
     {
-      vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashAddBase_.pipeline);
-      vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashAddBase_.pipelineLayout, 0, 1, &ds, 0, nullptr);
-      vkCmdPushConstants(cmd, kHashAddBase_.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(MPMSimPC), &pc);
-      vkCmdDispatch(cmd, NG, 1, 1);
+      ZoneScopedN("GridUpdate");
+#ifdef NEBULA_GPU_PROFILING
+      profBegin(cmd);
+#endif
+      dispatchMPM(cmd, kGridUpdate_, pc, NC);
+      computeBarrier(cmd);
+#ifdef NEBULA_GPU_PROFILING
+      profEnd(cmd, "GridUpdate");
+#endif
+      syncGpuForProfiling(cmd);
     }
-    computeBarrier(cmd);
-#ifdef NEBULA_GPU_PROFILING
-    profEnd(cmd, "HashAddBase");
-#endif
 
+    // ④ G2P + F 更新 + 応力 + 位置更新
+    {
+      ZoneScopedN("G2P");
 #ifdef NEBULA_GPU_PROFILING
-    profBegin(cmd);
+      profBegin(cmd);
 #endif
-    dispatchMPM(cmd, kMpmHashSort_, pc, N);
-    computeBarrier(cmd);
+      dispatchMPM(cmd, kG2P_, pc, N);
+      if(sub < numSubsteps - 1) computeBarrier(cmd);
 #ifdef NEBULA_GPU_PROFILING
-    profEnd(cmd, "HashSort");
+      profEnd(cmd, "G2P");
 #endif
-
-    // ④ P2G (グリッドノード単位 gather)
-#ifdef NEBULA_GPU_PROFILING
-    profBegin(cmd);
-#endif
-    dispatchMPM(cmd, kP2G_, pc, NC);
-    computeBarrier(cmd);
-#ifdef NEBULA_GPU_PROFILING
-    profEnd(cmd, "P2G");
-#endif
-
-    // ⑤ グリッド速度更新 (正規化 + 重力 + 壁BC)
-#ifdef NEBULA_GPU_PROFILING
-    profBegin(cmd);
-#endif
-    dispatchMPM(cmd, kGridUpdate_, pc, NC);
-    computeBarrier(cmd);
-#ifdef NEBULA_GPU_PROFILING
-    profEnd(cmd, "GridUpdate");
-#endif
-
-    // ⑥ NanoVDB SDF 境界条件
-#ifdef NEBULA_GPU_PROFILING
-    profBegin(cmd);
-#endif
-    dispatchMPM(cmd, kNanoVDBBC_, pc, NC);
-    computeBarrier(cmd);
-#ifdef NEBULA_GPU_PROFILING
-    profEnd(cmd, "NanoVDBBC");
-#endif
-
-    // ⑦ G2P + F 更新 + 応力 + 位置更新
-#ifdef NEBULA_GPU_PROFILING
-    profBegin(cmd);
-#endif
-    dispatchMPM(cmd, kG2P_, pc, N);
-    if(sub < numSubsteps - 1) computeBarrier(cmd);
-#ifdef NEBULA_GPU_PROFILING
-    profEnd(cmd, "G2P");
-#endif
+      syncGpuForProfiling(cmd);
+    }
   }
 }

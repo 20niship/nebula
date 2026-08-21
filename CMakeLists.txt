@@ -21,10 +21,7 @@ find_package(Vulkan REQUIRED)
 
 find_program(GLSLC glslc HINTS "${VULKAN_SDK}/bin" REQUIRED)
 
-# ── GPUプロファイリング (Vulkan timestamp query、診断用) ──────────────────
-option(NEBULA_GPU_PROFILING "Enable Vulkan timestamp-query based GPU pass profiling (PyroEngine)" OFF)
-
-# ── Tracy プロファイラ (https://github.com/wolfpld/tracy) ───────────────────
+option(NEBULA_GPU_PROFILING "Enable Vulkan timestamp-query GPU profiling" OFF)
 option(NEBULA_TRACY "Enable Tracy profiler" OFF)
 
 # ── shaderc (実行時 GLSL→SPIR-V 動的コンパイル ──

@@ -215,17 +215,19 @@ private:
     }
     ImGui::Separator();
     static float col_r = 1.5f, col_x = 5.0f, col_y = 3.0f, col_z = 5.0f;
-    ImGui::Text("NanoVDB 球コライダー");
+    ImGui::Text("球コライダー");
     ImGui::SliderFloat("半径", &col_r, 0.5f, 4.0f);
     ImGui::SliderFloat("X", &col_x, 1.0f, cfg.domainSize.x - 1.0f);
     ImGui::SliderFloat("Y", &col_y, 1.0f, cfg.domainSize.y - 1.0f);
     ImGui::SliderFloat("Z", &col_z, 1.0f, cfg.domainSize.z - 1.0f);
     if(ImGui::Button("コライダー設定")) {
-      engine_.setColliderSphere(col_r, col_x, col_y, col_z);
+      ColliderSet cols;
+      cols.addSphere({col_x, col_y, col_z}, col_r);
+      engine_.setColliders(cols);
     }
     ImGui::SameLine();
     if(ImGui::Button("クリア")) {
-      engine_.clearCollider();
+      engine_.clearAnalyticColliders();
     }
     ImGui::End();
 

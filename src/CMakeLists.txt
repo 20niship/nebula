@@ -33,7 +33,6 @@ target_include_directories(nebula PUBLIC
     ${IMGUI_DIR}/backends
     ${CMAKE_SOURCE_DIR}/third_party/VulkanMemoryAllocator/include
     ${CMAKE_SOURCE_DIR}/third_party/argparse/include
-    ${NANOVDB_INCLUDE_DIR}  # NanoVDB: #include <nanovdb/NanoVDB.h>
     ${SHADERC_INCLUDE_DIR}  # shaderc: #include <shaderc/shaderc.hpp> (issue #30 Force動的コンパイル用)
 )
 
@@ -71,13 +70,6 @@ endif()
 if(APPLE)
     target_compile_definitions(nebula PUBLIC VK_USE_PLATFORM_METAL_EXT)
     target_link_libraries(nebula PUBLIC "-framework Foundation")
-endif()
-
-# Apple libc++ (SDK 14) は std::atomic_ref を未実装のため、
-# NanoVDB Util.h が C++20 ブランチに入らないよう MPMEngine.cpp のみ C++17 でコンパイル。
-if(APPLE)
-    set_source_files_properties(engine/MPMEngine.cpp
-        PROPERTIES COMPILE_OPTIONS "-std=c++17")
 endif()
 
 add_dependencies(nebula shaders)

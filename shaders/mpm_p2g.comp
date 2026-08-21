@@ -6,70 +6,124 @@
 //
 // 各パーティクルスレッドが自分のデータを1回だけ読み、3×3×3=27近傍グリッドノードへ
 // 固定小数点atomicAddで質量・運動量(+応力由来の力項)を書き込む。
-// gather方式(旧実装)は1粒子データを最大27回、隣接セルスレッドから間接参照で
-// 重複読み込みしていたが、scatterでは粒子ごとに1回の連続読み込みで済む。
+//
+// ワークグループ内privatization: 同一ワークグループ(256スレッド)内の複数粒子が同じ
+// グリッドノードへ書き込む場合、まずshared memory上のハッシュテーブル(256スロット)で
+// ローカル集約してからグローバルへは1回のatomicAddにまとめる。ハッシュ衝突(異なるnidが
+// 同じスロットを取り合う)時はそのまま直接グローバルatomicAddへフォールバックする
+// (常に正しい結果になり、衝突が多い場合は従来と同等の性能に留まるだけ)。
+// shared memory上のatomicAddはグローバルメモリへのatomicAddよりレイテンシが低いため、
+// 粒子配置が空間的にある程度まとまっている(ワークグループ内で近傍ノードを共有しやすい)
+// 場合にグローバルatomic発行回数を削減できる。
 //
 // ノード規約・重み計算はG2P(mpm_g2p.comp)と同一: base = floor((xp-worldMin)/h) - 1
 // dispatch: (particleCount + 255) / 256
 
 layout(local_size_x = 256) in;
 
-void main() {
-    uint p = gl_GlobalInvocationID.x;
-    if (p >= pc.particleCount) return;
+#define P2G_HASH_SIZE 256u
+#define P2G_EMPTY_KEY 0xFFFFFFFFu
 
-    vec4  pp = readPackedVec4(pc.posIdx, p);
-    vec3  xp = pp.xyz;
-    float Vp = pp.w;
-    vec4  vp4 = readPackedVec4(pc.velIdx, p);
-    vec3  vp  = vp4.xyz;
+shared uint sSlotKey[P2G_HASH_SIZE];
+shared uint sSlotMomX[P2G_HASH_SIZE];
+shared uint sSlotMomY[P2G_HASH_SIZE];
+shared uint sSlotMomZ[P2G_HASH_SIZE];
+shared uint sSlotMass[P2G_HASH_SIZE];
 
-    uint  mat_pid  = floatBitsToUint(vp4.w);
-    float mat_rho0;
-    if (pc.materialCount > 0u) {
-        mat_pid  = min(mat_pid, pc.materialCount - 1u);
-        mat_rho0 = uintBitsToFloat(buffers[pc.materialsIdx].data[mat_pid * 16u + 2u]);
+// nidへの寄与をワークグループ共有ハッシュへローカル集約、衝突時のみグローバルへ直接atomicAdd
+void scatterContribution(uint nid, vec3 momContrib, float massContrib) {
+    uint hash = nid % P2G_HASH_SIZE;
+    uint prevKey = atomicCompSwap(sSlotKey[hash], P2G_EMPTY_KEY, nid);
+    if (prevKey == P2G_EMPTY_KEY || prevKey == nid) {
+        atomicAdd(sSlotMomX[hash], encodeFixed(momContrib.x));
+        atomicAdd(sSlotMomY[hash], encodeFixed(momContrib.y));
+        atomicAdd(sSlotMomZ[hash], encodeFixed(momContrib.z));
+        atomicAdd(sSlotMass[hash], encodeFixed(massContrib));
     } else {
-        mat_rho0 = pc.rho0;
-    }
-    float mp = mat_rho0 * Vp;
-
-    mat3 Bp = mat3(0.0);
-    if (pc.flip_ratio < -0.5) {
-        Bp = readMat3(p, pc.B0Idx, pc.B1Idx, pc.B2Idx);
-    }
-    float D_inv = 4.0 / (pc.cellSize * pc.cellSize);
-    mat3 tau = readStressW(p);
-
-    ivec3 base = ivec3(floor((xp - pc.worldMin) / pc.cellSize)) - ivec3(1);
-
-    for (int iz = 0; iz < 3; iz++)
-    for (int iy = 0; iy < 3; iy++)
-    for (int ix = 0; ix < 3; ix++) {
-        ivec3 nijk = base + ivec3(ix, iy, iz);
-        if (any(lessThan(nijk, ivec3(0))) ||
-            any(greaterThanEqual(nijk, ivec3(pc.gridRes)))) continue;
-
-        vec3 xi = (vec3(nijk) + 0.5) * pc.cellSize + pc.worldMin;
-        vec3 d = (xp - xi) / pc.cellSize;
-
-        float wx = bspline2(d.x), wy = bspline2(d.y), wz = bspline2(d.z);
-        float w  = wx * wy * wz;
-        if (w < 1e-12) continue;
-
-        vec3 dw = vec3(bspline2g(d.x) * wy * wz,
-                       wx * bspline2g(d.y) * wz,
-                       wx * wy * bspline2g(d.z)) / pc.cellSize;
-
-        vec3 v_eff = vp + D_inv * (Bp * (xi - xp));
-
-        float massContrib = w * mp;
-        vec3  momContrib  = w * mp * v_eff - pc.dt * Vp * (tau * dw);
-
-        uint nid = mortonEncodeI(nijk);
-        atomicAdd(buffers[pc.gridMassIdx].data[nid], encodeFixed(massContrib));
         atomicAdd(buffers[pc.gridMomIdx].data[nid * 4u],      encodeFixed(momContrib.x));
         atomicAdd(buffers[pc.gridMomIdx].data[nid * 4u + 1u], encodeFixed(momContrib.y));
         atomicAdd(buffers[pc.gridMomIdx].data[nid * 4u + 2u], encodeFixed(momContrib.z));
+        atomicAdd(buffers[pc.gridMassIdx].data[nid],          encodeFixed(massContrib));
+    }
+}
+
+void main() {
+    uint p   = gl_GlobalInvocationID.x;
+    uint lid = gl_LocalInvocationID.x;
+    bool isActiveP = (p < pc.particleCount);
+
+    // 全スレッド共通: barrierに全員到達させるため早期returnせずshared初期化を行う
+    sSlotKey[lid]  = P2G_EMPTY_KEY;
+    sSlotMomX[lid] = 0u;
+    sSlotMomY[lid] = 0u;
+    sSlotMomZ[lid] = 0u;
+    sSlotMass[lid] = 0u;
+    barrier();
+    memoryBarrierShared();
+
+    if (isActiveP) {
+        vec4  pp = readPackedVec4(pc.posIdx, p);
+        vec3  xp = pp.xyz;
+        float Vp = pp.w;
+        vec4  vp4 = readPackedVec4(pc.velIdx, p);
+        vec3  vp  = vp4.xyz;
+
+        uint  mat_pid  = floatBitsToUint(vp4.w);
+        float mat_rho0;
+        if (pc.materialCount > 0u) {
+            mat_pid  = min(mat_pid, pc.materialCount - 1u);
+            mat_rho0 = uintBitsToFloat(buffers[pc.materialsIdx].data[mat_pid * 16u + 2u]);
+        } else {
+            mat_rho0 = pc.rho0;
+        }
+        float mp = mat_rho0 * Vp;
+
+        mat3 Bp = mat3(0.0);
+        if (pc.flip_ratio < -0.5) {
+            Bp = readMat3(p, pc.B0Idx, pc.B1Idx, pc.B2Idx);
+        }
+        float D_inv = 4.0 / (pc.cellSize * pc.cellSize);
+        mat3 tau = readStressW(p);
+
+        ivec3 base = ivec3(floor((xp - pc.worldMin) / pc.cellSize)) - ivec3(1);
+
+        for (int iz = 0; iz < 3; iz++)
+        for (int iy = 0; iy < 3; iy++)
+        for (int ix = 0; ix < 3; ix++) {
+            ivec3 nijk = base + ivec3(ix, iy, iz);
+            if (any(lessThan(nijk, ivec3(0))) ||
+                any(greaterThanEqual(nijk, ivec3(pc.gridRes)))) continue;
+
+            vec3 xi = (vec3(nijk) + 0.5) * pc.cellSize + pc.worldMin;
+            vec3 d = (xp - xi) / pc.cellSize;
+
+            float wx = bspline2(d.x), wy = bspline2(d.y), wz = bspline2(d.z);
+            float w  = wx * wy * wz;
+            if (w < 1e-12) continue;
+
+            vec3 dw = vec3(bspline2g(d.x) * wy * wz,
+                           wx * bspline2g(d.y) * wz,
+                           wx * wy * bspline2g(d.z)) / pc.cellSize;
+
+            vec3 v_eff = vp + D_inv * (Bp * (xi - xp));
+
+            float massContrib = w * mp;
+            vec3  momContrib  = w * mp * v_eff - pc.dt * Vp * (tau * dw);
+
+            uint nid = mortonEncodeI(nijk);
+            scatterContribution(nid, momContrib, massContrib);
+        }
+    }
+
+    barrier();
+    memoryBarrierShared();
+
+    // フラッシュ: 各スロットにつき1回だけグローバルへatomicAdd(担当は256スレッド全員、lid==slot index)
+    if (sSlotKey[lid] != P2G_EMPTY_KEY) {
+        uint nid = sSlotKey[lid];
+        atomicAdd(buffers[pc.gridMomIdx].data[nid * 4u],      sSlotMomX[lid]);
+        atomicAdd(buffers[pc.gridMomIdx].data[nid * 4u + 1u], sSlotMomY[lid]);
+        atomicAdd(buffers[pc.gridMomIdx].data[nid * 4u + 2u], sSlotMomZ[lid]);
+        atomicAdd(buffers[pc.gridMassIdx].data[nid],          sSlotMass[lid]);
     }
 }

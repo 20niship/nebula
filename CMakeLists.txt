@@ -42,29 +42,6 @@ find_library(SHADERC_LIB
 list(APPEND CMAKE_PREFIX_PATH "/opt/homebrew")
 find_package(glfw3   REQUIRED)
 find_package(glm     REQUIRED)
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
-
-# ── NanoVDB (header-only, OpenVDB submodule の nanovdb/ のみ) ────────────
-set(NANOVDB_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/third_party/openvdb/nanovdb)
-list(APPEND CMAKE_PREFIX_PATH ${NANOVDB_INCLUDE_DIR})
-
-# Mac (MoltenVK): shaderFloat64=false → PNanoVDB.h の double を float に自動パッチ
-if(APPLE)
-    file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/nanovdb_glsl)
-    execute_process(
-        COMMAND ${Python3_EXECUTABLE}
-                ${CMAKE_SOURCE_DIR}/cmake/patch_pnanovdb.py
-                ${NANOVDB_INCLUDE_DIR}/nanovdb/PNanoVDB.h
-                ${CMAKE_BINARY_DIR}/nanovdb_glsl/PNanoVDB.h
-        RESULT_VARIABLE _patch_result
-    )
-    if(NOT _patch_result EQUAL 0)
-        message(WARNING "patch_pnanovdb.py failed: NanoVDB GLSL shaders may not compile on MoltenVK")
-    endif()
-    set(PNANOVDB_GLSL_INCLUDE ${CMAKE_BINARY_DIR}/nanovdb_glsl)
-else()
-    set(PNANOVDB_GLSL_INCLUDE ${NANOVDB_INCLUDE_DIR}/nanovdb)
-endif()
 
 # ── VulkanMemoryAllocator (header-only) ───────────────────────────────────
 add_subdirectory(third_party/VulkanMemoryAllocator)
@@ -146,12 +123,10 @@ foreach(SHADER ${SHADER_SOURCES})
         OUTPUT  ${SPV}
         COMMAND ${GLSLC} --target-env=vulkan1.2
                          -I ${SHADER_SRC_DIR}
-                         -I ${PNANOVDB_GLSL_INCLUDE}
                          -o ${SPV} ${SHADER}
         DEPENDS ${SHADER} ${SHADER_SRC_DIR}/common.glsl
                 ${SHADER_SRC_DIR}/mpm_common.glsl ${SHADER_SRC_DIR}/collider_common.glsl
                 ${SHADER_SRC_DIR}/pyro_common.glsl
-                ${PNANOVDB_GLSL_INCLUDE}/PNanoVDB.h
         COMMENT "Compiling shader ${FNAME}"
     )
     list(APPEND SHADER_SPV ${SPV})

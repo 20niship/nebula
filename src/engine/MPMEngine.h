@@ -67,6 +67,12 @@ public:
 
   void step(VkCommandBuffer cmd, float dt);
 
+#ifdef NEBULA_GPU_PROFILING
+  // GPUパス単位プロファイリング (PyroEngine と同様の VkQueryPool タイムスタンプ計測)
+  void enableGpuProfiling(VkPhysicalDevice physicalDevice);
+  void printGpuProfile();
+#endif
+
   const MPMConfig& config() const { return cfg_; }
   uint32_t liveParticleCount() const { return nParticles_; }
   VkBuffer getPositionBuffer() const;
@@ -187,4 +193,16 @@ private:
   MPMSimPC buildPC(float subDt) const;
   void dispatchMPM(VkCommandBuffer cmd, ComputePipeline& k, const MPMSimPC& pc, uint32_t count);
   void computeBarrier(VkCommandBuffer cmd);
+
+#ifdef NEBULA_GPU_PROFILING
+  void profBegin(VkCommandBuffer cmd);
+  void profEnd(VkCommandBuffer cmd, const char* label);
+
+  VkQueryPool profPool_      = VK_NULL_HANDLE;
+  bool profEnabled_          = false;
+  double profTsPeriodNs_     = 1.0;
+  static constexpr uint32_t kProfMaxQueries = 256;
+  std::vector<std::string> profLabels_;
+  uint32_t profQueryIndex_ = 0;
+#endif
 };

@@ -1,11 +1,12 @@
 #include "MPMEngine.h"
 #include "../core/Profiling.h"
 
-#include <cmath>
-#include <cstring>
-#include <random>
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
 #include <glm/glm.hpp>
+#include <map>
 #include <random>
 #include <vector>
 
@@ -29,6 +30,58 @@ void MPMEngine::dispatchMPM(VkCommandBuffer cmd, ComputePipeline& k, const MPMSi
   uint32_t groups = (count + 255u) / 256u;
   vkCmdDispatch(cmd, groups, 1, 1);
 }
+
+// ── GPUパス単位プロファイリング (PyroEngine と同一パターン) ──────────────
+#ifdef NEBULA_GPU_PROFILING
+
+void MPMEngine::profBegin(VkCommandBuffer cmd) {
+  if(profEnabled_ && profQueryIndex_ + 1 < kProfMaxQueries) vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, profPool_, profQueryIndex_);
+}
+
+void MPMEngine::profEnd(VkCommandBuffer cmd, const char* label) {
+  if(profEnabled_ && profQueryIndex_ + 1 < kProfMaxQueries) {
+    vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, profPool_, profQueryIndex_ + 1);
+    profLabels_.push_back(label);
+    profQueryIndex_ += 2;
+  }
+}
+
+void MPMEngine::enableGpuProfiling(VkPhysicalDevice physicalDevice) {
+  VkPhysicalDeviceProperties props{};
+  vkGetPhysicalDeviceProperties(physicalDevice, &props);
+  profTsPeriodNs_ = props.limits.timestampPeriod;
+  VkQueryPoolCreateInfo qpci{};
+  qpci.sType      = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+  qpci.queryType  = VK_QUERY_TYPE_TIMESTAMP;
+  qpci.queryCount = kProfMaxQueries;
+  vkCreateQueryPool(device_, &qpci, nullptr, &profPool_);
+  profEnabled_ = true;
+}
+
+void MPMEngine::printGpuProfile() {
+  if(!profEnabled_ || profLabels_.empty()) return;
+  uint32_t n = uint32_t(profLabels_.size()) * 2;
+  std::vector<uint64_t> ts(n);
+  vkGetQueryPoolResults(device_, profPool_, 0, n, ts.size() * sizeof(uint64_t), ts.data(), sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+
+  std::map<std::string, double> sumMs;
+  std::map<std::string, int> counts;
+  double total = 0.0;
+  for(size_t i = 0; i < profLabels_.size(); i++) {
+    double ms = double(ts[i * 2 + 1] - ts[i * 2]) * profTsPeriodNs_ / 1e6;
+    sumMs[profLabels_[i]] += ms;
+    counts[profLabels_[i]] += 1;
+    total += ms;
+  }
+  std::vector<std::pair<std::string, double>> sorted(sumMs.begin(), sumMs.end());
+  std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+  std::fprintf(stderr, "=== [MPMEngine GPU profile] total=%.4f ms ===\n", total);
+  for(const auto& [label, ms] : sorted) {
+    std::fprintf(stderr, "  %-26s %9.4f ms  (%5.1f%%, x%d)\n", label.c_str(), ms, ms / total * 100.0, counts[label]);
+  }
+}
+
+#endif // NEBULA_GPU_PROFILING
 
 // ── 初期化 ────────────────────────────────────────────────────────────────
 
@@ -160,6 +213,9 @@ void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool d
 
 void MPMEngine::cleanup() {
   for(auto* k : {&kMpmZeroCells_, &kMpmHashCount_, &kHashScanLocal_, &kHashScanGlobal_, &kHashAddBase_, &kMpmHashSort_, &kZeroGrid_, &kP2G_, &kGridUpdate_, &kNanoVDBBC_, &kG2P_}) k->cleanup();
+#ifdef NEBULA_GPU_PROFILING
+  if(profPool_ != VK_NULL_HANDLE) vkDestroyQueryPool(device_, profPool_, nullptr);
+#endif
   cleanupEngineBase();
 }
 
@@ -415,22 +471,51 @@ void MPMEngine::step(VkCommandBuffer cmd, float dt) {
   const uint32_t NG = cfg_.nGroups();
   float subDt       = dt / float(std::max(1, numSubsteps));
 
+#ifdef NEBULA_GPU_PROFILING
+  if(profEnabled_) {
+    vkCmdResetQueryPool(cmd, profPool_, 0, kProfMaxQueries);
+    profLabels_.clear();
+  }
+  profQueryIndex_ = 0;
+#endif
+
   for(int sub = 0; sub < numSubsteps; ++sub) {
     MPMSimPC pc = buildPC(subDt);
     auto ds     = attrBuf_.descriptorSet;
 
     // ① グリッドバッファをゼロクリア
+#ifdef NEBULA_GPU_PROFILING
+    profBegin(cmd);
+#endif
     dispatchMPM(cmd, kZeroGrid_, pc, NC);
     computeBarrier(cmd);
+#ifdef NEBULA_GPU_PROFILING
+    profEnd(cmd, "ZeroGrid");
+#endif
 
     // ② cellCount バッファをゼロクリア
+#ifdef NEBULA_GPU_PROFILING
+    profBegin(cmd);
+#endif
     dispatchMPM(cmd, kMpmZeroCells_, pc, NC);
     computeBarrier(cmd);
+#ifdef NEBULA_GPU_PROFILING
+    profEnd(cmd, "ZeroCells");
+#endif
 
     // ③ 空間ハッシュ構築 (5パス)
+#ifdef NEBULA_GPU_PROFILING
+    profBegin(cmd);
+#endif
     dispatchMPM(cmd, kMpmHashCount_, pc, N);
     computeBarrier(cmd);
+#ifdef NEBULA_GPU_PROFILING
+    profEnd(cmd, "HashCount");
+#endif
 
+#ifdef NEBULA_GPU_PROFILING
+    profBegin(cmd);
+#endif
     {
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanLocal_.pipeline);
       vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanLocal_.pipelineLayout, 0, 1, &ds, 0, nullptr);
@@ -438,7 +523,13 @@ void MPMEngine::step(VkCommandBuffer cmd, float dt) {
       vkCmdDispatch(cmd, NG, 1, 1);
     }
     computeBarrier(cmd);
+#ifdef NEBULA_GPU_PROFILING
+    profEnd(cmd, "HashScanLocal");
+#endif
 
+#ifdef NEBULA_GPU_PROFILING
+    profBegin(cmd);
+#endif
     {
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanGlobal_.pipeline);
       vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashScanGlobal_.pipelineLayout, 0, 1, &ds, 0, nullptr);
@@ -446,7 +537,13 @@ void MPMEngine::step(VkCommandBuffer cmd, float dt) {
       vkCmdDispatch(cmd, 1, 1, 1);
     }
     computeBarrier(cmd);
+#ifdef NEBULA_GPU_PROFILING
+    profEnd(cmd, "HashScanGlobal");
+#endif
 
+#ifdef NEBULA_GPU_PROFILING
+    profBegin(cmd);
+#endif
     {
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashAddBase_.pipeline);
       vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kHashAddBase_.pipelineLayout, 0, 1, &ds, 0, nullptr);
@@ -454,24 +551,57 @@ void MPMEngine::step(VkCommandBuffer cmd, float dt) {
       vkCmdDispatch(cmd, NG, 1, 1);
     }
     computeBarrier(cmd);
+#ifdef NEBULA_GPU_PROFILING
+    profEnd(cmd, "HashAddBase");
+#endif
 
+#ifdef NEBULA_GPU_PROFILING
+    profBegin(cmd);
+#endif
     dispatchMPM(cmd, kMpmHashSort_, pc, N);
     computeBarrier(cmd);
+#ifdef NEBULA_GPU_PROFILING
+    profEnd(cmd, "HashSort");
+#endif
 
     // ④ P2G (グリッドノード単位 gather)
+#ifdef NEBULA_GPU_PROFILING
+    profBegin(cmd);
+#endif
     dispatchMPM(cmd, kP2G_, pc, NC);
     computeBarrier(cmd);
+#ifdef NEBULA_GPU_PROFILING
+    profEnd(cmd, "P2G");
+#endif
 
     // ⑤ グリッド速度更新 (正規化 + 重力 + 壁BC)
+#ifdef NEBULA_GPU_PROFILING
+    profBegin(cmd);
+#endif
     dispatchMPM(cmd, kGridUpdate_, pc, NC);
     computeBarrier(cmd);
+#ifdef NEBULA_GPU_PROFILING
+    profEnd(cmd, "GridUpdate");
+#endif
 
     // ⑥ NanoVDB SDF 境界条件
+#ifdef NEBULA_GPU_PROFILING
+    profBegin(cmd);
+#endif
     dispatchMPM(cmd, kNanoVDBBC_, pc, NC);
     computeBarrier(cmd);
+#ifdef NEBULA_GPU_PROFILING
+    profEnd(cmd, "NanoVDBBC");
+#endif
 
     // ⑦ G2P + F 更新 + 応力 + 位置更新
+#ifdef NEBULA_GPU_PROFILING
+    profBegin(cmd);
+#endif
     dispatchMPM(cmd, kG2P_, pc, N);
     if(sub < numSubsteps - 1) computeBarrier(cmd);
+#ifdef NEBULA_GPU_PROFILING
+    profEnd(cmd, "G2P");
+#endif
   }
 }

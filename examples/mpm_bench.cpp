@@ -2,9 +2,9 @@
  * mpm_bench — GPU MPM 転写モード(PIC/APIC/FLIP)別・粒子数別ヘッドレスベンチマーク
  *
  * ウィンドウなし (HeadlessCtx) で MPMEngine::step() を n-frames 回実行し、
- * 1フレームあたりの平均処理時間を計測する。NEBULA_GPU_PROFILING ビルド時は
- * Vulkan タイムスタンプクエリによるパス単位 (P2G/G2P/ハッシュ構築 等) の
- * GPU 時間内訳も出力する。
+ * 1フレームあたりの平均処理時間を計測する。パス単位の内訳が要る場合は
+ * NEBULA_TRACY ビルドでTracyプロファイラを接続すること (MPMEngine::step 内の
+ * ZoneScopedN が FluidEngine 等と同じ形式でP2G/G2P/ZeroGrid/GridUpdateを計測する)。
  */
 
 #include "engine/MPMEngine.h"
@@ -48,9 +48,6 @@ int main(int argc, char* argv[]) {
 
     MPMEngine engine;
     engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR, cfg);
-#ifdef NEBULA_GPU_PROFILING
-    engine.enableGpuProfiling(ctx.physicalDevice);
-#endif
 
     auto gravity = GravityForce::FromDirection({0.0f, -1.0f, 0.0f}, 9.8f);
     engine.addForce(gravity);
@@ -75,10 +72,6 @@ int main(int argc, char* argv[]) {
     double elapsed_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - perfStart).count();
     std::printf("PERF_RESULT particles=%u frames=%d elapsed_s=%.6f ms_per_frame=%.6f fps=%.2f\n", cfg.particleCount(), args.n_frames, elapsed_s, elapsed_s * 1000.0 / double(args.n_frames), double(args.n_frames) / elapsed_s);
     std::fflush(stdout);
-
-#ifdef NEBULA_GPU_PROFILING
-    engine.printGpuProfile();
-#endif
 
     // 半精度パック(pos/gridVel)導入後の健全性チェック: NaN/Infなし、粒子がドメイン内に収まっているか
     {

@@ -22,6 +22,7 @@
   TC-F: MPM マルチマテリアル — 弾性体 + Drucker-Prager 砂      mpm_multimaterial
   TC-G: MPM 雪衝突 — 移動箱SDF (粒子50倍・高速・半サイズ箱・固定フレーム自動衝突) mpm_snow_impact
   TC-H: MPM 地層崩壊 — 硬岩/弱粘土/緩土 3層                  mpm_geolayer
+  TC-M: MPM タイヤ転がり — スリップ砂巻き上げ                 mpm_tire_sand
   TC-K: Pyro 牛への爆風 — 流速ヒートマップ表示                 pyro_cow_blast
   TC-L: Pyro 爆発 (キノコ雲) — smoke/fire ボリューム表示       pyro_explosion
 使い方:
@@ -54,7 +55,7 @@ VIDEO_FPS = 60     # 出力動画 FPS
 THUMB_W   = 480    # 4列 × 480 = 1920px (ffmpeg scale と一致)
 THUMB_H   = 270    # 16:9
 GRID_COLS = 4
-GRID_ROWS = 5      # 4×5=20 セル; TC1–TC11 + TC-A,B,E,F,G,H,K,L (TC-C/D/I/J除外、19使用 + 空き1)
+GRID_ROWS = 5      # 4×5=20 セル; TC1–TC11 + TC-A,B,E,F,G,H,M,K,L (TC-C/D/I/J除外、20使用・空きなし)
 
 # テストケース定義
 # exe=None のエントリは空きセル（グリッドのパディング用）
@@ -192,6 +193,16 @@ SIMS = [
             "--grid-res", "64", "--substeps", "25",
         ],
         "params": "N=1920 | 下=硬岩ELASTIC | 中=弱粘土VON_MISES | 上=緩土D-P",
+    },
+    {
+        "id": "tc_tire", "exe": "mpm_tire_sand",
+        "title": "TC-M: MPM Tire Rolling Sand",
+        "env": {},
+        "extra_args": [
+            "--sand-nx", "150", "--sand-nz", "150", "--sand-layers", "4",
+            "--substeps", "25", "--launch-frame", "20",
+        ],
+        "params": "N~90K | 転がりタイヤ(解析円柱コライダー) | slip-ratio=10で土巻き上げ",
     },
     # ── Pyro (グリッドベース煙・火炎) ────────────────────────────────────────
     {

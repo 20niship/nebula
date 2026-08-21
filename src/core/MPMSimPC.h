@@ -10,7 +10,7 @@ struct MPMSimPC {
   uint32_t F0Idx;         // 8   vec4×N  F 列0 (xyz) + σ_xx (w)
   uint32_t F1Idx;         // 12  vec4×N  F 列1 (xyz) + σ_yy (w)
   uint32_t typeFlagIdx;   // 16  uint×N  (reserved)
-  uint32_t reserved20;    // 20  旧cellCountIdx
+  uint32_t gridVelIdx;    // 20  packed-half3×CELLS (8B/cell) GridUpdateが書きG2Pが読む v_new (旧cellCountIdx)
   uint32_t reserved24;    // 24  旧cellOffsetIdx
   uint32_t reserved28;    // 28  旧sortedIdxIdx
   uint32_t particleCount; // 32  (ライブパーティクル数)
@@ -47,9 +47,9 @@ struct MPMSimPC {
   uint32_t B2Idx;         // 140 APIC B行列 列2 (xyz) + σ_yz (w)
 
   // ── Grid buffer indices (16 bytes) ───────────────────────────────────
-  uint32_t reserved144; // 144 旧NanoVDB SDF境界条件用(mpm_nanovdb_bc.comp削除に伴い未使用化、colliderIdx/MESH_SDFに統一)
-  uint32_t gridMomIdx;  // 148 vec4×CELLS グリッド運動量/速度
-  uint32_t gridMassIdx; // 152 float×CELLS グリッド質量
+  uint32_t gridVelOldIdx; // 144 packed-half3×CELLS (8B/cell) FLIP用 v_old (旧NanoVDB SDF境界条件用reserved)
+  uint32_t gridMomIdx;    // 148 vec4×CELLS P2G(scatter)固定小数点atomicAdd蓄積専用、G2Pは読まない
+  uint32_t gridMassIdx;   // 152 float×CELLS 同上
   float restitution;    // 156
 
   // ── Boundary / solver (16 bytes) ─────────────────────────────────────

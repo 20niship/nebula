@@ -12,11 +12,13 @@
 
 #include <argparse/argparse.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtc/packing.hpp>
 
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 static const std::string SHADER_DIR_STR = SHADER_DIR;
 
@@ -77,6 +79,27 @@ int main(int argc, char* argv[]) {
 #ifdef NEBULA_GPU_PROFILING
     engine.printGpuProfile();
 #endif
+
+    // 半精度パック(pos/gridVel)導入後の健全性チェック: NaN/Infなし、粒子がドメイン内に収まっているか
+    {
+      uint32_t n = cfg.particleCount();
+      std::vector<uint32_t> raw(n * 3);
+      ctx.readBuffer(engine.getPositionBuffer(), 0, raw.data(), raw.size() * sizeof(uint32_t));
+      float margin = args.domain_size * 0.5f; // クランプ境界(1.5*cellSize)より緩めに、発散のみ検出
+      bool ok       = true;
+      for(uint32_t i = 0; i < n; i++) {
+        glm::vec2 xy = glm::unpackHalf2x16(raw[i * 3]);
+        glm::vec2 z0 = glm::unpackHalf2x16(raw[i * 3 + 1]);
+        glm::vec3 p(xy.x, xy.y, z0.x);
+        bool finite = std::isfinite(p.x) && std::isfinite(p.y) && std::isfinite(p.z);
+        if(!finite || glm::any(glm::lessThan(p, glm::vec3(-margin))) || glm::any(glm::greaterThan(p, glm::vec3(args.domain_size + margin)))) {
+          ok = false;
+          std::printf("SANITY_CHECK FAIL particle=%u pos=(%f,%f,%f)\n", i, p.x, p.y, p.z);
+          break;
+        }
+      }
+      std::printf("SANITY_CHECK %s (n=%u, finite + in-bounds check on final positions)\n", ok ? "PASS" : "FAIL", n);
+    }
 
     engine.cleanup();
     ctx.cleanup();

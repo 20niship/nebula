@@ -12,7 +12,7 @@ layout(push_constant) uniform PC {
     uint  F0Idx;         // 8   vec4×N  F 列0 (xyz) + σ_xx (w)
     uint  F1Idx;         // 12  vec4×N  F 列1 (xyz) + σ_yy (w)
     uint  typeFlagIdx;   // 16  (reserved)
-    uint  reserved20;    // 20  旧cellCountIdx
+    uint  gridVelIdx;    // 20  packed-half3×CELLS (8B/cell) v_new (旧cellCountIdx)
     uint  reserved24;    // 24  旧cellOffsetIdx
     uint  reserved28;    // 28  旧sortedIdxIdx
     uint  particleCount; // 32  ライブ粒子数
@@ -37,9 +37,9 @@ layout(push_constant) uniform PC {
     uint  B0Idx;         // 132 B 列0 (xyz, APIC) + σ_xy (w)
     uint  B1Idx;         // 136 B 列1 (xyz, APIC) + σ_xz (w)
     uint  B2Idx;         // 140 B 列2 (xyz, APIC) + σ_yz (w)
-    uint  reserved144;   // 144 旧NanoVDB SDF境界条件用、未使用化(MESH_SDFに統一)
-    uint  gridMomIdx;    // 148
-    uint  gridMassIdx;   // 152
+    uint  gridVelOldIdx; // 144 packed-half3×CELLS (8B/cell) FLIP用 v_old (旧NanoVDB SDF reserved)
+    uint  gridMomIdx;    // 148 P2G(scatter)固定小数点atomicAdd蓄積専用、G2Pは読まない
+    uint  gridMassIdx;   // 152 同上
     float restitution;   // 156
     float wall_friction; // 160
     uint  plasticModel;  // 164 グローバルモデル (Phase 1 まで有効)
@@ -227,6 +227,16 @@ float bspline2g(float d) {
 
 #define writePackedVec4(bufIdx, i, v) { writePackedXYZ(bufIdx, i, (v).xyz); writePackedW(bufIdx, i, (v).w); }
 #define readPackedVec4(bufIdx, i) vec4(readPackedXYZ(bufIdx, i), readPackedW(bufIdx, i))
+
+// gridVel/gridVelOld専用: wを持たない分ストライド2(4B×2=8B/セル)でpackHalf2x16
+#define writeGridVelPacked(bufIdx, i, v) { \
+    uint _gvb = (i) * 2u; \
+    buffers[(bufIdx)].data[_gvb]      = packHalf2x16((v).xy); \
+    buffers[(bufIdx)].data[_gvb + 1u] = packHalf2x16(vec2((v).z, 0.0)); }
+#define readGridVelPacked(bufIdx, i) vec3( \
+    unpackHalf2x16(buffers[(bufIdx)].data[(i) * 2u]).x, \
+    unpackHalf2x16(buffers[(bufIdx)].data[(i) * 2u]).y, \
+    unpackHalf2x16(buffers[(bufIdx)].data[(i) * 2u + 1u]).x)
 
 // ── 3×3 対称 Jacobi 固有値分解 ───────────────────────────────────────────
 void jacobiEigen3(mat3 A, out vec3 D, out mat3 V) {

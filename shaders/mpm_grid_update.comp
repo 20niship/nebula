@@ -36,8 +36,8 @@ void main() {
         if (vspeed > vmax_grid) v *= vmax_grid / vspeed;
     }
 
-    // FLIP: 物理適用前の速度を後半バッファへ退避 (G2P が v_i_old として参照)
-    writeVec4(pc.gridMomIdx, gid + totalCells, vec4(v, 0.0));
+    // FLIP: 物理適用前の速度をgridVelOldへ退避 (G2P が v_i_old として参照)
+    writeGridVelPacked(pc.gridVelOldIdx, gid, v);
 
     // Force(空間ノイズ用の位置)より前倒しで計算 (issue #30)
     ivec3 ijk = mortonDecodeI(gid);
@@ -123,5 +123,5 @@ void main() {
         }
     }
 
-    writeVec4(pc.gridMomIdx, gid, vec4(v, 0.0));
+    writeGridVelPacked(pc.gridVelIdx, gid, v);
 }

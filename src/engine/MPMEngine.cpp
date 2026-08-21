@@ -137,10 +137,12 @@ void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool d
   B1Idx_ = attrBuf_.addAttribute("B1", sizeof(uint32_t) * 3, N);
   B2Idx_ = attrBuf_.addAttribute("B2", sizeof(uint32_t) * 3, N);
 
-  // ── MPM グリッドバッファ ───────────────────────────────────────────────
-  // gridMom は 2 × NC を確保: [0, NC) = v_new, [NC, 2*NC) = v_old (FLIP 用)
-  gridMomIdx_  = attrBuf_.addAttribute("gridMom", sizeof(glm::vec4), NC * 2);
+  // gridMom/gridMass: P2G(scatter)固定小数点atomicAdd蓄積専用、G2Pは読まない
+  gridMomIdx_  = attrBuf_.addAttribute("gridMom", sizeof(glm::vec4), NC);
   gridMassIdx_ = attrBuf_.addAttribute("gridMass", sizeof(float), NC);
+  // gridVel/gridVelOld: GridUpdate出力をhalf-floatパック(8B/セル)で保持、G2P帯域を半減
+  gridVelIdx_    = attrBuf_.addAttribute("gridVel", sizeof(uint32_t) * 2, NC);
+  gridVelOldIdx_ = attrBuf_.addAttribute("gridVelOld", sizeof(uint32_t) * 2, NC);
 
   // ── マテリアルテーブル SSBO ────────────────────────────────────────────
   // cfg_ のグローバルパラメータからデフォルトマテリアル（弾性体）を生成
@@ -458,6 +460,8 @@ MPMSimPC MPMEngine::buildPC(float subDt) const {
   pc.B2Idx            = B2Idx_;
   pc.gridMomIdx       = gridMomIdx_;
   pc.gridMassIdx      = gridMassIdx_;
+  pc.gridVelIdx       = gridVelIdx_;
+  pc.gridVelOldIdx    = gridVelOldIdx_;
   pc.restitution      = restitution;
   pc.wall_friction    = wall_friction;
   pc.plasticModel     = plasticModel;

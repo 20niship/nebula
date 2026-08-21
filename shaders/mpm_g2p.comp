@@ -83,7 +83,6 @@ void main() {
     vec3  vpic_old = vec3(0.0);  // FLIP 用: グリッド物理前速度の加重和
     mat3  vgrad = mat3(0.0);  // ∇v_p = Σ v_i ⊗ ∇w_ip
     mat3  B_new = mat3(0.0);  // APIC アフィン B_p = Σ w * v_i ⊗ (x_i - x_p)
-    uint  totalCells = pc.hashCells;
 
     for (int iz = 0; iz < 3; iz++)
     for (int iy = 0; iy < 3; iy++)
@@ -108,14 +107,14 @@ void main() {
                        wx * bspline2g(d.y) * wz,
                        wx * wy * bspline2g(d.z)) / pc.cellSize;
 
-        vec3 vi = readVec4(pc.gridMomIdx, nid).xyz;
+        vec3 vi = readGridVelPacked(pc.gridVelIdx, nid);
         vpic  += w * vi;
         vgrad += outerProduct(vi, dw);
         // APIC: B_p = Σ w * v_i ⊗ (x_i - x_p)  (outerProduct の列優先: col j = vi*dxi[j])
         B_new += w * outerProduct(vi, xi - xp);
-        // FLIP: 後半バッファから物理前グリッド速度を収集 (push constant 分岐は uniform → 全スレッド同一)
+        // FLIP: gridVelOldから物理前グリッド速度を収集 (push constant 分岐は uniform → 全スレッド同一)
         if (pc.flip_ratio > 0.01) {
-            vpic_old += w * readVec4(pc.gridMomIdx, nid + totalCells).xyz;
+            vpic_old += w * readGridVelPacked(pc.gridVelOldIdx, nid);
         }
     }
 

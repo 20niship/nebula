@@ -145,8 +145,10 @@ private:
   uint32_t B2Idx_ = 0;
 
   // MPM グリッドバッファ
-  uint32_t gridMomIdx_  = 0;
-  uint32_t gridMassIdx_ = 0;
+  uint32_t gridMomIdx_    = 0;
+  uint32_t gridMassIdx_   = 0;
+  uint32_t gridVelIdx_    = 0;
+  uint32_t gridVelOldIdx_ = 0;
 
   // マテリアルテーブル SSBO
   uint32_t materialsIdx_  = 0;

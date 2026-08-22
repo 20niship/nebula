@@ -43,23 +43,6 @@ find_package(glm     REQUIRED)
 # ── VulkanMemoryAllocator (header-only) ───────────────────────────────────
 add_subdirectory(third_party/VulkanMemoryAllocator)
 
-# ── ImGui ─────────────────────────────────────────────────────────────────
-set(IMGUI_DIR ${CMAKE_SOURCE_DIR}/third_party/imgui)
-add_library(imgui STATIC
-    ${IMGUI_DIR}/imgui.cpp
-    ${IMGUI_DIR}/imgui_draw.cpp
-    ${IMGUI_DIR}/imgui_tables.cpp
-    ${IMGUI_DIR}/imgui_widgets.cpp
-    ${IMGUI_DIR}/imgui_demo.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
-)
-target_include_directories(imgui PUBLIC
-    ${IMGUI_DIR}
-    ${IMGUI_DIR}/backends
-)
-target_link_libraries(imgui PUBLIC Vulkan::Vulkan glfw)
-
 # ── Shaders ───────────────────────────────────────────────────────────────
 set(SHADER_SRC_DIR ${CMAKE_SOURCE_DIR}/shaders)
 set(SHADER_OUT_DIR ${CMAKE_BINARY_DIR}/shaders)

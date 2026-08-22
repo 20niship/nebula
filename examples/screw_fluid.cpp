@@ -3,12 +3,8 @@
 #include "core/Force.h"
 #include "engine/FluidEngine.h"
 #include "graphics/GraphicsPipeline.h"
-#include "utils.hpp"
 
 #include <argparse/argparse.hpp>
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_vulkan.h>
 
 #include <array>
 #include <cmath>
@@ -203,7 +199,6 @@ private:
     graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/fluid_particle.vert.spv", SHADER_DIR_STR + "/fluid.frag.spv");
 
     base_.createFrameData();
-    base_.initImGui();
   }
 
   void recordComputeCmd(VkCommandBuffer cmd) {
@@ -281,7 +276,6 @@ private:
     pc.particleCount = engine_.nFluid();
     graphicsPipe_.draw(cmd, engine_.descriptorSet, pc, engine_.nFluid());
 
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
   }
@@ -306,22 +300,6 @@ private:
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    ImGui::Begin("Screw Fluid (TC8)");
-    ImGui::Text("FPS: %.1f  |  流体: %u / %u  t=%.2f s", ImGui::GetIO().Framerate, engine_.nFluid(), engine_.config().fluidCount(), simTime_);
-    ImGui::Text("スクリュー: %.1f deg/s  |  境界粒子: %u", screw_.angVelZ * (180.0f / 3.14159265f), screw_.count);
-    ImGui::Separator();
-    sim_ui::fluid_reset_button(engine_, simTime_);
-    ImGui::Separator();
-    ImGui::SliderFloat("重力", &gravity_->strength, 0.0f, 15.0f);
-    ImGui::SliderFloat("粘性係数", &engine_.viscosityC, 0.0f, 0.1f, "%.4f");
-    ImGui::SliderFloat("角速度 [rad/s]", &screw_.angVelZ, -10.0f, 10.0f, "%.2f");
-    ImGui::End();
-
-    ImGui::Render();
     simTime_ += dt_;
 
     f.timelineValue++;

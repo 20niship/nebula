@@ -3,12 +3,8 @@
 #include "core/Force.h"
 #include "engine/FluidEngine.h"
 #include "graphics/GraphicsPipeline.h"
-#include "utils.hpp"
 
 #include <argparse/argparse.hpp>
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_vulkan.h>
 
 #include <algorithm>
 #include <array>
@@ -19,7 +15,6 @@
 #include <vk_mem_alloc.h>
 
 static const std::string SHADER_DIR_STR = SHADER_DIR;
-static const std::string ASSET_DIR_STR  = ASSET_DIR;
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
 
@@ -84,9 +79,6 @@ private:
   float simTime_  = 0.0f;
   float bSpacing_ = 0.156f;
 
-  char objPath_[256] = {};
-  std::string loadStatus_;
-
   float nextDiagTime_                  = 0.0f;
   static constexpr float DIAG_INTERVAL = 1.0f;
 
@@ -131,13 +123,11 @@ private:
     gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f); // Z-up
     engine_.addForce(gravity_);
 
-    std::snprintf(objPath_, sizeof(objPath_), "%s", (ASSET_DIR_STR + "/sphere.obj").c_str());
     if(!boundaryObj.empty()) {
       try {
         engine_.loadBoundary(boundaryObj, bSpacing_);
-        loadStatus_ = "OK: " + std::to_string(engine_.nBoundary) + " boundary particles";
       } catch(const std::exception& e) {
-        loadStatus_ = std::string("Error: ") + e.what();
+        std::fprintf(stderr, "Error loading boundary: %s\n", e.what());
       }
     }
 
@@ -153,7 +143,6 @@ private:
     }
 
     base_.createFrameData();
-    base_.initImGui();
   }
 
   void recordComputeCmd(VkCommandBuffer cmd) {
@@ -231,7 +220,6 @@ private:
       foamGraphicsPipe_.draw(cmd, engine_.descriptorSet, foamPc, engine_.config().maxDiffuseParticles);
     }
 
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
   }
@@ -249,40 +237,6 @@ private:
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    ImGui::Begin("PBF Fluid Control");
-    ImGui::Text("FPS: %.1f  |  流体: %u / %u  境界: %u  経過: %.2f s", ImGui::GetIO().Framerate, engine_.nFluid(), engine_.config().fluidCount(), engine_.nBoundary, simTime_);
-    ImGui::Separator();
-    sim_ui::fluid_reset_button(engine_, simTime_);
-    ImGui::Separator();
-    sim_ui::fluid_params(engine_, *gravity_);
-    ImGui::Separator();
-    if(sim_ui::foam_params(engine_, foamParams_)) engine_.setFoamParams(foamParams_);
-    ImGui::Separator();
-    ImGui::Text("境界粒子 (OBJ)");
-    ImGui::InputText("OBJ パス", objPath_, sizeof(objPath_));
-    ImGui::SliderFloat("粒子間隔", &bSpacing_, 0.05f, 0.5f);
-    if(ImGui::IsItemHovered()) ImGui::SetTooltip("境界粒子の配置間隔 [m]。小さいほど密になるがメモリが増える。");
-    if(ImGui::Button("ロード")) {
-      try {
-        engine_.loadBoundary(objPath_, bSpacing_);
-        loadStatus_ = "OK: " + std::to_string(engine_.nBoundary) + " 境界粒子";
-      } catch(const std::exception& e) {
-        loadStatus_ = std::string("エラー: ") + e.what();
-      }
-    }
-    ImGui::SameLine();
-    if(ImGui::Button("クリア")) {
-      engine_.clearBoundary();
-      loadStatus_ = "クリア済み";
-    }
-    if(!loadStatus_.empty()) ImGui::TextWrapped("%s", loadStatus_.c_str());
-    ImGui::End();
-
-    ImGui::Render();
     simTime_ += dt_;
 
     f.timelineValue++;

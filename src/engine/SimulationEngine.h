@@ -36,7 +36,7 @@ public:
 
   const ClothConfig& config() const { return cfg_; }
 
-  // ImGui から書き換え可能
+  // 外部から書き換え可能
   float restitution        = 0.3f;
   float friction           = 0.1f;
   float particleRadius     = 0.0f; // init() で cfg_.cellSize*0.5 に設定

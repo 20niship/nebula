@@ -94,7 +94,7 @@ protected:
   const char* forceShaderName() const override { return "predict_sdf.comp"; }
 
 public:
-  // ImGui から調整可能なパラメータ
+  // 外部から調整可能なパラメータ
   float restitution = 0.1f;  // ※PBF流体では未使用（衝突は位置投影のみ）
   float friction    = 0.05f; // ※PBF流体では未使用
   float rho0        = 35.0f;

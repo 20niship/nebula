@@ -42,7 +42,6 @@ public:
   void initWindow(const char* title, int w = 640, int h = 480);
   void createDescriptorPool();
   void createFrameData();
-  void initImGui();
   void cleanupBase();
   // fence wait 済みの状態で呼ぶこと。nShots 枚で shouldExit=true
   void saveScreenshot(uint32_t imageIdx, int nShots);

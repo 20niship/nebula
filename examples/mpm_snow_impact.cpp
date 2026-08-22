@@ -5,9 +5,6 @@
 #include "graphics/GraphicsPipeline.h"
 
 #include <argparse/argparse.hpp>
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_vulkan.h>
 
 #include <stdexcept>
 #include <string>
@@ -126,7 +123,6 @@ private:
 
     graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/particle.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");
     base_.createFrameData();
-    base_.initImGui();
   }
 
   void recordComputeCmd(VkCommandBuffer cmd) {
@@ -187,7 +183,6 @@ private:
 
     graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.liveParticleCount());
 
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
   }
@@ -205,40 +200,7 @@ private:
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    ImGui::SetNextWindowPos({10, 10}, ImGuiCond_Once);
-    ImGui::SetNextWindowSize({310, 0}, ImGuiCond_Once);
-    ImGui::Begin("MPM Snow Impact");
-
-    ImGui::Text("FPS: %.1f | N=%u | t=%.2f s", ImGui::GetIO().Framerate, engine_.liveParticleCount(), simTime_);
-    ImGui::Text("Snow: VON_MISES  E=50kPa  q=3kPa  rho=300 kg/m3");
-    ImGui::Text("Box X: %.2f  %s", boxPosX_, boxMoving_ ? "[移動中]" : "[停止]");
-    ImGui::Separator();
-
-    if(!boxMoving_) {
-      if(launchFrame_ >= 0 && frameCount_ < launchFrame_) {
-        ImGui::TextDisabled("自動発進まで: %d フレーム", launchFrame_ - frameCount_);
-      }
-      if(ImGui::Button("Launch Box →衝突開始")) {
-        boxPosX_   = engine_.domainSize.x * 0.85f;
-        boxMoving_ = true;
-        rebuildColliders();
-      }
-    } else {
-      ImGui::TextDisabled("箱が移動中...");
-    }
-    ImGui::SliderFloat("速度 [m/s]", &boxSpeed_, 0.1f, 10.0f);
-    ImGui::Separator();
-    ImGui::SliderFloat("重力", &gravity_->strength, 0.0f, 20.0f);
-    ImGui::SliderInt("サブステップ", &engine_.numSubsteps, 1, 50);
-
-    ImGui::End();
-    ImGui::Render();
-
-    // 固定フレームに到達したらボタン操作なしで自動的に箱を発進させる
+    // 固定フレームに到達したら自動的に箱を発進させる
     if(!boxMoving_ && launchFrame_ >= 0 && frameCount_ >= launchFrame_) {
       boxPosX_   = engine_.domainSize.x * 0.85f;
       boxMoving_ = true;

@@ -2,12 +2,8 @@
 #include "core/Force.h"
 #include "engine/FluidEngine.h"
 #include "graphics/GraphicsPipeline.h"
-#include "utils.hpp"
 
 #include <argparse/argparse.hpp>
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_vulkan.h>
 
 #include <array>
 #include <stdexcept>
@@ -80,7 +76,6 @@ private:
     graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/fluid_particle.vert.spv", SHADER_DIR_STR + "/fluid.frag.spv");
 
     base_.createFrameData();
-    base_.initImGui();
   }
 
   void recordComputeCmd(VkCommandBuffer cmd) {
@@ -151,7 +146,6 @@ private:
     pc.particleCount = engine_.nFluid();
     graphicsPipe_.draw(cmd, engine_.descriptorSet, pc, engine_.nFluid());
 
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
   }
@@ -169,21 +163,6 @@ private:
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    ImGui::SetNextWindowPos({10, 10}, ImGuiCond_Once);
-    ImGui::SetNextWindowSize({320, 0}, ImGuiCond_Once);
-    ImGui::Begin("Sphere Fluid");
-    ImGui::Text("FPS: %.1f  |  流体: %u  境界: %u  経過: %.2f s", ImGui::GetIO().Framerate, engine_.config().fluidCount(), engine_.nBoundary, simTime_);
-    ImGui::Separator();
-    sim_ui::fluid_reset_button(engine_, simTime_);
-    ImGui::Separator();
-    sim_ui::fluid_params(engine_, *gravity_);
-    ImGui::End();
-
-    ImGui::Render();
     simTime_ += dt_;
 
     f.timelineValue++;

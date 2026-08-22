@@ -7,9 +7,6 @@
 
 #include <argparse/argparse.hpp>
 #include <glm/glm.hpp>
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_vulkan.h>
 #include <vk_mem_alloc.h>
 
 #include <algorithm>
@@ -92,10 +89,8 @@ private:
   VmaAllocation velStagingAlloc_ = VK_NULL_HANDLE;
   int frameCount_                = 0;
   int velCheckEvery_             = 30;
-  float velHistory_[120]{};
-  int velHistHead_  = 0;
-  float maxVelCur_  = 0.0f;
-  float maxVelPrev_ = 0.0f;
+  float maxVelCur_               = 0.0f;
+  float maxVelPrev_              = 0.0f;
 
   void createVelStaging(uint32_t maxParticles) {
     VkBufferCreateInfo bci{};
@@ -261,7 +256,6 @@ private:
 
     graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/particle.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");
     base_.createFrameData();
-    base_.initImGui();
   }
 
   void recordComputeCmd(VkCommandBuffer cmd) {
@@ -321,7 +315,6 @@ private:
     renderPc.worldMax      = engine_.domainSize;
     graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.liveParticleCount());
 
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
   }
@@ -333,9 +326,8 @@ private:
     // 速度チェック: 前フレームの compute 完了後に読み戻す
     ++frameCount_;
     if(velCheckEvery_ > 0 && frameCount_ % velCheckEvery_ == 0) {
-      maxVelPrev_                       = maxVelCur_;
-      maxVelCur_                        = readbackMaxVel();
-      velHistory_[velHistHead_++ % 120] = maxVelCur_;
+      maxVelPrev_ = maxVelCur_;
+      maxVelCur_  = readbackMaxVel();
       // 急激な速度増加を検出してコンソールに出力
       if(maxVelPrev_ > 0.1f && maxVelCur_ > maxVelPrev_ * 4.0f) {
         std::printf("[frame %4d  t=%6.2fs] 速度急増! prev=%.2f → cur=%.2f m/s\n", frameCount_, simTime_, maxVelPrev_, maxVelCur_);
@@ -355,31 +347,6 @@ private:
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    ImGui::SetNextWindowPos({10, 10}, ImGuiCond_Once);
-    ImGui::SetNextWindowSize({370, 0}, ImGuiCond_Once);
-    ImGui::Begin("MPM Mountain Avalanche");
-    const char* mode = (engine_.flip_ratio < -0.5f) ? "APIC" : (engine_.flip_ratio > 0.01f) ? "FLIP" : "PIC";
-    ImGui::Text("FPS: %.1f | N=%u | t=%.2f s | %s", ImGui::GetIO().Framerate, engine_.liveParticleCount(), simTime_, mode);
-    ImGui::Separator();
-    ImGui::SliderFloat("重力", &gravity_->strength, 0.0f, 20.0f);
-    ImGui::SliderInt("サブステップ", &engine_.numSubsteps, 1, 60);
-    ImGui::Separator();
-    // 速度モニタリング
-    bool exploding = (maxVelPrev_ > 0.1f && maxVelCur_ > maxVelPrev_ * 4.0f);
-    if(exploding) ImGui::PushStyleColor(ImGuiCol_Text, {1, 0.2f, 0.2f, 1});
-    ImGui::Text("max |v| = %.3f m/s %s", maxVelCur_, exploding ? "<!爆発>" : "");
-    if(exploding) ImGui::PopStyleColor();
-    // 直近 120 サンプルの速度履歴グラフ
-    float dispHist[120];
-    for(int i = 0; i < 120; ++i) dispHist[i] = velHistory_[(velHistHead_ - 120 + i + 120 * 2) % 120];
-    ImGui::PlotLines("##velplot", dispHist, 120, 0, nullptr, 0.0f, std::max(20.0f, maxVelCur_ * 1.5f), {350, 60});
-    ImGui::End();
-
-    ImGui::Render();
     simTime_ += dt_;
 
     f.timelineValue++;

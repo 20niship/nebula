@@ -4,12 +4,8 @@
 #include "core/Force.h"
 #include "engine/FluidEngine.h"
 #include "graphics/GraphicsPipeline.h"
-#include "utils.hpp"
 
 #include <argparse/argparse.hpp>
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_vulkan.h>
 
 #include <algorithm>
 #include <array>
@@ -126,7 +122,6 @@ private:
     }
 
     base_.createFrameData();
-    base_.initImGui();
   }
 
   void setupScenario(const FluidConfig& cfg) {
@@ -248,7 +243,6 @@ private:
 
     graphicsPipe_.draw(cmd, engine_.descriptorSet, pc, engine_.nFluid());
 
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
   }
@@ -266,21 +260,6 @@ private:
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    ImGui::SetNextWindowPos({10, 10}, ImGuiCond_Once);
-    ImGui::SetNextWindowSize({320, 0}, ImGuiCond_Once);
-    ImGui::Begin("Milk Crown");
-    ImGui::Text("FPS: %.1f  |  流体: %u / %u  経過: %.2f s", ImGui::GetIO().Framerate, engine_.nFluid(), engine_.config().fluidCount(), simTime_);
-    ImGui::Separator();
-    sim_ui::fluid_reset_button(engine_, simTime_);
-    ImGui::Separator();
-    sim_ui::fluid_params(engine_, *gravity_);
-    ImGui::End();
-
-    ImGui::Render();
     simTime_ += dt_;
 
     f.timelineValue++;

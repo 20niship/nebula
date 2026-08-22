@@ -41,7 +41,7 @@ public:
   uint32_t totalParticleCount() const { return totalCount_; }
   uint32_t totalEdgeCount() const { return totalEdgeCount_; }
 
-  // ImGui から直接書き換え可能
+  // 外部から直接書き換え可能
   float restitution             = 0.5f;
   float friction                = 0.15f;
   float stretchCompliance       = 1e-5f;

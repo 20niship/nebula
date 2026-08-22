@@ -36,7 +36,7 @@ public:
   // idx = addConstraint() で追加した制約の通し番号 (PinAnimated のみカウント)
   void updateConstraint(uint32_t idx, const glm::vec3& newTarget);
 
-  // ── ImGui パラメータ ─────────────────────────────────────────────────────
+  // ── 外部から調整可能なパラメータ ─────────────────────────────────────────
   float restitution        = 0.3f;
   float friction           = 0.1f;
   float stretchCompliance  = 1e-4f;

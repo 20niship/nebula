@@ -13,9 +13,6 @@
 
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_vulkan.h>
 
 #include <array>
 #include <chrono>
@@ -197,7 +194,6 @@ void LineRenderer::cleanup() {
 // ─────────────────────────────────────────────────────────────────────────────
 class String2DSim {
 public:
-  // ImGui で変更するパラメータ
   float gravity            = -9.8f;
   float particleRadius     = STR_RADIUS;
   float restitution        = 0.3f;
@@ -611,7 +607,6 @@ private:
 
   void initWindow();
   void initVulkan();
-  void initImGui();
   void mainLoop();
   void drawFrame(float dt);
   void cleanup();
@@ -692,28 +687,6 @@ void String2DApp::createFrameData() {
   }
 }
 
-void String2DApp::initImGui() {
-  IMGUI_CHECKVERSION();
-  ImGui::CreateContext();
-  ImGui::StyleColorsDark();
-  ImGui_ImplGlfw_InitForVulkan(window_, true);
-
-  ImGui_ImplVulkan_InitInfo ii{};
-  ii.ApiVersion                   = VK_API_VERSION_1_2;
-  ii.Instance                     = ctx_.instance;
-  ii.PhysicalDevice               = ctx_.physicalDevice;
-  ii.Device                       = ctx_.device;
-  ii.QueueFamily                  = ctx_.graphicsFamily;
-  ii.Queue                        = ctx_.graphicsQueue;
-  ii.DescriptorPool               = VK_NULL_HANDLE;
-  ii.DescriptorPoolSize           = 1000;
-  ii.MinImageCount                = 2;
-  ii.ImageCount                   = static_cast<uint32_t>(ctx_.swapchainImages.size());
-  ii.PipelineInfoMain.RenderPass  = ctx_.renderPass;
-  ii.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-  ImGui_ImplVulkan_Init(&ii);
-}
-
 void String2DApp::initVulkan() {
   ctx_.vsync = false; // VSync 無効: MAILBOX/IMMEDIATE を優先
   ctx_.init(window_);
@@ -724,7 +697,6 @@ void String2DApp::initVulkan() {
   renderer_.init(ctx_.device, ctx_.renderPass, sim_.descriptorSetLayout, SHADER_DIR_STR);
 
   createFrameData();
-  initImGui();
 }
 
 void String2DApp::recordComputeCmd(VkCommandBuffer cmd, float dt) {
@@ -786,7 +758,6 @@ void String2DApp::recordGraphicsCmd(VkCommandBuffer cmd, uint32_t imageIdx) {
 
   renderer_.draw(cmd, sim_.descriptorSet, pc, STR_N);
 
-  ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
   vkCmdEndRenderPass(cmd);
   vkEndCommandBuffer(cmd);
 }
@@ -841,33 +812,6 @@ void String2DApp::drawFrame(float dt) {
   }
 
   vkResetFences(ctx_.device, 1, &f.inFlightFence);
-
-  // ImGui フレーム
-  ImGui_ImplVulkan_NewFrame();
-  ImGui_ImplGlfw_NewFrame();
-  ImGui::NewFrame();
-
-  ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Once);
-  ImGui::SetNextWindowSize(ImVec2(280, 260), ImGuiCond_Once);
-  ImGui::Begin("String 2D Control");
-  ImGui::Text("FPS: %.1f  dt: %.2fms", ImGui::GetIO().Framerate, dt * 1000.0f);
-  ImGui::Text("Particles: %u  Edges: %u", STR_N, STR_EDGES);
-  ImGui::Text("SimTime: %.2f s", simTime_);
-  ImGui::Separator();
-  ImGui::SliderFloat("Gravity", &sim_.gravity, -20.0f, 0.0f);
-  ImGui::SliderFloat("WindX", &sim_.windX, -15.0f, 15.0f);
-  ImGui::SliderFloat("Stretch Comp.", &sim_.stretchCompliance, 0.0f, 1e-2f);
-  ImGui::SliderInt("Solver Iter.", &sim_.solverIterations, 1, 10);
-  ImGui::SliderInt("Substeps", &sim_.numSubsteps, 1, 20);
-  ImGui::Checkbox("Self-Collision", &sim_.enableSelfCollision);
-  if(ImGui::Button("WindX = 0")) sim_.windX = 0.0f;
-  ImGui::SameLine();
-  if(ImGui::Button("Wind Burst+")) sim_.windX = 8.0f;
-  ImGui::SameLine();
-  if(ImGui::Button("Wind Burst-")) sim_.windX = -8.0f;
-  ImGui::End();
-
-  ImGui::Render();
 
   simTime_ += dt;
 
@@ -934,10 +878,6 @@ void String2DApp::drawFrame(float dt) {
 }
 
 void String2DApp::cleanup() {
-  ImGui_ImplVulkan_Shutdown();
-  ImGui_ImplGlfw_Shutdown();
-  ImGui::DestroyContext();
-
   for(auto& f : frames_) {
     vkDestroySemaphore(ctx_.device, f.imageAvailable, nullptr);
     vkDestroySemaphore(ctx_.device, f.renderFinished, nullptr);

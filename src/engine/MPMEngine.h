@@ -41,7 +41,7 @@ public:
   VkBuffer getPositionBuffer() const;
   VkBuffer getVelocityBuffer() const;
 
-  // ImGui から調整可能
+  // 外部から調整可能
   float restitution     = 0.3f;
   float wall_friction   = 0.0f;
   int numSubsteps       = 20;

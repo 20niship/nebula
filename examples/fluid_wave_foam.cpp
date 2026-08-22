@@ -8,12 +8,8 @@
 #include "engine/BoundaryParticles.h"
 #include "engine/FluidEngine.h"
 #include "graphics/GraphicsPipeline.h"
-#include "utils.hpp"
 
 #include <argparse/argparse.hpp>
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_vulkan.h>
 
 #include <algorithm>
 #include <array>
@@ -248,7 +244,6 @@ private:
     }
 
     base_.createFrameData();
-    base_.initImGui();
   }
 
   void recordComputeCmd(VkCommandBuffer cmd) {
@@ -333,7 +328,6 @@ private:
       foamGraphicsPipe_.draw(cmd, engine_.descriptorSet, foamPc, engine_.config().maxDiffuseParticles);
     }
 
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
   }
@@ -358,22 +352,6 @@ private:
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    // 録画時にシーンが見えるよう、パネルは左上に小さく畳んでおく (issue #47 検証用)。
-    ImGui::SetNextWindowSize(ImVec2(300.0f, 160.0f), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowCollapsed(true, ImGuiCond_FirstUseEver);
-    ImGui::Begin("Wave+Bunny+Foam");
-    ImGui::Text("FPS %.1f | fluid %u/%u | t=%.2fs", ImGui::GetIO().Framerate, engine_.nFluid(), engine_.config().fluidCount(), simTime_);
-    sim_ui::fluid_reset_button(engine_, simTime_);
-    ImGui::SliderFloat("paddle amp", &paddle_.amplitude, 0.0f, 3.0f);
-    ImGui::SliderFloat("paddle omega", &paddle_.omega, 0.5f, 8.0f);
-    if(sim_ui::foam_params(engine_, foamParams_)) engine_.setFoamParams(foamParams_);
-    ImGui::End();
-
-    ImGui::Render();
     simTime_ += dt_;
 
     f.timelineValue++;

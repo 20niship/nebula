@@ -17,57 +17,26 @@
 #include <memory>
 #include <random>
 
-// issue #46: ドメインは domainSize(vec3, 物理サイズ[m]) + cellSize(float, 全軸共通の
-// セルサイズ[m]) で指定する。各軸の実セル数は gridRes() (= domain::gridRes()) から導出。
-struct MPMConfig {
-  // パーティクル配置: nx × ny × nz の格子 (issue #46 の対象外、シミュレーション空間の
-  // ドメイン解像度とは無関係)
-  uint32_t nx = 32;
-  uint32_t ny = 32;
-  uint32_t nz = 32;
+// 重力は addForce() で GravityForce を登録すること (issue #30 レビュー対応: gravity の public メンバは廃止)。MPMConfig は廃止済み(issue #98): 設定値は init() 前に public メンバへ直接設定し、GPU 側状態は MPMSimPC pc_ 一箇所で管理する。
+class MPMEngine : public EngineBase {
+public:
+  // issue #46: 各軸の実セル数は gridRes() (=domainSize/cellSize) から導出する。
+  glm::vec3 domainSize{10.0f, 10.0f, 10.0f}; // ドメイン物理サイズ [m]
+  float cellSize = 10.0f / 64.0f;            // 全軸共通のセルサイズ [m]
 
-  glm::vec3 domainSize{10.0f, 10.0f, 10.0f}; // ドメイン物理サイズ [m] (旧 world_size)
-  float cellSize = 10.0f / 64.0f;            // 全軸共通のセルサイズ [m] (旧 grid_res の逆算値)
-
-  // バッファ上限（0 = nx*ny*nz と同じ）
-  // Phase 4 のソースエミッタで動的追加する場合に設定
+  // バッファ上限（0 = 初期パーティクル数(gridRes立方体の40%ブロック)と同じ。0以外を指定するとinit()時の自動シードは行わない）
   uint32_t maxParticles = 0;
 
-  // 材料: Young率 E, ポアソン比 nu, 密度 rho0
+  // 初期化時のデフォルトマテリアル(弾性体): Young率 E, ポアソン比 nu, 密度 rho0
   float E    = 1e4f;
   float nu   = 0.3f;
   float rho0 = 1000.0f;
 
-  uint32_t particleCount() const { return nx * ny * nz; }
-  uint32_t maxParticleCount() const { return maxParticles > 0 ? maxParticles : particleCount(); }
-  glm::uvec3 gridRes() const { return domain::gridRes(domainSize, cellSize); }
-  // 空間ハッシュ/MPMグリッドバッファの実要素数 (= cubeRes^3。gridRes.x*y*zではない点に注意)。
-  // mpm_common.glsl のMorton実装は従来の固定立方体方式のままのため、必ず
-  // hashCellsCube() (旧hashCells()相当) を使うこと。domain::hashCells() は
-  // Fluid/XPBD/MultiPhysics向けにアダプティブ(直方体)方式へ変更済みで、
-  // MPMのシェーダー側実装とはセルID体系が異なるため使ってはいけない。
-  uint32_t totalCells() const { return domain::hashCellsCube(gridRes()); }
-  glm::vec3 spacing() const { return domainSize / glm::vec3(nx, ny, nz); }
-  float particleVolume() const {
-    glm::vec3 s = spacing();
-    return s.x * s.y * s.z;
-  }
-  float mu() const { return E / (2.0f * (1.0f + nu)); }
-  float lame() const { return E * nu / ((1.0f + nu) * (1.0f - 2.0f * nu)); }
-
-  uint32_t nGroups() const { return domain::nGroups(totalCells()); }
-};
-
-// 重力は addForce() で GravityForce を登録すること (issue #30 レビュー対応:
-// gravity の public メンバは廃止)。
-class MPMEngine : public EngineBase {
-public:
-  void init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const MPMConfig& cfg = {});
+  void init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir);
   void cleanup();
 
   void step(VkCommandBuffer cmd, float dt);
 
-  const MPMConfig& config() const { return cfg_; }
   uint32_t liveParticleCount() const { return nParticles_; }
   VkBuffer getPositionBuffer() const;
   VkBuffer getVelocityBuffer() const;
@@ -123,32 +92,12 @@ protected:
   const char* forceShaderName() const override { return "mpm_grid_update.comp"; }
 
 private:
-  MPMConfig cfg_;
+  // GPU 側状態の唯一の格納先 (旧cfg_ + 個別indexメンバとの二重管理を廃止)。
+  MPMSimPC pc_{};
 
   // ライブパーティクル数（dispatch ルーピング用）
-  uint32_t nParticles_ = 0;
-
-  // パーティクルバッファ
-  // F0-2: xyz = F列, w = 対角応力 (σ_xx, σ_yy, σ_zz)
-  // B0-2: xyz = APIC B列 (Phase 2), w = 非対角応力 (σ_xy, σ_xz, σ_yz)
-  uint32_t F0Idx_ = 0;
-  uint32_t F1Idx_ = 0;
-  uint32_t F2Idx_ = 0;
-  uint32_t B0Idx_ = 0;
-  uint32_t B1Idx_ = 0;
-  uint32_t B2Idx_ = 0;
-
-  // MPM グリッドバッファ
-  uint32_t gridMomIdx_  = 0;
-  uint32_t gridMassIdx_ = 0;
-
-  // マテリアルテーブル SSBO
-  uint32_t materialsIdx_  = 0;
-  uint32_t materialCount_ = 1; // 現在の有効エントリ数
-
-  // 解析コライダー SSBO (Phase 3)
-  uint32_t collidersIdx_  = 0;
-  uint32_t colliderCount_ = 0; // 0 = 無効
+  uint32_t nParticles_   = 0;
+  uint32_t maxParticles_ = 0; // バッファ確保数 (init() 時に確定)
 
   // メッシュSDFコライダー: アップロードごとに一意なバッファ名を振るためのカウンタ
   uint32_t nextMeshSDFId_ = 0;

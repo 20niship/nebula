@@ -1,9 +1,5 @@
 #include "App.h"
 
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_vulkan.h>
-
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
@@ -85,53 +81,6 @@ void BaseApp::createFrameData() {
   }
 }
 
-// ── ImGui ─────────────────────────────────────────────────────────────────────
-
-// ASSET_DIR が未定義の場合のフォールバック
-#ifndef ASSET_DIR
-#define ASSET_DIR "."
-#endif
-
-void BaseApp::initImGui() {
-  IMGUI_CHECKVERSION();
-  ImGui::CreateContext();
-  ImGui::StyleColorsDark();
-
-  // 日本語フォントをロード（Meiryo.ttf が ASSET_DIR にある場合）
-  {
-    ImGuiIO& io                = ImGui::GetIO();
-    const std::string fontPath = std::string(ASSET_DIR) + "/Meiryo.ttf";
-    FILE* fp                   = std::fopen(fontPath.c_str(), "rb");
-    if(fp) {
-      std::fclose(fp);
-      ImFontConfig cfg;
-      cfg.OversampleH = 2;
-      cfg.OversampleV = 2;
-      io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 15.0f, &cfg, io.Fonts->GetGlyphRangesJapanese());
-    } else {
-      io.Fonts->AddFontDefault();
-      std::fprintf(stderr, "[BaseApp] 日本語フォントが見つかりません: %s\n", fontPath.c_str());
-    }
-  }
-
-  ImGui_ImplGlfw_InitForVulkan(window, true);
-
-  ImGui_ImplVulkan_InitInfo ii{};
-  ii.ApiVersion                   = VK_API_VERSION_1_2;
-  ii.Instance                     = ctx.instance;
-  ii.PhysicalDevice               = ctx.physicalDevice;
-  ii.Device                       = ctx.device;
-  ii.QueueFamily                  = ctx.graphicsFamily;
-  ii.Queue                        = ctx.graphicsQueue;
-  ii.DescriptorPool               = VK_NULL_HANDLE;
-  ii.DescriptorPoolSize           = 1000;
-  ii.MinImageCount                = 2;
-  ii.ImageCount                   = (uint32_t)ctx.swapchainImages.size();
-  ii.PipelineInfoMain.RenderPass  = ctx.renderPass;
-  ii.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-  ImGui_ImplVulkan_Init(&ii);
-}
-
 // ── Screenshot ────────────────────────────────────────────────────────────────
 
 void BaseApp::saveScreenshot(uint32_t imageIdx, int nShots) {
@@ -156,10 +105,6 @@ void BaseApp::saveScreenshot(uint32_t imageIdx, int nShots) {
 // ── Cleanup ───────────────────────────────────────────────────────────────────
 
 void BaseApp::cleanupBase() {
-  ImGui_ImplVulkan_Shutdown();
-  ImGui_ImplGlfw_Shutdown();
-  ImGui::DestroyContext();
-
   for(auto& f : frames) {
     vkDestroySemaphore(ctx.device, f.imageAvailable, nullptr);
     vkDestroySemaphore(ctx.device, f.renderFinished, nullptr);

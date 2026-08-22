@@ -29,7 +29,7 @@ void FluidEngine::computeBarrier(VkCommandBuffer cmd) {
 void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const FluidConfig& cfg) {
   cfg_ = cfg;
 
-  // h/d 比に対応した静止密度を自動設定（ImGui から上書き可能）
+  // h/d 比に対応した静止密度を自動設定（呼び出し側で上書き可能）
   // rho0 = cfg_.computeRestDensity();
 
   initEngineBase(device, allocator, descriptorPool, cmdPool, queue);

@@ -4,9 +4,10 @@
 // ── Bindless バッファ配列 ──────────────────────────────────────────────────
 layout(set = 0, binding = 0) buffer StorageBuffers { uint data[]; } buffers[];
 
-// ── MPMSimPC Push Constants (176 bytes) ───────────────────────
+// ── MPMSimPC Push Constants (164 bytes) ───────────────────────
 // C++側 src/core/MPMSimPC.h と同一オフセット順であること。vec3系フィールド直前のスカラー数を
 // 4の倍数に揃えてパディングなしで16byte境界に一致させている(順序変更時は要再検証)。
+// ドメイン下限は常に原点固定 (worldMinは廃止、ワールド座標=ローカル座標)。
 layout(push_constant) uniform PC {
     uint  posIdx;        // 0   vec4×N  (xyz=pos, w=Vp)
     uint  velIdx;        // 4   vec4×N  (xyz=vel, w=material id)
@@ -29,29 +30,27 @@ layout(push_constant) uniform PC {
     float M_friction;    // 72  グローバルデフォルト DP M
     float q_cohesion;    // 76  グローバルデフォルト DP q_c
 
-    vec3  worldMin; // 80  ドメイン下限座標 [m]
-    float q_max;    // 92  グローバルデフォルト VM q_max
+    float q_max;         // 80  グローバルデフォルト VM q_max
+    float flip_ratio;    // 84  0=PIC, 1=FLIP, -1=APIC
+    uint  colliderIdx;   // 88  Collider SSBO (Phase 3)
+    uint  colliderCount; // 92  コライダー数 (Phase 3)
+    uint  B0Idx;         // 96  B 列0 (xyz, APIC) + σ_xy (w)
+    uint  B1Idx;         // 100 B 列1 (xyz, APIC) + σ_xz (w)
+    uint  B2Idx;         // 104 B 列2 (xyz, APIC) + σ_yz (w)
+    uint  reserved144;   // 108 旧NanoVDB SDF境界条件用、未使用化(MESH_SDFに統一)
 
-    float flip_ratio;    // 96  0=PIC, 1=FLIP, -1=APIC
-    uint  colliderIdx;   // 100 Collider SSBO (Phase 3)
-    uint  colliderCount; // 104 コライダー数 (Phase 3)
-    uint  B0Idx;         // 108 B 列0 (xyz, APIC) + σ_xy (w)
+    vec3  worldMax;   // 112 ドメイン上限座標 [m] (= domainSize、下限は常に原点)
+    uint  gridMomIdx; // 124
 
-    vec3  worldMax; // 112 ドメイン上限座標 [m]
-    uint  B1Idx;    // 124 B 列1 (xyz, APIC) + σ_xz (w)
-
-    uint  B2Idx;         // 128 B 列2 (xyz, APIC) + σ_yz (w)
-    uint  reserved144;   // 132 旧NanoVDB SDF境界条件用、未使用化(MESH_SDFに統一)
-    uint  gridMomIdx;    // 136
-    uint  gridMassIdx;   // 140
-    float restitution;   // 144
-    float wall_friction; // 148
-    uint  plasticModel;  // 152 グローバルモデル (Phase 1 まで有効)
-    uint  materialCount; // 156 materials エントリ数
-    float rho0;          // 160 グローバルデフォルト密度
-    float p0_mcc;        // 164
-    float xi_hard;       // 168
-    uint  forceCount;    // 172 有効なForce数 (issue #30; 旧maxParticlesFrac予約枠)
+    uint  gridMassIdx;    // 128
+    float restitution;    // 132
+    float wall_friction;  // 136
+    uint  plasticModel;   // 140 グローバルモデル (Phase 1 まで有効)
+    uint  materialCount;  // 144 materials エントリ数
+    float rho0;           // 148 グローバルデフォルト密度
+    float p0_mcc;         // 152
+    float xi_hard;        // 156
+    uint  forceCount;     // 160 有効なForce数 (issue #30; 旧maxParticlesFrac予約枠)
 } pc;
 
 // ── Buffer read/write マクロ ──────────────────────────────────────────────
@@ -190,7 +189,7 @@ ivec3 mortonDecodeI(uint code) {
 
 // パーティクル位置 → Morton cell ID
 uint cellIdFromPos(vec3 p) {
-    vec3 local = clamp((p - pc.worldMin) / pc.cellSize,
+    vec3 local = clamp(p / pc.cellSize,
                        vec3(0.0), vec3(pc.gridRes) - vec3(1.0));
     uvec3 g = uvec3(local);
     return mortonExpand(g.x) | (mortonExpand(g.y) << 1u) | (mortonExpand(g.z) << 2u);

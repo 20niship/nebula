@@ -5,8 +5,8 @@
 
 // MPM G2P: グリッド→パーティクル gather + F 更新 + 応力計算 + 位置更新
 //
-// ノード規約: cell ix のセンター = (ix + 0.5) * cellSize + worldMin
-// パーティクル xp のステンシル: base = ivec3(floor((xp - worldMin)/h) - 1)
+// ノード規約: cell ix のセンター = (ix + 0.5) * cellSize (ドメイン下限は常に原点)
+// パーティクル xp のステンシル: base = ivec3(floor(xp/h) - 1)
 //   → ノード base, base+1, base+2 (3×3×3 = 27 ノード)
 //
 // 応力はバッファ w レーンにパック (readStressW / writeStressW / writeMat3xyz)
@@ -84,7 +84,7 @@ void main() {
     float Vp = pp.w;
 
     // G2P gather: 3×3×3 近傍ノードから速度・速度勾配を収集
-    ivec3 base = ivec3(floor((xp - pc.worldMin) / pc.cellSize)) - ivec3(1);
+    ivec3 base = ivec3(floor(xp / pc.cellSize)) - ivec3(1);
 
     vec3  vpic     = vec3(0.0);
     vec3  vpic_old = vec3(0.0);  // FLIP 用: グリッド物理前速度の加重和
@@ -104,7 +104,7 @@ void main() {
         float mass = decodeFixed(readUint(pc.gridMassIdx, nid));
         if (mass < 1e-10) continue;
 
-        vec3 xi = (vec3(nijk) + 0.5) * pc.cellSize + pc.worldMin;
+        vec3 xi = (vec3(nijk) + 0.5) * pc.cellSize;
         vec3 d = (xp - xi) / pc.cellSize;
 
         float wx = bspline2(d.x), wy = bspline2(d.y), wz = bspline2(d.z);
@@ -261,7 +261,7 @@ void main() {
 
     // ── ワールド境界クランプ ─────────────────────────────────────────────
     float margin = pc.cellSize * 1.5;
-    vec3 lo = pc.worldMin + vec3(margin);
+    vec3 lo = vec3(margin);
     vec3 hi = pc.worldMax - vec3(margin);
     if (x_new.x < lo.x) { x_new.x = lo.x; v_new.x = max(v_new.x, 0.0); }
     if (x_new.x > hi.x) { x_new.x = hi.x; v_new.x = min(v_new.x, 0.0); }

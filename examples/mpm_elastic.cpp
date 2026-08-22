@@ -15,9 +15,6 @@ static const std::string SHADER_DIR_STR = SHADER_DIR;
 // ── CLI ───────────────────────────────────────────────────────────────────
 
 struct MpmElasticArgs : public argparse::Args {
-  int& nx                     = kwarg("nx", "particle grid X").set_default(20);
-  int& ny                     = kwarg("ny", "particle grid Y").set_default(20);
-  int& nz                     = kwarg("nz", "particle grid Z").set_default(20);
   float& domain_size_x        = kwarg("domain-size-x", "domain physical size X [m]").set_default(10.0f);
   float& domain_size_y        = kwarg("domain-size-y", "domain physical size Y [m]").set_default(10.0f);
   float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(10.0f);
@@ -40,18 +37,14 @@ public:
     dt_                 = args.dt;
     base_.screenshotDir = args.screenshot_dir;
 
-    MPMConfig cfg;
-    cfg.nx         = uint32_t(args.nx);
-    cfg.ny         = uint32_t(args.ny);
-    cfg.nz         = uint32_t(args.nz);
-    cfg.domainSize = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
-    cfg.cellSize   = args.cell_size;
-    cfg.E          = args.E;
-    cfg.nu         = args.nu;
-    cfg.rho0       = args.rho0;
+    engine_.domainSize = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
+    engine_.cellSize   = args.cell_size;
+    engine_.E          = args.E;
+    engine_.nu         = args.nu;
+    engine_.rho0       = args.rho0;
 
     base_.initWindow("MPM Elastic – Vulkan GPU MPM");
-    initVulkan(cfg, args.substeps, args.flip_ratio_arg);
+    initVulkan(args.substeps, args.flip_ratio_arg);
     mainLoop(args.n_shots);
     cleanup();
   }
@@ -69,11 +62,11 @@ private:
   std::shared_ptr<GravityForce> diagonalGravity_;
   std::shared_ptr<GravityForce> gravity_;
 
-  void initVulkan(const MPMConfig& cfg, int substeps, float flipRatio) {
+  void initVulkan(int substeps, float flipRatio) {
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
-    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
+    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR);
     gravity_ = GravityForce::FromDirection({0.0f, 1.0f, 0.0f}, 9.8f); // Y-up
     engine_.addForce(gravity_);
     engine_.numSubsteps = substeps;
@@ -143,7 +136,7 @@ private:
     renderPc.velIdx        = engine_.velIdx;
     renderPc.particleCount = engine_.liveParticleCount();
     renderPc.worldMin      = glm::vec3(0.0f);
-    renderPc.worldMax      = engine_.config().domainSize;
+    renderPc.worldMax      = engine_.domainSize;
 
     graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.liveParticleCount());
 
@@ -173,10 +166,9 @@ private:
     ImGui::SetNextWindowPos({10, 10}, ImGuiCond_Once);
     ImGui::SetNextWindowSize({300, 0}, ImGuiCond_Once);
     ImGui::Begin("MPM Elastic");
-    const auto& cfg = engine_.config();
-    const glm::uvec3 gr = cfg.gridRes();
+    const glm::uvec3 gr = domain::gridRes(engine_.domainSize, engine_.cellSize);
     ImGui::Text("FPS: %.1f | N=%u | gridRes=%u,%u,%u", ImGui::GetIO().Framerate, engine_.liveParticleCount(), gr.x, gr.y, gr.z);
-    ImGui::Text("E=%.0f Pa, nu=%.2f, rho0=%.0f", cfg.E, cfg.nu, cfg.rho0);
+    ImGui::Text("E=%.0f Pa, nu=%.2f, rho0=%.0f", engine_.E, engine_.nu, engine_.rho0);
     ImGui::Text("dt_sub=%.4f s | t=%.2f s", dt_ / float(engine_.numSubsteps), simTime_);
     ImGui::Separator();
     ImGui::SliderFloat("重力", &gravity_->strength, 0.0f, 20.0f);
@@ -217,9 +209,9 @@ private:
     static float col_r = 1.5f, col_x = 5.0f, col_y = 3.0f, col_z = 5.0f;
     ImGui::Text("球コライダー");
     ImGui::SliderFloat("半径", &col_r, 0.5f, 4.0f);
-    ImGui::SliderFloat("X", &col_x, 1.0f, cfg.domainSize.x - 1.0f);
-    ImGui::SliderFloat("Y", &col_y, 1.0f, cfg.domainSize.y - 1.0f);
-    ImGui::SliderFloat("Z", &col_z, 1.0f, cfg.domainSize.z - 1.0f);
+    ImGui::SliderFloat("X", &col_x, 1.0f, engine_.domainSize.x - 1.0f);
+    ImGui::SliderFloat("Y", &col_y, 1.0f, engine_.domainSize.y - 1.0f);
+    ImGui::SliderFloat("Z", &col_z, 1.0f, engine_.domainSize.z - 1.0f);
     if(ImGui::Button("コライダー設定")) {
       ColliderSet cols;
       cols.addSphere({col_x, col_y, col_z}, col_r);

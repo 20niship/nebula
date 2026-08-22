@@ -3,9 +3,6 @@
 #include "graphics/GraphicsPipeline.h"
 
 #include <argparse/argparse.hpp>
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_vulkan.h>
 
 #include <stdexcept>
 #include <string>
@@ -56,10 +53,6 @@ private:
   float dt_      = 1.0f / 60.0f;
   float simTime_ = 0.0f;
 
-  // issue #30 デモ: 従来は下方向(-Y)のスカラー重力しか指定できなかったが、
-  // addForce() で任意方向の重力を追加できることを示す
-  bool diagonalGravityEnabled_ = false;
-  std::shared_ptr<GravityForce> diagonalGravity_;
   std::shared_ptr<GravityForce> gravity_;
 
   void initVulkan(int substeps, float flipRatio) {
@@ -76,7 +69,6 @@ private:
     graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/particle.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");
 
     base_.createFrameData();
-    base_.initImGui();
   }
 
   void recordComputeCmd(VkCommandBuffer cmd) {
@@ -140,8 +132,6 @@ private:
 
     graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.liveParticleCount());
 
-    // ImGui
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
   }
@@ -159,71 +149,6 @@ private:
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    ImGui::SetNextWindowPos({10, 10}, ImGuiCond_Once);
-    ImGui::SetNextWindowSize({300, 0}, ImGuiCond_Once);
-    ImGui::Begin("MPM Elastic");
-    const glm::uvec3 gr = domain::gridRes(engine_.domainSize, engine_.cellSize);
-    ImGui::Text("FPS: %.1f | N=%u | gridRes=%u,%u,%u", ImGui::GetIO().Framerate, engine_.liveParticleCount(), gr.x, gr.y, gr.z);
-    ImGui::Text("E=%.0f Pa, nu=%.2f, rho0=%.0f", engine_.E, engine_.nu, engine_.rho0);
-    ImGui::Text("dt_sub=%.4f s | t=%.2f s", dt_ / float(engine_.numSubsteps), simTime_);
-    ImGui::Separator();
-    ImGui::SliderFloat("重力", &gravity_->strength, 0.0f, 20.0f);
-    ImGui::SliderInt("サブステップ", &engine_.numSubsteps, 1, 50);
-    ImGui::Separator();
-    ImGui::Text("issue #30: Force API デモ");
-    if(ImGui::Checkbox("斜め重力を追加 (X方向に傾ける)", &diagonalGravityEnabled_)) {
-      if(diagonalGravityEnabled_) {
-        diagonalGravity_ = GravityForce::FromDirection(glm::normalize(glm::vec3(0.5f, -1.0f, 0.0f)), 6.0f);
-        engine_.addForce(diagonalGravity_);
-      } else {
-        engine_.removeForce(diagonalGravity_);
-        diagonalGravity_.reset();
-      }
-    }
-    if(diagonalGravityEnabled_) ImGui::SliderFloat("斜め重力の強さ", &diagonalGravity_->strength, 0.0f, 20.0f);
-    // 転写モード: PIC=散逸大, APIC=散逸小(角運動量保存), FLIP=散逸最小(0<r≤1)
-    int transferMode            = (engine_.flip_ratio < -0.5f) ? 2 : (engine_.flip_ratio > 0.01f) ? 1 : 0;
-    const char* transferModes[] = {"PIC (散逸大)", "FLIP (r=0.95)", "APIC (散逸小)"};
-    if(ImGui::Combo("転写モード", &transferMode, transferModes, 3)) {
-      if(transferMode == 0)
-        engine_.flip_ratio = 0.0f;
-      else if(transferMode == 2)
-        engine_.flip_ratio = -1.0f;
-      else if(engine_.flip_ratio <= 0.01f)
-        engine_.flip_ratio = 0.95f;
-    }
-    if(transferMode == 1) ImGui::SliderFloat("FLIP 比率", &engine_.flip_ratio, 0.01f, 1.0f);
-    const char* models[] = {"弾性", "Von Mises", "Drucker-Prager"};
-    int pm               = int(engine_.plasticModel);
-    if(ImGui::Combo("塑性モデル", &pm, models, 3)) engine_.plasticModel = uint32_t(pm);
-    if(engine_.plasticModel == 1) ImGui::SliderFloat("降伏応力 q_max", &engine_.q_max, 1e2f, 1e6f);
-    if(engine_.plasticModel == 2) {
-      ImGui::SliderFloat("摩擦 M", &engine_.M_friction, 0.0f, 1.5f);
-      ImGui::SliderFloat("粘着力 q_c", &engine_.q_cohesion, 0.0f, 1e4f);
-    }
-    ImGui::Separator();
-    static float col_r = 1.5f, col_x = 5.0f, col_y = 3.0f, col_z = 5.0f;
-    ImGui::Text("球コライダー");
-    ImGui::SliderFloat("半径", &col_r, 0.5f, 4.0f);
-    ImGui::SliderFloat("X", &col_x, 1.0f, engine_.domainSize.x - 1.0f);
-    ImGui::SliderFloat("Y", &col_y, 1.0f, engine_.domainSize.y - 1.0f);
-    ImGui::SliderFloat("Z", &col_z, 1.0f, engine_.domainSize.z - 1.0f);
-    if(ImGui::Button("コライダー設定")) {
-      ColliderSet cols;
-      cols.addSphere({col_x, col_y, col_z}, col_r);
-      engine_.setColliders(cols);
-    }
-    ImGui::SameLine();
-    if(ImGui::Button("クリア")) {
-      engine_.clearAnalyticColliders();
-    }
-    ImGui::End();
-
-    ImGui::Render();
     simTime_ += dt_;
 
     f.timelineValue++;

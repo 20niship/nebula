@@ -29,8 +29,6 @@ target_include_directories(nebula PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/core
     ${CMAKE_CURRENT_SOURCE_DIR}/engine
     ${CMAKE_CURRENT_SOURCE_DIR}/graphics
-    ${IMGUI_DIR}
-    ${IMGUI_DIR}/backends
     ${CMAKE_SOURCE_DIR}/third_party/VulkanMemoryAllocator/include
     ${CMAKE_SOURCE_DIR}/third_party/argparse/include
     ${SHADERC_INCLUDE_DIR}  # shaderc: #include <shaderc/shaderc.hpp> (issue #30 Force動的コンパイル用)
@@ -40,7 +38,6 @@ target_link_libraries(nebula PUBLIC
     Vulkan::Vulkan
     glfw
     glm::glm
-    imgui
     GPUOpen::VulkanMemoryAllocator
     tinyobjloader
     ${SHADERC_LIB}

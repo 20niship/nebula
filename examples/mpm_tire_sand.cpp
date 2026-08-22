@@ -7,9 +7,6 @@
 
 #include <argparse/argparse.hpp>
 #include <glm/gtc/quaternion.hpp>
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_vulkan.h>
 
 #include <cmath>
 #include <cstdio>
@@ -158,7 +155,6 @@ private:
 
     graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/particle.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");
     base_.createFrameData();
-    base_.initImGui();
   }
 
   void recordComputeCmd(VkCommandBuffer cmd) {
@@ -218,7 +214,6 @@ private:
     renderPc.worldMax      = engine_.domainSize;
     graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.liveParticleCount());
 
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
   }
@@ -239,23 +234,6 @@ private:
     }
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
-
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    ImGui::SetNextWindowPos({10, 10}, ImGuiCond_Once);
-    ImGui::SetNextWindowSize({330, 0}, ImGuiCond_Once);
-    ImGui::Begin("MPM Tire Sand");
-    ImGui::Text("FPS: %.1f | N=%u | t=%.2f s", ImGui::GetIO().Framerate, engine_.liveParticleCount(), simTime_);
-    ImGui::Text("Sand: DRUCKER_PRAGER  E=50kPa  rho=1600 kg/m3");
-    ImGui::Text("Tire X: %.2f  %s", tirePosX_, tireMoving_ ? "[転動中]" : "[停止]");
-    ImGui::Separator();
-    ImGui::SliderFloat("タイヤ速度 [m/s]", &tireSpeed_, 0.1f, 5.0f);
-    ImGui::SliderFloat("重力", &gravity_->strength, 0.0f, 20.0f);
-    ImGui::SliderInt("サブステップ", &engine_.numSubsteps, 1, 60);
-    ImGui::End();
-    ImGui::Render();
 
     // 固定フレームで自動発進、端に到達したら停止 → 次に自動再発進(ループ)
     if(!tireMoving_ && launchFrame_ >= 0 && frameCount_ >= launchFrame_) {

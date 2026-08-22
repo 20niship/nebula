@@ -47,7 +47,7 @@ public:
 
   const PyroConfig& config() const { return cfg_; }
 
-  // ── 物理パラメータ (ImGui/CLI から調整可能) ─────────────────────────────
+  // ── 物理パラメータ (CLI から調整可能) ─────────────────────────────
   float buoyancyAlpha      = 1.2f;  // 温度浮力係数
   float buoyancyBeta       = 0.4f;  // 密度による重さ (下降) 係数
   float ambientTemp        = 0.0f;  // 環境温度

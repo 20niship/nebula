@@ -5,9 +5,6 @@
 #include "graphics/GraphicsPipeline.h"
 
 #include <argparse/argparse.hpp>
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_vulkan.h>
 
 #include <stdexcept>
 #include <string>
@@ -114,7 +111,6 @@ private:
 
     graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/particle.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");
     base_.createFrameData();
-    base_.initImGui();
   }
 
   void recordComputeCmd(VkCommandBuffer cmd) {
@@ -175,7 +171,6 @@ private:
 
     graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.liveParticleCount());
 
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
   }
@@ -193,36 +188,6 @@ private:
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    ImGui::SetNextWindowPos({10, 10}, ImGuiCond_Once);
-    ImGui::SetNextWindowSize({360, 0}, ImGuiCond_Once);
-    ImGui::Begin("MPM Geo-Layer Collapse");
-
-    ImGui::Text("FPS: %.1f | N=%u | t=%.2f s", ImGui::GetIO().Framerate, engine_.liveParticleCount(), simTime_);
-    const glm::uvec3 gr = domain::gridRes(engine_.domainSize, engine_.cellSize);
-    ImGui::Text("gridRes=%u,%u,%u", gr.x, gr.y, gr.z);
-    ImGui::Separator();
-    ImGui::Text("Slot 0 (y < ny/3)   : ELASTIC     硬岩   E=400kPa rho=2500");
-    ImGui::Text("Slot 1 (ny/3..2ny/3): VON_MISES   弱粘土 E=10kPa  q=800Pa");
-    ImGui::Text("Slot 2 (y >= 2ny/3) : DRUCKER_PR  緩土   E=30kPa  M=0.35");
-    ImGui::Separator();
-    ImGui::SliderFloat("重力", &gravity_->strength, 0.0f, 20.0f);
-    ImGui::SliderInt("サブステップ", &engine_.numSubsteps, 1, 50);
-    ImGui::Separator();
-    ImGui::Text("球コライダー (横から押し当て):");
-    bool changed = false;
-    changed |= ImGui::SliderFloat("X", &sphere_cx_, 0.5f, engine_.domainSize.x - 0.5f);
-    changed |= ImGui::SliderFloat("Y", &sphere_cy_, 0.5f, engine_.domainSize.y * 0.95f);
-    changed |= ImGui::SliderFloat("Z", &sphere_cz_, 0.5f, engine_.domainSize.z - 0.5f);
-    changed |= ImGui::SliderFloat("半径", &sphere_r_, 0.2f, 3.0f);
-    changed |= ImGui::Checkbox("球コライダー有効", &sphereEnabled_);
-    if(changed) rebuildColliders();
-
-    ImGui::End();
-    ImGui::Render();
     simTime_ += dt_;
 
     f.timelineValue++;

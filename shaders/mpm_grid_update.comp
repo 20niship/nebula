@@ -41,7 +41,7 @@ void main() {
 
     // Force(空間ノイズ用の位置)より前倒しで計算 (issue #30)
     ivec3 ijk = mortonDecodeI(gid);
-    vec3 forcePos = (vec3(ijk) + 0.5) * pc.cellSize + pc.worldMin;
+    vec3 forcePos = (vec3(ijk) + 0.5) * pc.cellSize;
     uint forceTypeFlag = 0u; // MPMグリッドセルにtypeFlagはないため常時全Force適用
 
     // FORCE_AUTOGEN_BEGIN

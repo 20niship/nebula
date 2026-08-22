@@ -56,14 +56,14 @@ void MPMHarness::init(const HeadlessCtx& ctx, uint32_t gridRes, float worldSize,
 
   // F0-2: xyz = F列, w = 対角応力 (σ_xx, σ_yy, σ_zz)
   // B0-2: xyz = APIC B列 (Phase 2), w = 非対角応力 (σ_xy, σ_xz, σ_yz)
-  posIdx_     = attrBuf_.addAttribute("P", sizeof(glm::vec4), N);
-  velIdx_     = attrBuf_.addAttribute("v", sizeof(glm::vec4), N);
-  F0Idx_      = attrBuf_.addAttribute("F0", sizeof(glm::vec4), N);
-  F1Idx_      = attrBuf_.addAttribute("F1", sizeof(glm::vec4), N);
-  F2Idx_      = attrBuf_.addAttribute("F2", sizeof(glm::vec4), N);
-  B0Idx_      = attrBuf_.addAttribute("B0", sizeof(glm::vec4), N);
-  B1Idx_      = attrBuf_.addAttribute("B1", sizeof(glm::vec4), N);
-  B2Idx_      = attrBuf_.addAttribute("B2", sizeof(glm::vec4), N);
+  posIdx_ = attrBuf_.addAttribute("P", sizeof(glm::vec4), N);
+  velIdx_ = attrBuf_.addAttribute("v", sizeof(glm::vec4), N);
+  F0Idx_  = attrBuf_.addAttribute("F0", sizeof(glm::vec4), N);
+  F1Idx_  = attrBuf_.addAttribute("F1", sizeof(glm::vec4), N);
+  F2Idx_  = attrBuf_.addAttribute("F2", sizeof(glm::vec4), N);
+  B0Idx_  = attrBuf_.addAttribute("B0", sizeof(glm::vec4), N);
+  B1Idx_  = attrBuf_.addAttribute("B1", sizeof(glm::vec4), N);
+  B2Idx_  = attrBuf_.addAttribute("B2", sizeof(glm::vec4), N);
   // gridMom: 2×NC — [0,NC) = v_new, [NC,2*NC) = v_old (FLIP 用)
   gridMomIdx_  = attrBuf_.addAttribute("gridMom", sizeof(glm::vec4), NC * 2);
   gridMassIdx_ = attrBuf_.addAttribute("gridMass", sizeof(float), NC);
@@ -165,43 +165,42 @@ MPMSimPC MPMHarness::makePC(float dt, float rho0, float mu, float lam, float gra
   attrBuf_.upload("forces", &forceGpu, sizeof(ForceGPU), ctx_->commandPool, ctx_->computeQueue);
 
   MPMSimPC pc{};
-  pc.posIdx           = posIdx_;
-  pc.velIdx           = velIdx_;
-  pc.F0Idx            = F0Idx_;
-  pc.F1Idx            = F1Idx_;
-  pc.typeFlagIdx      = 0;
-  pc.particleCount    = maxParticles_;
-  pc.hashCells        = totalCells();
-  pc.F2Idx            = F2Idx_;
-  pc.materialsIdx     = materialsIdx_;
-  pc.dt               = dt;
-  pc.cellSize         = cellSize();
-  pc.gridRes          = glm::uvec3(gridRes_);
-  pc.worldMin         = glm::vec3(0.0f);
-  pc.worldMax         = glm::vec3(worldSize_);
-  pc.forceBufIdx      = forcesIdx_;
-  pc.mu_lame          = mu;
-  pc.lambda_lame      = lam;
-  pc.particleVolume   = cellSize() * cellSize() * cellSize();
-  pc.M_friction       = 0.577f;
-  pc.q_cohesion       = 0.0f;
-  pc.q_max            = 1e5f;
-  pc.flip_ratio       = 0.0f; // PICモード
-  pc.colliderIdx      = 0;    // Phase 3 まで未使用
-  pc.colliderCount    = 0;
-  pc.B0Idx            = B0Idx_;
-  pc.B1Idx            = B1Idx_;
-  pc.B2Idx            = B2Idx_;
-  pc.gridMomIdx       = gridMomIdx_;
-  pc.gridMassIdx      = gridMassIdx_;
-  pc.restitution      = 0.3f;
-  pc.wall_friction    = 0.0f;
-  pc.plasticModel     = 0;
-  pc.materialCount    = 1; // デフォルト弾性マテリアル 1 エントリ
-  pc.rho0             = rho0;
-  pc.p0_mcc           = 0.0f;
-  pc.xi_hard          = 0.0f;
-  pc.forceCount       = 1;
+  pc.posIdx         = posIdx_;
+  pc.velIdx         = velIdx_;
+  pc.F0Idx          = F0Idx_;
+  pc.F1Idx          = F1Idx_;
+  pc.typeFlagIdx    = 0;
+  pc.particleCount  = maxParticles_;
+  pc.hashCells      = totalCells();
+  pc.F2Idx          = F2Idx_;
+  pc.materialsIdx   = materialsIdx_;
+  pc.dt             = dt;
+  pc.cellSize       = cellSize();
+  pc.gridRes        = glm::uvec3(gridRes_);
+  pc.worldMax       = glm::vec3(worldSize_); // ドメイン下限は常に原点固定 (worldMin は廃止)
+  pc.forceBufIdx    = forcesIdx_;
+  pc.mu_lame        = mu;
+  pc.lambda_lame    = lam;
+  pc.particleVolume = cellSize() * cellSize() * cellSize();
+  pc.M_friction     = 0.577f;
+  pc.q_cohesion     = 0.0f;
+  pc.q_max          = 1e5f;
+  pc.flip_ratio     = 0.0f; // PICモード
+  pc.colliderIdx    = 0;    // Phase 3 まで未使用
+  pc.colliderCount  = 0;
+  pc.B0Idx          = B0Idx_;
+  pc.B1Idx          = B1Idx_;
+  pc.B2Idx          = B2Idx_;
+  pc.gridMomIdx     = gridMomIdx_;
+  pc.gridMassIdx    = gridMassIdx_;
+  pc.restitution    = 0.3f;
+  pc.wall_friction  = 0.0f;
+  pc.plasticModel   = 0;
+  pc.materialCount  = 1; // デフォルト弾性マテリアル 1 エントリ
+  pc.rho0           = rho0;
+  pc.p0_mcc         = 0.0f;
+  pc.xi_hard        = 0.0f;
+  pc.forceCount     = 1;
   return pc;
 }
 

@@ -68,16 +68,12 @@ public:
     velCheckEvery_      = args.vel_check;
     base_.screenshotDir = args.screenshot_dir;
 
-    MPMConfig cfg;
-    cfg.nx           = 0;
-    cfg.ny           = 0;
-    cfg.nz           = 0;
-    cfg.maxParticles = uint32_t(args.max_n);
-    cfg.domainSize   = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
-    cfg.cellSize     = args.cell_size;
+    engine_.maxParticles = uint32_t(args.max_n);
+    engine_.domainSize   = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
+    engine_.cellSize     = args.cell_size;
 
     base_.initWindow("MPM Mountain Avalanche — Drucker-Prager Snow");
-    initVulkan(cfg, args.substeps, args.flip_ratio);
+    initVulkan(args.substeps, args.flip_ratio);
     mainLoop(args.n_shots);
     cleanup();
   }
@@ -159,24 +155,24 @@ private:
   }
 
   // 地形メッシュSDF(MESH_SDF、ワールド原点・無回転・静止として登録)。smooth版使用(高周波rough/texture除外でSDF境界を安定させる)+cs*0.5の安全マージン。ドメインが立方体(全軸同解像度)前提。
-  LocalMeshSDF buildTerrainMeshSDF(const MPMConfig& cfg) {
-    const glm::uvec3 G = cfg.gridRes();
-    const float cs      = cfg.cellSize;
-    const float W        = cfg.domainSize.x; // 地形関数は等方(cube)前提のスカラーWを使用
-    const uint32_t res   = std::max({G.x, G.y, G.z});
+  LocalMeshSDF buildTerrainMeshSDF() {
+    const glm::uvec3 G = domain::gridRes(engine_.domainSize, engine_.cellSize);
+    const float cs     = engine_.cellSize;
+    const float W      = engine_.domainSize.x; // 地形関数は等方(cube)前提のスカラーWを使用
+    const uint32_t res = std::max({G.x, G.y, G.z});
 
     LocalMeshSDF grid;
-    grid.res       = res;
-    grid.cellSize  = cs;
-    grid.localMin  = glm::vec3(0.0f);
+    grid.res      = res;
+    grid.cellSize = cs;
+    grid.localMin = glm::vec3(0.0f);
     grid.data.assign(size_t(res) * res * res, 1e9f);
     for(uint32_t iz = 0; iz < G.z; ++iz)
       for(uint32_t iy = 0; iy < G.y; ++iy)
         for(uint32_t ix = 0; ix < G.x; ++ix) {
-          float cx = (ix + 0.5f) * cs;
-          float cy = (iy + 0.5f) * cs;
-          float cz = (iz + 0.5f) * cs;
-          float h  = terrainHeightSmooth(cx, cz, W) + cs * 0.5f; // 安全マージン
+          float cx                                      = (ix + 0.5f) * cs;
+          float cy                                      = (iy + 0.5f) * cs;
+          float cz                                      = (iz + 0.5f) * cs;
+          float h                                       = terrainHeightSmooth(cx, cz, W) + cs * 0.5f; // 安全マージン
           grid.data[(size_t(iz) * res + iy) * res + ix] = cy - h;
         }
     return grid;
@@ -186,12 +182,12 @@ private:
   // オフセット = 2*cs: 地形 SDF のセル中心誤差 (terrain 高周波成分) を吸収
   // rough/texture の最大勾配は ~1.0 rad/m → セル幅 cs で最大 cs 程度の誤差
   // → 2*cs のマージンで初期位置が SDF 内部に入るのを防ぐ
-  void placeSnow(const MPMConfig& cfg) {
-    const float W  = cfg.domainSize.x; // 地形関数は等方(cube)前提のスカラーWを使用
-    const float cs = cfg.cellSize;
+  void placeSnow() {
+    const float W  = engine_.domainSize.x; // 地形関数は等方(cube)前提のスカラーWを使用
+    const float cs = engine_.cellSize;
 
-    const float x0 = cfg.domainSize.x * 0.05f, x1 = cfg.domainSize.x * 0.95f;
-    const float z0 = cfg.domainSize.z * 0.05f, z1 = cfg.domainSize.z * 0.45f;
+    const float x0 = engine_.domainSize.x * 0.05f, x1 = engine_.domainSize.x * 0.95f;
+    const float z0 = engine_.domainSize.z * 0.05f, z1 = engine_.domainSize.z * 0.45f;
     const int nx_p   = 160;
     const int nz_p   = 160;
     const int nlay   = 3;
@@ -200,7 +196,7 @@ private:
     const float dy   = cs;
     const float Vp   = dx * dz_p * dy;
 
-    const int maxN = int(cfg.maxParticleCount());
+    const int maxN = int(engine_.maxParticles);
     std::vector<glm::vec4> pos, vel;
     pos.reserve(std::min(nx_p * nz_p * nlay, maxN));
     vel.reserve(std::min(nx_p * nz_p * nlay, maxN));
@@ -213,7 +209,7 @@ private:
         for(int iy = 0; iy < nlay && int(pos.size()) < maxN; ++iy) {
           // 2*cs マージンで確実に SDF の外側に配置
           float py = h + 2.0f * cs + (iy + 0.5f) * dy;
-          if(py >= cfg.domainSize.y - cs) continue;
+          if(py >= engine_.domainSize.y - cs) continue;
           pos.push_back({px, py, pz, Vp});
           vel.push_back({0.0f, 0.0f, 0.0f, 0.0f});
         }
@@ -222,15 +218,15 @@ private:
     engine_.appendParticles(pos, vel);
   }
 
-  void initVulkan(const MPMConfig& cfg, int substeps, float flipRatio) {
+  void initVulkan(int substeps, float flipRatio) {
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
-    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
+    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR);
     engine_.numSubsteps = substeps;
-    gravity_ = GravityForce::FromDirection({0.0f, 1.0f, 0.0f}, 9.8f); // Y-up
+    gravity_            = GravityForce::FromDirection({0.0f, 1.0f, 0.0f}, 9.8f); // Y-up
     engine_.addForce(gravity_);
-    engine_.flip_ratio  = flipRatio;
+    engine_.flip_ratio = flipRatio;
 
     // ── Drucker-Prager 雪マテリアル ─────────────────────────────
     // E: 1e3 Pa (非常に柔らかい設定。J-クランプと組み合わせて蓄積圧縮爆発を防ぐ)
@@ -246,12 +242,12 @@ private:
 
     // 地形メッシュSDF + ドメイン境界 (床・4壁) をまとめて1つのColliderSetに登録
     {
-      LocalMeshSDF terrainGrid = buildTerrainMeshSDF(cfg);
+      LocalMeshSDF terrainGrid = buildTerrainMeshSDF();
       uint32_t sdfIdx          = engine_.uploadColliderMeshSDF(terrainGrid);
 
       ColliderSet cols;
       cols.addMeshSDF(sdfIdx, terrainGrid, glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f), {0, 0, 0}, {0, 0, 0}, 0.0f, 0.6f);
-      glm::vec3 D = cfg.domainSize;
+      glm::vec3 D = engine_.domainSize;
       cols.addPlane({D.x * 0.5f, 0.0f, D.z * 0.5f}, {0, 1, 0}, 0.0f, 0.3f);
       cols.addPlane({0.0f, D.y * 0.5f, D.z * 0.5f}, {1, 0, 0}, 0.0f, 0.1f);
       cols.addPlane({D.x, D.y * 0.5f, D.z * 0.5f}, {-1, 0, 0}, 0.0f, 0.1f);
@@ -260,8 +256,8 @@ private:
       engine_.setColliders(cols);
     }
 
-    placeSnow(cfg);
-    createVelStaging(cfg.maxParticleCount());
+    placeSnow();
+    createVelStaging(engine_.maxParticles);
 
     graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/particle.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");
     base_.createFrameData();
@@ -322,7 +318,7 @@ private:
     renderPc.velIdx        = engine_.velIdx;
     renderPc.particleCount = engine_.liveParticleCount();
     renderPc.worldMin      = glm::vec3(0.0f);
-    renderPc.worldMax      = engine_.config().domainSize;
+    renderPc.worldMax      = engine_.domainSize;
     graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.liveParticleCount());
 
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);

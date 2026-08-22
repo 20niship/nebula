@@ -36,15 +36,11 @@ public:
     dt_                 = args.dt;
     base_.screenshotDir = args.screenshot_dir;
 
-    MPMConfig cfg;
-    cfg.nx         = 8;
-    cfg.ny         = 30;
-    cfg.nz         = 8;
-    cfg.domainSize = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
-    cfg.cellSize   = args.cell_size;
+    engine_.domainSize = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
+    engine_.cellSize   = args.cell_size;
 
     base_.initWindow("MPM Geo-Layer – 地層崩壊シミュレーション");
-    initVulkan(cfg, args.substeps);
+    initVulkan(args.substeps);
     mainLoop(args.n_shots);
     cleanup();
   }
@@ -70,15 +66,15 @@ private:
     engine_.setColliders(cols);
   }
 
-  void initVulkan(const MPMConfig& cfg, int substeps) {
+  void initVulkan(int substeps) {
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
-    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
+    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR);
     engine_.numSubsteps = substeps;
-    gravity_ = GravityForce::FromDirection({0.0f, 1.0f, 0.0f}, 9.8f); // Y-up
+    gravity_            = GravityForce::FromDirection({0.0f, 1.0f, 0.0f}, 9.8f); // Y-up
     engine_.addForce(gravity_);
-    engine_.flip_ratio  = -1.0f; // APIC
+    engine_.flip_ratio = -1.0f; // APIC
 
     // Slot 0: 硬岩 (ELASTIC)
     MaterialParams mat0 = presetJelly(4e5f, 0.2f, 2500.0f);
@@ -97,10 +93,11 @@ private:
 
     engine_.setMaterials({mat0, mat1, mat2});
 
-    // Y インデックスで3層に分割
-    const uint32_t N  = cfg.particleCount(); // 8*30*8 = 1920
-    const uint32_t nx = cfg.nx;
-    const uint32_t ny = cfg.ny;
+    // Y インデックスで3層に分割 (init()の自動シードは(iz,iy,ix)順にgr格子を埋めるため同じ順序で走査)
+    const glm::uvec3 gr = domain::gridRes(engine_.domainSize, engine_.cellSize);
+    const uint32_t N    = engine_.liveParticleCount();
+    const uint32_t nx   = gr.x;
+    const uint32_t ny   = gr.y;
     std::vector<uint32_t> matIds(N);
     for(uint32_t i = 0; i < N; i++) {
       uint32_t iy = (i / nx) % ny;
@@ -174,7 +171,7 @@ private:
     renderPc.velIdx        = engine_.velIdx;
     renderPc.particleCount = engine_.liveParticleCount();
     renderPc.worldMin      = glm::vec3(0.0f);
-    renderPc.worldMax      = engine_.config().domainSize;
+    renderPc.worldMax      = engine_.domainSize;
 
     graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.liveParticleCount());
 
@@ -204,10 +201,9 @@ private:
     ImGui::SetNextWindowSize({360, 0}, ImGuiCond_Once);
     ImGui::Begin("MPM Geo-Layer Collapse");
 
-    const auto& cfg = engine_.config();
     ImGui::Text("FPS: %.1f | N=%u | t=%.2f s", ImGui::GetIO().Framerate, engine_.liveParticleCount(), simTime_);
-    const glm::uvec3 gr = cfg.gridRes();
-    ImGui::Text("Grid: %u x %u x %u | gridRes=%u,%u,%u", cfg.nx, cfg.ny, cfg.nz, gr.x, gr.y, gr.z);
+    const glm::uvec3 gr = domain::gridRes(engine_.domainSize, engine_.cellSize);
+    ImGui::Text("gridRes=%u,%u,%u", gr.x, gr.y, gr.z);
     ImGui::Separator();
     ImGui::Text("Slot 0 (y < ny/3)   : ELASTIC     硬岩   E=400kPa rho=2500");
     ImGui::Text("Slot 1 (ny/3..2ny/3): VON_MISES   弱粘土 E=10kPa  q=800Pa");
@@ -218,9 +214,9 @@ private:
     ImGui::Separator();
     ImGui::Text("球コライダー (横から押し当て):");
     bool changed = false;
-    changed |= ImGui::SliderFloat("X", &sphere_cx_, 0.5f, cfg.domainSize.x - 0.5f);
-    changed |= ImGui::SliderFloat("Y", &sphere_cy_, 0.5f, cfg.domainSize.y * 0.95f);
-    changed |= ImGui::SliderFloat("Z", &sphere_cz_, 0.5f, cfg.domainSize.z - 0.5f);
+    changed |= ImGui::SliderFloat("X", &sphere_cx_, 0.5f, engine_.domainSize.x - 0.5f);
+    changed |= ImGui::SliderFloat("Y", &sphere_cy_, 0.5f, engine_.domainSize.y * 0.95f);
+    changed |= ImGui::SliderFloat("Z", &sphere_cz_, 0.5f, engine_.domainSize.z - 0.5f);
     changed |= ImGui::SliderFloat("半径", &sphere_r_, 0.2f, 3.0f);
     changed |= ImGui::Checkbox("球コライダー有効", &sphereEnabled_);
     if(changed) rebuildColliders();

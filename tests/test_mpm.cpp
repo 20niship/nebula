@@ -737,25 +737,18 @@ TEST_CASE("MPM GPU Advanced - 7-4: Wall boundary clamps particle position and ve
 }
 
 // ── 直方体(非立方体)ドメイン — 短辺軸の境界クランプ (issue #46) ────────────────
-// MPMHarness は簡略化のため常に立方体ドメイン (gridRes/worldSize スカラー) を
-// 前提とするため、このテストは MPMEngine/MPMConfig を直接使い、domainSize を
-// Y 軸だけ短い偏平ドメインにして G2P の境界クランプ (mpm_g2p.comp) を検証する。
+// MPMHarness は常に立方体ドメイン前提のため、このテストはMPMEngineを直接使いdomainSizeをY軸だけ短い偏平ドメインにしてG2Pの境界クランプ(mpm_g2p.comp)を検証する。
 TEST_CASE("MPM GPU - 8-1: rectangular (non-cube) domain clamps particle to the short axis boundary") {
   HeadlessCtx ctx;
   ctx.init();
 
-  MPMConfig cfg;
-  cfg.nx           = 0;
-  cfg.ny           = 0;
-  cfg.nz           = 0;
-  cfg.maxParticles = 4;
-  cfg.domainSize   = glm::vec3(20.0f, 5.0f, 20.0f); // Y 軸だけ短い偏平ドメイン
-  cfg.cellSize     = 1.25f;
-
   MPMEngine engine;
-  engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
+  engine.maxParticles = 4;
+  engine.domainSize   = glm::vec3(20.0f, 5.0f, 20.0f); // Y 軸だけ短い偏平ドメイン
+  engine.cellSize     = 1.25f;
+  engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS);
 
-  const float Vp = cfg.cellSize * cfg.cellSize * cfg.cellSize;
+  const float Vp = engine.cellSize * engine.cellSize * engine.cellSize;
   // ドメイン中央付近から Y 方向へ高速発射 (X/Z 方向には力を加えない)
   std::vector<glm::vec4> pos = {glm::vec4(10.0f, 2.5f, 10.0f, Vp)};
   std::vector<glm::vec4> vel = {glm::vec4(0.0f, 50.0f, 0.0f, 0.0f)};
@@ -774,8 +767,8 @@ TEST_CASE("MPM GPU - 8-1: rectangular (non-cube) domain clamps particle to the s
   // Y 軸は短いドメイン (5m) の境界でクランプされているはず。
   // もし誤って X/Z 側の 20m がクランプ境界に使われていれば p.y はここまで到達しない。
   CHECK(!std::isnan(p.y));
-  CHECK(p.y <= cfg.domainSize.y);
-  CHECK(p.y > cfg.domainSize.y * 0.3f);
+  CHECK(p.y <= engine.domainSize.y);
+  CHECK(p.y > engine.domainSize.y * 0.3f);
   // X/Z には力を加えていないため、ほぼ初期位置に留まっているはず。
   CHECK(std::abs(p.x - 10.0f) < 2.0f);
   CHECK(std::abs(p.z - 10.0f) < 2.0f);
@@ -789,19 +782,17 @@ TEST_CASE("MPM GPU - 8-1: rectangular (non-cube) domain clamps particle to the s
 // 1辺2*halfExtentの立方体を12三角形(MeshTriangle)で構成。手組みの巻き順だけでは外向き統一できないため、原点中心の凸形状という前提で法線が重心と逆向き(内向き)なら反転する
 static std::vector<MeshTriangle> makeCubeTris(float halfExtent) {
   glm::vec3 v[8];
-  for(int i = 0; i < 8; ++i)
-    v[i] = glm::vec3((i & 1) ? halfExtent : -halfExtent, (i & 2) ? halfExtent : -halfExtent, (i & 4) ? halfExtent : -halfExtent);
+  for(int i = 0; i < 8; ++i) v[i] = glm::vec3((i & 1) ? halfExtent : -halfExtent, (i & 2) ? halfExtent : -halfExtent, (i & 4) ? halfExtent : -halfExtent);
   int idx[12][3] = {
-      {0, 1, 3}, {0, 3, 2}, {4, 7, 5}, {4, 6, 7}, {0, 4, 5}, {0, 5, 1},
-      {2, 3, 7}, {2, 7, 6}, {0, 2, 6}, {0, 6, 4}, {1, 5, 7}, {1, 7, 3},
+    {0, 1, 3}, {0, 3, 2}, {4, 7, 5}, {4, 6, 7}, {0, 4, 5}, {0, 5, 1}, {2, 3, 7}, {2, 7, 6}, {0, 2, 6}, {0, 6, 4}, {1, 5, 7}, {1, 7, 3},
   };
   std::vector<MeshTriangle> tris;
   for(auto& f : idx) {
     MeshTriangle t;
-    t.v[0] = v[f[0]];
-    t.v[1] = v[f[1]];
-    t.v[2] = v[f[2]];
-    glm::vec3 n = glm::normalize(glm::cross(t.v[1] - t.v[0], t.v[2] - t.v[0]));
+    t.v[0]             = v[f[0]];
+    t.v[1]             = v[f[1]];
+    t.v[2]             = v[f[2]];
+    glm::vec3 n        = glm::normalize(glm::cross(t.v[1] - t.v[0], t.v[2] - t.v[0]));
     glm::vec3 centroid = (t.v[0] + t.v[1] + t.v[2]) / 3.0f;
     if(glm::dot(n, centroid) < 0.0f) n = -n;
     t.n = n;
@@ -811,12 +802,12 @@ static std::vector<MeshTriangle> makeCubeTris(float halfExtent) {
 }
 
 // 初期化済みengineに落下粒子群+コライダーを設定し重力下でnFrames進めて最終位置を返す(メッシュSDFはアップロード先engineに紐づくためengineは呼び出し側でinit済みのものを渡す)
-static std::vector<glm::vec4> dropOntoCollider(HeadlessCtx& ctx, MPMEngine& engine, const MPMConfig& cfg, const ColliderSet& cols, glm::vec3 dropCenter, int nFrames = 90) {
+static std::vector<glm::vec4> dropOntoCollider(HeadlessCtx& ctx, MPMEngine& engine, const ColliderSet& cols, glm::vec3 dropCenter, int nFrames = 90) {
   auto gravity = GravityForce::FromDirection({0.0f, -1.0f, 0.0f}, 9.8f);
   engine.addForce(gravity);
   engine.setColliders(cols);
 
-  const float Vp = cfg.cellSize * cfg.cellSize * cfg.cellSize;
+  const float Vp = engine.cellSize * engine.cellSize * engine.cellSize;
   std::vector<glm::vec4> pos, vel;
   for(int ix = -1; ix <= 1; ++ix)
     for(int iz = -1; iz <= 1; ++iz) {
@@ -841,30 +832,30 @@ TEST_CASE("MPM GPU - 9-1: Mesh SDF collider matches native Box collider (no rota
   HeadlessCtx ctx;
   ctx.init();
 
-  MPMConfig cfg;
-  cfg.nx = cfg.ny = cfg.nz = 0;
-  cfg.maxParticles         = 16;
-  cfg.domainSize           = glm::vec3(10.0f, 10.0f, 10.0f);
-  cfg.cellSize             = 0.2f;
-
   const glm::vec3 center(5.0f, 3.0f, 5.0f);
   const float halfExtent = 1.0f;
   const glm::vec3 dropCenter(5.0f, 6.0f, 5.0f);
 
   MPMEngine boxEngine;
-  boxEngine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
+  boxEngine.maxParticles = 16;
+  boxEngine.domainSize   = glm::vec3(10.0f, 10.0f, 10.0f);
+  boxEngine.cellSize     = 0.2f;
+  boxEngine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS);
   ColliderSet boxCols;
   boxCols.addBox(center, glm::vec3(halfExtent), 0.1f, 0.3f);
-  auto boxResult = dropOntoCollider(ctx, boxEngine, cfg, boxCols, dropCenter);
+  auto boxResult = dropOntoCollider(ctx, boxEngine, boxCols, dropCenter);
   boxEngine.cleanup();
 
   LocalMeshSDF grid = bakeLocalMeshSDF(makeCubeTris(halfExtent), 32);
   MPMEngine meshEngine;
-  meshEngine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
+  meshEngine.maxParticles = 16;
+  meshEngine.domainSize   = glm::vec3(10.0f, 10.0f, 10.0f);
+  meshEngine.cellSize     = 0.2f;
+  meshEngine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS);
   uint32_t sdfIdx = meshEngine.uploadColliderMeshSDF(grid);
   ColliderSet meshCols;
   meshCols.addMeshSDF(sdfIdx, grid, center, glm::quat(1, 0, 0, 0), {0, 0, 0}, {0, 0, 0}, 0.1f, 0.3f);
-  auto meshResult = dropOntoCollider(ctx, meshEngine, cfg, meshCols, dropCenter);
+  auto meshResult = dropOntoCollider(ctx, meshEngine, meshCols, dropCenter);
   meshEngine.cleanup();
 
   REQUIRE(boxResult.size() == meshResult.size());
@@ -883,12 +874,6 @@ TEST_CASE("MPM GPU - 9-2: Mesh SDF collider applies rotation (particle rests on 
   HeadlessCtx ctx;
   ctx.init();
 
-  MPMConfig cfg;
-  cfg.nx = cfg.ny = cfg.nz = 0;
-  cfg.maxParticles         = 16;
-  cfg.domainSize           = glm::vec3(10.0f, 10.0f, 10.0f);
-  cfg.cellSize             = 0.2f;
-
   const glm::vec3 center(5.0f, 3.0f, 5.0f);
   const float halfExtent = 1.0f;
   // Z軸回転はZを不変に保つため、ローカル(halfExtent,halfExtent,z)の稜線全体がワールドのcenter直上・高さcenter.y+halfExtent*sqrt(2)に揃う。中心真上に落とせばこの稜線で受け止められる。
@@ -898,11 +883,14 @@ TEST_CASE("MPM GPU - 9-2: Mesh SDF collider applies rotation (particle rests on 
 
   LocalMeshSDF grid = bakeLocalMeshSDF(makeCubeTris(halfExtent), 32);
   MPMEngine engine;
-  engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
+  engine.maxParticles = 16;
+  engine.domainSize   = glm::vec3(10.0f, 10.0f, 10.0f);
+  engine.cellSize     = 0.2f;
+  engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS);
   uint32_t sdfIdx = engine.uploadColliderMeshSDF(grid);
   ColliderSet cols;
   cols.addMeshSDF(sdfIdx, grid, center, rot, {0, 0, 0}, {0, 0, 0}, 0.1f, 0.3f);
-  auto result = dropOntoCollider(ctx, engine, cfg, cols, dropCenter);
+  auto result = dropOntoCollider(ctx, engine, cols, dropCenter);
   engine.cleanup();
 
   glm::quat invRot = glm::conjugate(rot);
@@ -912,10 +900,10 @@ TEST_CASE("MPM GPU - 9-2: Mesh SDF collider applies rotation (particle rests on 
     CHECK(p4.y > expectedTopY - 0.3f);
     CHECK(p4.y < expectedTopY + 0.3f);
     glm::vec3 localP = invRot * (glm::vec3(p4) - center);
-    glm::vec3 q       = glm::abs(localP) - glm::vec3(halfExtent);
-    float sdf = glm::length(glm::max(q, glm::vec3(0.0f))) + std::min(std::max(q.x, std::max(q.y, q.z)), 0.0f);
+    glm::vec3 q      = glm::abs(localP) - glm::vec3(halfExtent);
+    float sdf        = glm::length(glm::max(q, glm::vec3(0.0f))) + std::min(std::max(q.x, std::max(q.y, q.z)), 0.0f);
     CHECK(sdf > -0.15f); // 回転コライダーのローカル空間で見て大きく貫通していない(トライリニア近似誤差はセルサイズ程度許容)
-    CHECK(sdf < 0.4f);  // 表面近くで静止している(浮いていない)
+    CHECK(sdf < 0.4f);   // 表面近くで静止している(浮いていない)
   }
 
   ctx.cleanup();
@@ -925,12 +913,6 @@ TEST_CASE("MPM GPU - 9-3: Native Box collider applies rotation (particle rests o
   HeadlessCtx ctx;
   ctx.init();
 
-  MPMConfig cfg;
-  cfg.nx = cfg.ny = cfg.nz = 0;
-  cfg.maxParticles         = 16;
-  cfg.domainSize           = glm::vec3(10.0f, 10.0f, 10.0f);
-  cfg.cellSize             = 0.2f;
-
   const glm::vec3 center(5.0f, 3.0f, 5.0f);
   const float halfExtent = 1.0f;
   const glm::quat rot(glm::angleAxis(glm::radians(45.0f), glm::vec3(0.0f, 0.0f, 1.0f)));
@@ -938,10 +920,13 @@ TEST_CASE("MPM GPU - 9-3: Native Box collider applies rotation (particle rests o
   const float expectedTopY = center.y + halfExtent * std::sqrt(2.0f);
 
   MPMEngine engine;
-  engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
+  engine.maxParticles = 16;
+  engine.domainSize   = glm::vec3(10.0f, 10.0f, 10.0f);
+  engine.cellSize     = 0.2f;
+  engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS);
   ColliderSet cols;
   cols.addBox(center, glm::vec3(halfExtent), 0.1f, 0.3f, {0, 0, 0}, rot, {0, 0, 0});
-  auto result = dropOntoCollider(ctx, engine, cfg, cols, dropCenter);
+  auto result = dropOntoCollider(ctx, engine, cols, dropCenter);
   engine.cleanup();
 
   glm::quat invRot = glm::conjugate(rot);
@@ -950,8 +935,8 @@ TEST_CASE("MPM GPU - 9-3: Native Box collider applies rotation (particle rests o
     CHECK(p4.y > expectedTopY - 0.15f);
     CHECK(p4.y < expectedTopY + 0.15f);
     glm::vec3 localP = invRot * (glm::vec3(p4) - center);
-    glm::vec3 q       = glm::abs(localP) - glm::vec3(halfExtent);
-    float sdf = glm::length(glm::max(q, glm::vec3(0.0f))) + std::min(std::max(q.x, std::max(q.y, q.z)), 0.0f);
+    glm::vec3 q      = glm::abs(localP) - glm::vec3(halfExtent);
+    float sdf        = glm::length(glm::max(q, glm::vec3(0.0f))) + std::min(std::max(q.x, std::max(q.y, q.z)), 0.0f);
     CHECK(sdf > -0.05f); // 解析SDF(グリッド近似なし)なので9-2よりタイトな許容誤差でよい
     CHECK(sdf < 0.2f);
   }
@@ -963,12 +948,6 @@ TEST_CASE("MPM GPU - 9-4: Native Cylinder collider (flat cap, no rotation) holds
   HeadlessCtx ctx;
   ctx.init();
 
-  MPMConfig cfg;
-  cfg.nx = cfg.ny = cfg.nz = 0;
-  cfg.maxParticles         = 16;
-  cfg.domainSize           = glm::vec3(10.0f, 10.0f, 10.0f);
-  cfg.cellSize             = 0.2f;
-
   const glm::vec3 center(5.0f, 3.0f, 5.0f);
   const float radius     = 1.0f;
   const float halfHeight = 1.0f;
@@ -976,10 +955,13 @@ TEST_CASE("MPM GPU - 9-4: Native Cylinder collider (flat cap, no rotation) holds
   const float expectedTopY = center.y + halfHeight;
 
   MPMEngine engine;
-  engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
+  engine.maxParticles = 16;
+  engine.domainSize   = glm::vec3(10.0f, 10.0f, 10.0f);
+  engine.cellSize     = 0.2f;
+  engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS);
   ColliderSet cols;
   cols.addCylinder(center, radius, halfHeight, 0.1f, 0.3f);
-  auto result = dropOntoCollider(ctx, engine, cfg, cols, dropCenter);
+  auto result = dropOntoCollider(ctx, engine, cols, dropCenter);
   engine.cleanup();
 
   for(const auto& p4 : result) {
@@ -987,9 +969,9 @@ TEST_CASE("MPM GPU - 9-4: Native Cylinder collider (flat cap, no rotation) holds
     CHECK(p4.y > expectedTopY - 0.15f);
     CHECK(p4.y < expectedTopY + 0.15f);
     glm::vec3 localP = glm::vec3(p4) - center;
-    float r  = glm::length(glm::vec2(localP.x, localP.z));
-    glm::vec2 q = glm::vec2(r - radius, std::abs(localP.y) - halfHeight);
-    float sdf = std::min(std::max(q.x, q.y), 0.0f) + glm::length(glm::max(q, glm::vec2(0.0f)));
+    float r          = glm::length(glm::vec2(localP.x, localP.z));
+    glm::vec2 q      = glm::vec2(r - radius, std::abs(localP.y) - halfHeight);
+    float sdf        = std::min(std::max(q.x, q.y), 0.0f) + glm::length(glm::max(q, glm::vec2(0.0f)));
     CHECK(sdf > -0.05f);
     CHECK(sdf < 0.2f);
   }
@@ -1001,12 +983,6 @@ TEST_CASE("MPM GPU - 9-5: Native Cylinder collider applies rotation (lying on it
   HeadlessCtx ctx;
   ctx.init();
 
-  MPMConfig cfg;
-  cfg.nx = cfg.ny = cfg.nz = 0;
-  cfg.maxParticles         = 16;
-  cfg.domainSize           = glm::vec3(10.0f, 10.0f, 10.0f);
-  cfg.cellSize             = 0.2f;
-
   const glm::vec3 center(5.0f, 3.0f, 5.0f);
   const float radius     = 1.0f;
   const float halfHeight = 1.0f;
@@ -1016,10 +992,13 @@ TEST_CASE("MPM GPU - 9-5: Native Cylinder collider applies rotation (lying on it
   const float expectedTopY = center.y + radius;
 
   MPMEngine engine;
-  engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS, cfg);
+  engine.maxParticles = 16;
+  engine.domainSize   = glm::vec3(10.0f, 10.0f, 10.0f);
+  engine.cellSize     = 0.2f;
+  engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS);
   ColliderSet cols;
   cols.addCylinder(center, radius, halfHeight, 0.1f, 0.3f, {0, 0, 0}, rot, {0, 0, 0});
-  auto result = dropOntoCollider(ctx, engine, cfg, cols, dropCenter);
+  auto result = dropOntoCollider(ctx, engine, cols, dropCenter);
   engine.cleanup();
 
   glm::quat invRot = glm::conjugate(rot);
@@ -1028,9 +1007,9 @@ TEST_CASE("MPM GPU - 9-5: Native Cylinder collider applies rotation (lying on it
     CHECK(p4.y > expectedTopY - 0.15f);
     CHECK(p4.y < expectedTopY + 0.15f);
     glm::vec3 localP = invRot * (glm::vec3(p4) - center);
-    float r  = glm::length(glm::vec2(localP.x, localP.z));
-    glm::vec2 q = glm::vec2(r - radius, std::abs(localP.y) - halfHeight);
-    float sdf = std::min(std::max(q.x, q.y), 0.0f) + glm::length(glm::max(q, glm::vec2(0.0f)));
+    float r          = glm::length(glm::vec2(localP.x, localP.z));
+    glm::vec2 q      = glm::vec2(r - radius, std::abs(localP.y) - halfHeight);
+    float sdf        = std::min(std::max(q.x, q.y), 0.0f) + glm::length(glm::max(q, glm::vec2(0.0f)));
     CHECK(sdf > -0.05f);
     CHECK(sdf < 0.2f);
   }

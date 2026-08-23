@@ -23,7 +23,7 @@ struct FluidArgs : public argparse::Args {
   float& domain_size_y        = kwarg("domain-size-y", "domain physical size Y [m]").set_default(20.0f);
   float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(20.0f);
   float& cell_size            = kwarg("cell-size", "hash grid cell size [m]").set_default(20.0f / 32.0f);
-  int& max_boundary           = kwarg("max-boundary", "max boundary particle count").set_default(200000);
+  int& max_boundary           = kwarg("max-boundary", "max boundary particle count").set_default(20000);
   float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 60.0f);
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));

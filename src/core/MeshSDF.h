@@ -88,12 +88,7 @@ inline uint32_t meshSdfMortonEncode(uint32_t x, uint32_t y, uint32_t z) { return
 // 三角形数・解像度が大きいと重いため、動的障害物として毎フレーム呼ぶ場合は
 // 低ポリメッシュ + 適度な解像度 + 再構築間隔 (interval) で実用速度に収めること。
 //
-// issue #46フォローアップ: 直方体ドメイン対応。realRes(各軸の実セル数)+totalCells(=Morton
-// dispatch用の立方体セル総数、cubeRes^3。PyroConfig::totalCells()/MPMConfig::totalCells()と
-// 同じ値)+cellSize(全軸共通セルサイズ)を受け取る。出力バッファは常に totalCells 要素確保し、
-// realRes 範囲内のみ SDF を計算する(範囲外=パディング領域はデフォルト値 1e9f=無衝突のまま)。
-// これにより PyroEngine::setColliderSDF() が要求するサイズ契約 (cfg().totalCells()) と
-// 型レベルで一致する。
+// 出力バッファは常にtotalCells(cubeRes^3)要素確保し、realRes範囲外はパディングとして1e9f(無衝突)で埋める。PyroEngine::setColliderSDF()のサイズ契約と一致させるため。
 
 inline std::vector<float> buildMeshSDF(const std::vector<MeshTriangle>& tris, const glm::uvec3& realRes, uint32_t totalCells, float cellSize, bool verbose = true) {
   const float cs = cellSize;

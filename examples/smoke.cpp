@@ -107,14 +107,14 @@ private:
     // 煙パラメータ
     gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 2.0f); // 弱い重力（浮力が上回る）; Z-up
     engine_.addForce(gravity_);
-    engine_.smokeRiseAccel   = args.rise_accel;
-    engine_.smokeDamping     = args.smoke_damping;
-    engine_.linearDamping    = 0.02f;
-    engine_.pbfIterations    = 0; // 密度拘束なし（煙は圧縮可能）
-    engine_.numSubsteps      = 2;
-    engine_.vorticityEnabled = true; // 渦度閉じ込めで煙らしい揺らぎ
-    engine_.vorticityEpsilon = 0.5f;
-    engine_.rho0             = cfg.computeRestDensity();
+    engine_.pc_.smokeRiseAccel   = args.rise_accel;
+    engine_.pc_.smokeDamping     = args.smoke_damping;
+    engine_.pc_.linearDamping    = 0.02f;
+    engine_.pbfIterations        = 0; // 密度拘束なし（煙は圧縮可能）
+    engine_.numSubsteps          = 2;
+    engine_.vorticityEnabled     = true; // 渦度閉じ込めで煙らしい揺らぎ
+    engine_.pc_.vorticityEpsilon = 0.5f;
+    engine_.rho0                 = cfg.computeRestDensity();
 
     // issue #30 デモ: 風Forceをここで1回だけ登録する (以後 forces_ の型・個数は
     // 不変なので addForce() によるシェーダー再生成はこの1回のみ発生する)

@@ -615,15 +615,11 @@ TEST_CASE("TC13: --large scale pool settles without rain (bounding box z_max sta
   engine.viscosityC    = 0.01f;
   engine.pbfIterations = 2;
   engine.numSubsteps   = 2;
-  engine.rho0          = cfg.computeRestDensity();
-  engine.linearDamping = 0.02f;
-  // cfmEpsilon/scorrK: 既定値(3000 / 0.001)はh≈1.25m規模でチューニングされており、
-  // このスケール(h=0.02m, rho0≈100万)ではCFM緩和項(denom)がgrad項優位になり
-  // 実質的に効かなくなって密度拘束が過剰に硬くなる(圧力補正が暴走し粒子が
-  // ドメイン天井まで吹き飛ぶ、実測で確認済み)。cfmEpsilonを大幅に緩め、
-  // 人工圧力(Tensile Instability対策)を無効化することで安定する。
-  engine.cfmEpsilon = 1e6f;
-  engine.scorrK     = 0.0f;
+  engine.rho0             = cfg.computeRestDensity();
+  engine.pc_.linearDamping = 0.02f;
+  // cfmEpsilonの既定値(3000)はh≈1.25m規模向けで、このスケール(h=0.02m)では密度拘束が暴走するため大幅に緩める(実測確認済み)。
+  engine.pc_.cfmEpsilon = 1e6f;
+  engine.pc_.scorrK     = 0.0f;
   // surfaceTension は既定0のまま (このテストは表面張力なしのベース安定性を見る)
 
   const float particleR = cfg.cellSize * 0.5f;

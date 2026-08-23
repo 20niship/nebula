@@ -50,34 +50,32 @@ int main(int argc, char* argv[]) {
     HeadlessCtx ctx;
     ctx.init();
 
-    PyroConfig cfg;
-    cfg.domainSize = {args.domain_size_x, args.domain_size_y, args.domain_size_z};
-    cfg.cellSize   = args.cell_size;
-
     PyroEngine engine;
-    engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR, cfg);
+    engine.domainSize = {args.domain_size_x, args.domain_size_y, args.domain_size_z};
+    engine.cellSize   = args.cell_size;
+    engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR);
 #ifdef NEBULA_GPU_PROFILING
     engine.enableGpuProfiling(ctx.physicalDevice);
 #endif
 
-    engine.numSubsteps    = args.substeps;
+    engine.numSubsteps      = args.substeps;
     engine.numPressureIters = args.pressure_iters;
-    engine.vorticityEps   = args.vorticity_eps;
+    engine.pc_.vorticityEps = args.vorticity_eps;
     // 爆風は運動量が主体で熱源ではないため浮力はごく弱めに (吹き飛ばされた後にわずかに立ち上る程度)
-    engine.buoyancyAlpha = 0.3f;
-    engine.buoyancyBeta  = 0.0f;
-    engine.ambientTemp   = 0.0f;
+    engine.pc_.buoyancyAlpha = 0.3f;
+    engine.pc_.buoyancyBeta  = 0.0f;
+    engine.pc_.ambientTemp   = 0.0f;
     // 乱流構造が長く見えるよう減衰を抑える (fire/fuelは使わない)
-    engine.densityDissipation = 0.01f;
-    engine.tempDissipation    = 0.2f;
+    engine.pc_.densityDissipation = 0.01f;
+    engine.pc_.tempDissipation    = 0.2f;
 
-    const glm::vec3 W = cfg.domainSize;
+    const glm::vec3 W = engine.domainSize;
 
     // ── 静的な牛障害物 (毎フレーム再構築せず一度だけ SDF 化) ────────────────
     std::printf("牛 STL 読み込み: %s\n", args.cow_stl.c_str());
     auto cowTris = loadBinarySTL(args.cow_stl);
     std::printf("  三角形数: %zu\n", cowTris.size());
-    engine.setColliderSDF(buildMeshSDF(cowTris, cfg.gridRes(), cfg.totalCells(), cfg.cellSize));
+    engine.setColliderSDF(buildMeshSDF(cowTris, engine.gridRes(), engine.totalCells(), engine.cellSize));
 
     // ── 超高密度・高速の爆風バースト (-X 側から牛へ向けて) ──────────────────
     // AABBEmitter::size は全辺長 (pack() が内部で半分にする) のため、旧

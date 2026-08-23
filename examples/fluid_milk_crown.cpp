@@ -101,16 +101,16 @@ private:
 
     gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f); // Z-up
     engine_.addForce(gravity_);
-    engine_.viscosityC    = 0.01f;
-    engine_.pbfIterations = 2;
-    engine_.numSubsteps   = 2;
-    engine_.rho0            = large_ ? cfg.computeRestDensity() : 30.0f; // h/dの絶対スケールが--largeで大きく変わるためハードコード値でなくcomputeRestDensity()を使う(通常モードは実測チューニング済みの30.0fを踏襲)
-    engine_.linearDamping  = 0.02f;
-    engine_.surfaceTension = surfaceTension;
+    engine_.viscosityC        = 0.01f;
+    engine_.pbfIterations     = 2;
+    engine_.numSubsteps       = 2;
+    engine_.rho0              = large_ ? cfg.computeRestDensity() : 30.0f; // h/dの絶対スケールが--largeで大きく変わるためハードコード値でなくcomputeRestDensity()を使う(通常モードは実測チューニング済みの30.0fを踏襲)
+    engine_.pc_.linearDamping    = 0.02f;
+    engine_.pc_.surfaceTension   = surfaceTension;
     if(large_) {
       // cfmEpsilon/scorrKの既定値はh≈1.25m規模のチューニング値で、--large(h=0.02m)ではCFM緩和項がgrad項優位になり密度拘束が過剰に硬くなり暴走するため大幅に緩める(TC13で実測確認)
-      engine_.cfmEpsilon = 1e6f;
-      engine_.scorrK     = 0.0f;
+      engine_.pc_.cfmEpsilon = 1e6f;
+      engine_.pc_.scorrK     = 0.0f;
     }
 
     if(large_) {

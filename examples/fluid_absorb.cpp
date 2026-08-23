@@ -133,11 +133,11 @@ private:
 
     gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f); // Z-up
     engine_.addForce(gravity_);
-    engine_.viscosityC    = 0.01f;
-    engine_.pbfIterations = 2;
-    engine_.numSubsteps   = 2;
-    engine_.rho0          = 30.0f;
-    engine_.linearDamping = 0.02f;
+    engine_.viscosityC        = 0.01f;
+    engine_.pbfIterations     = 2;
+    engine_.numSubsteps       = 2;
+    engine_.rho0              = 30.0f;
+    engine_.pc_.linearDamping = 0.02f;
 
     // 境界粒子の Z 範囲
     const float spacing = cfg.particleSpacing() * 0.9f;

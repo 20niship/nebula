@@ -73,7 +73,7 @@ inline uint32_t hashCells(const glm::uvec3& res) {
 // Morton(立方体)での軸解像度・セル数。両エンジンとも「スレッドID=Morton符号」の
 // 稠密グリッド設計で、セルはそもそも全て使用される(疎ハッシュではない)ため、
 // 上のアダプティブ化(疎な空間ハッシュ向け、無駄なセルを削減する最適化)のスコープ外。
-// MPMEngine::totalCells() / PyroConfig::totalCells() は必ずこちらを呼ぶこと
+// MPMEngine::totalCells() / PyroEngine::totalCells() は必ずこちらを呼ぶこと
 // (上の hashCells() を使うと、シェーダー側は旧立方体サイズのIDを生成し続けるのに
 // バッファは縮小されてしまい、範囲外アクセスになる)。
 inline uint32_t mortonCubeRes(const glm::uvec3& res) {

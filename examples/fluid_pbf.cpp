@@ -57,11 +57,11 @@ public:
 
     base_.initWindow("Vulkan Sim – PBF Fluid");
     initVulkan(cfg, args.boundary_obj, args.rho0);
-    engine_.viscosityC    = args.viscosity;
-    engine_.cfmEpsilon    = args.cfm_eps;
-    engine_.scorrK        = args.scorr_k;
-    engine_.surfaceTension = args.surface_tension;
-    engine_.linearDamping = args.damping;
+    engine_.viscosityC       = args.viscosity;
+    engine_.pc_.cfmEpsilon     = args.cfm_eps;
+    engine_.pc_.scorrK         = args.scorr_k;
+    engine_.pc_.surfaceTension = args.surface_tension;
+    engine_.pc_.linearDamping  = args.damping;
     setupScenario(args.scenario, cfg);
     mainLoop(args.n_shots);
     cleanup();

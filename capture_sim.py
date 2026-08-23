@@ -63,7 +63,7 @@ SIMS = [
         "id": "tc1", "exe": "fluid_pbf",
         "title": "TC1: Dam Break + Moving Source",
         "env": {},
-        "extra_args": ["--domain-size-x", "40"],
+        "extra_args": [],
         "params": "N~40K | fixed dam-block + moving AABB source | world=40",
     },
     {
@@ -120,20 +120,18 @@ SIMS = [
         "title": "TC-A: MPM Elastic — PIC",
         "env": {},
         "extra_args": [
-            "--nx", "20", "--ny", "20", "--nz", "20",
-            "--grid-res", "64", "--substeps", "25", "--flip-ratio", "0.0",
+            "--particles", "8000", "--substeps", "25", "--flip-ratio", "0.0",
         ],
-        "params": "nx=ny=nz=20 | flip=0.00 | 散逸大",
+        "params": "N=8000 | flip=0.00 | 散逸大",
     },
     {
         "id": "tc_apic", "exe": "mpm_elastic",
         "title": "TC-B: MPM Elastic — APIC",
         "env": {},
         "extra_args": [
-            "--nx", "20", "--ny", "20", "--nz", "20",
-            "--grid-res", "64", "--substeps", "25", "--flip-ratio", "-1.0",
+            "--particles", "8000", "--substeps", "25", "--flip-ratio", "-1.0",
         ],
-        "params": "nx=ny=nz=20 | flip=-1.00 | 角運動量保存",
+        "params": "N=8000 | flip=-1.00 | 角運動量保存",
     },
     {
         "id": "tc_avalanche", "exe": "mpm_avalanche",
@@ -141,7 +139,7 @@ SIMS = [
         "env": {},
         "extra_args": [
             "--max-n", "80000",
-            "--grid-res", "128", "--substeps", "30", "--flip-ratio", "-1.0",
+            "--substeps", "30", "--flip-ratio", "-1.0",
         ],
         "params": "N=80K | Drucker-Prager snow | 地形 SDF コライダー",
     },
@@ -151,8 +149,7 @@ SIMS = [
         "title": "TC-F: MPM Multi-Material",
         "env": {},
         "extra_args": [
-            "--n", "20",
-            "--grid-res", "64", "--substeps", "25",
+            "--particles", "8000", "--substeps", "25",
         ],
         "params": "N=8000 | 下半分=Hencky弾性体 | 上半分=Drucker-Prager砂",
     },
@@ -161,8 +158,8 @@ SIMS = [
         "title": "TC-G: MPM Snow Impact",
         "env": {},
         "extra_args": [
-            "--pn", "44",
-            "--grid-res", "64", "--substeps", "25",
+            "--particles", "85184",
+            "--substeps", "25",
             "--box-speed", "6.0",
             "--box-scale", "0.5",
         ],
@@ -173,7 +170,7 @@ SIMS = [
         "title": "TC-H: MPM Geo-Layer Collapse",
         "env": {},
         "extra_args": [
-            "--grid-res", "64", "--substeps", "25",
+            "--particles", "1920", "--substeps", "25",
         ],
         "params": "N=1920 | 下=硬岩ELASTIC | 中=弱粘土VON_MISES | 上=緩土D-P",
     },

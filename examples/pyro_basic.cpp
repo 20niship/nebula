@@ -24,7 +24,7 @@ static const std::string ASSET_DIR_STR  = ASSET_DIR;
 
 struct PyroBasicArgs : public argparse::Args {
   // issue #46フォローアップ: ドメインは domainSize(XYZ物理サイズ)+cellSize(全軸共通セルサイズ)
-  // で指定する。Morton dispatch用の立方体解像度(2^n)は自動導出される (PyroConfig::cubeRes())。
+  // で指定する。Morton dispatch用の立方体解像度(2^n)は自動導出される (PyroEngine::cubeRes())。
   float& domain_size_x = kwarg("domain-size-x", "ドメイン物理サイズ X [m]").set_default(10.0f);
   float& domain_size_y = kwarg("domain-size-y", "ドメイン物理サイズ Y [m]").set_default(10.0f);
   float& domain_size_z = kwarg("domain-size-z", "ドメイン物理サイズ Z [m]").set_default(10.0f);
@@ -50,27 +50,25 @@ int main(int argc, char* argv[]) {
     HeadlessCtx ctx;
     ctx.init();
 
-    PyroConfig cfg;
-    cfg.domainSize = {args.domain_size_x, args.domain_size_y, args.domain_size_z};
-    cfg.cellSize   = args.cell_size;
-
     PyroEngine engine;
-    engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR, cfg);
+    engine.domainSize = {args.domain_size_x, args.domain_size_y, args.domain_size_z};
+    engine.cellSize   = args.cell_size;
+    engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR);
 
-    engine.numSubsteps        = args.substeps;
-    engine.numPressureIters   = args.pressure_iters;
-    engine.vorticityEps       = args.vorticity_eps;
-    engine.buoyancyAlpha      = 1.2f;
-    engine.buoyancyBeta       = 0.4f;
-    engine.ambientTemp        = 0.0f;
-    engine.densityDissipation = 0.05f;
-    engine.tempDissipation    = 0.2f;
+    engine.numSubsteps           = args.substeps;
+    engine.numPressureIters      = args.pressure_iters;
+    engine.pc_.vorticityEps      = args.vorticity_eps;
+    engine.pc_.buoyancyAlpha     = 1.2f;
+    engine.pc_.buoyancyBeta      = 0.4f;
+    engine.pc_.ambientTemp       = 0.0f;
+    engine.pc_.densityDissipation = 0.05f;
+    engine.pc_.tempDissipation   = 0.2f;
     // 燃焼 (fire) パラメータ
-    engine.ignitionTemp      = 0.5f;
-    engine.burnRate          = 1.5f;
-    engine.heatRelease       = 4.0f;
-    engine.smokeYieldPerFuel = 2.0f;
-    engine.flameBrightness   = 3.0f;
+    engine.pc_.ignitionTemp      = 0.5f;
+    engine.pc_.burnRate          = 1.5f;
+    engine.pc_.heatRelease       = 4.0f;
+    engine.pc_.smokeYieldPerFuel = 2.0f;
+    engine.pc_.flameBrightness   = 3.0f;
 
     // issue #30 デモ: Pyroは従来wind非対応だったが、addForce()で任意方向の風を
     // 浮力(buoyancyAlpha/Beta)と独立に追加できる。--wind-x/--wind-z で指定。
@@ -79,7 +77,7 @@ int main(int argc, char* argv[]) {
       std::printf("風を追加: wind=(%.2f, 0, %.2f)\n", args.wind_x, args.wind_z);
     }
 
-    const glm::vec3 W = cfg.domainSize;
+    const glm::vec3 W = engine.domainSize;
 
     // ── 複数 Emitter (位置違い、一部は移動) ─────────────────────────────────
     {
@@ -131,7 +129,7 @@ int main(int argc, char* argv[]) {
         glm::vec3 translation(W.x * 0.5f, W.y * 0.35f + 0.15f * W.y * std::sin(simTime * 0.8f), W.z * 0.5f);
         glm::quat rotation = glm::angleAxis(simTime * 0.5f, glm::vec3(0, 1, 0));
         auto moved         = transformTriangles(baseTris, translation, rotation);
-        engine.setColliderSDF(buildMeshSDF(moved, cfg.gridRes(), cfg.totalCells(), cfg.cellSize, /*verbose=*/false));
+        engine.setColliderSDF(buildMeshSDF(moved, engine.gridRes(), engine.totalCells(), engine.cellSize, /*verbose=*/false));
       }
 
       VkCommandBuffer cmd = ctx.beginCmd();

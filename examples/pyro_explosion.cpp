@@ -43,32 +43,30 @@ int main(int argc, char* argv[]) {
     HeadlessCtx ctx;
     ctx.init();
 
-    PyroConfig cfg;
-    cfg.domainSize = {args.domain_size_x, args.domain_size_y, args.domain_size_z};
-    cfg.cellSize   = args.cell_size;
-
     PyroEngine engine;
-    engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR, cfg);
+    engine.domainSize = {args.domain_size_x, args.domain_size_y, args.domain_size_z};
+    engine.cellSize   = args.cell_size;
+    engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR);
 #ifdef NEBULA_GPU_PROFILING
     engine.enableGpuProfiling(ctx.physicalDevice);
 #endif
 
-    engine.numSubsteps        = args.substeps;
-    engine.numPressureIters   = args.pressure_iters;
-    engine.vorticityEps       = args.vorticity_eps;
-    engine.buoyancyAlpha      = 5.0f; // 強い浮力で急速に立ち上らせる
-    engine.buoyancyBeta       = 0.5f;
-    engine.ambientTemp        = 0.0f;
-    engine.densityDissipation = 0.02f; // 傘の煙が長く残るよう減衰を抑える
-    engine.tempDissipation    = 0.3f;
+    engine.numSubsteps           = args.substeps;
+    engine.numPressureIters      = args.pressure_iters;
+    engine.pc_.vorticityEps      = args.vorticity_eps;
+    engine.pc_.buoyancyAlpha     = 5.0f; // 強い浮力で急速に立ち上らせる
+    engine.pc_.buoyancyBeta      = 0.5f;
+    engine.pc_.ambientTemp       = 0.0f;
+    engine.pc_.densityDissipation = 0.02f; // 傘の煙が長く残るよう減衰を抑える
+    engine.pc_.tempDissipation   = 0.3f;
     // 燃焼 (fire) パラメータ: 短時間の一気燃焼
-    engine.ignitionTemp      = 1.0f;
-    engine.burnRate          = 4.0f;
-    engine.heatRelease       = 6.0f;
-    engine.smokeYieldPerFuel = 2.5f;
-    engine.flameBrightness   = 4.0f;
+    engine.pc_.ignitionTemp      = 1.0f;
+    engine.pc_.burnRate          = 4.0f;
+    engine.pc_.heatRelease       = 6.0f;
+    engine.pc_.smokeYieldPerFuel = 2.5f;
+    engine.pc_.flameBrightness   = 4.0f;
 
-    const glm::vec3 W = cfg.domainSize;
+    const glm::vec3 W = engine.domainSize;
 
     // ── 地表付近での爆発源 (短時間バースト後、燃焼と浮力のみで自律的に発達) ──
     auto blast             = std::make_shared<SphereEmitter>();

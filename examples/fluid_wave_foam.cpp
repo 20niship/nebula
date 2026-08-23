@@ -152,13 +152,13 @@ private:
 
     engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
 
-    engine_.rho0             = cfg.computeRestDensity();
-    engine_.viscosityC       = 0.002f;
-    engine_.linearDamping    = 0.003f;
-    engine_.vorticityEnabled = false;
-    engine_.vorticityEpsilon = 0.15f;
-    engine_.pbfIterations    = 3;
-    engine_.numSubsteps      = 2;
+    engine_.rho0                 = cfg.computeRestDensity();
+    engine_.viscosityC           = 0.002f;
+    engine_.pc_.linearDamping    = 0.003f;
+    engine_.vorticityEnabled     = false;
+    engine_.pc_.vorticityEpsilon = 0.15f;
+    engine_.pbfIterations        = 3;
+    engine_.numSubsteps          = 2;
 
     gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f); // Z-up
 

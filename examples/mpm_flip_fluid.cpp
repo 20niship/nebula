@@ -28,7 +28,7 @@ struct FlipFluidArgs : public argparse::Args {
   float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(16.0f);
   float& cell_size            = kwarg("cell-size", "MPM grid cell size [m]").set_default(16.0f / 128.0f);
   float& dt                   = kwarg("dt", "frame timestep [s]").set_default(1.0f / 60.0f);
-  int& substeps               = kwarg("substeps", "substeps per frame").set_default(10);
+  int& substeps               = kwarg("substeps", "substeps per frame").set_default(120);
   float& flip_ratio           = kwarg("flip-ratio", "0=PIC -1=APIC 0~1=FLIP").set_default(0.95f);
   int& target_particles       = kwarg("target-particles", "ダム柱に詰める目標粒子数").set_default(300000);
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
@@ -64,7 +64,7 @@ private:
   void placeWaterColumn(uint32_t targetCount) {
     const glm::vec3 D = engine_.domainSize;
     const glm::vec3 colMin(0.5f, 0.0f, 0.5f);
-    const glm::vec3 colExt(D.x * 0.32f, D.y * 0.55f, D.z * 0.32f);
+    const glm::vec3 colExt(D.x * 0.4f, D.y * 0.25f, D.z * 0.4f);
 
     const float volume  = colExt.x * colExt.y * colExt.z;
     const float spacing = std::cbrt(volume / float(targetCount));
@@ -101,8 +101,8 @@ private:
     engine_.addForce(gravity_);
     engine_.flip_ratio = flipRatio;
 
-    // 弱圧縮流体 (Tait EOS)。壁際の跳ね返りを抑えるため摩擦は低め。
-    MaterialParams water = presetWater(1000.0f, 5e3f);
+    // 弱圧縮流体 (Tait EOS)。既定bulkK=5e3は9m柱の静水圧に対し柔らかすぎJ-クランプで体積が失われるため大幅に上げる。
+    MaterialParams water = presetWater(1000.0f, 3e6f);
     engine_.setMaterials({water});
 
     // 床 + 側壁4枚 (天井なし)。水は摩擦の少ない壁を想定。
@@ -187,6 +187,10 @@ private:
   void drawFrame(int nShots) {
     auto& f = base_.frames[base_.currentFrame];
     vkWaitForFences(base_.ctx.device, 1, &f.inFlightFence, VK_TRUE, UINT64_MAX);
+
+    // 全粒子が同時に自由落下すると圧力波が伝わる前に過圧縮しJ-クランプで体積が失われるため、重力を数秒かけて立ち上げる。
+    const float rampTime = 2.0f;
+    gravity_->strength    = std::min(1.0f, simTime_ / rampTime) * 9.8f;
 
     uint32_t imageIdx;
     VkResult result = vkAcquireNextImageKHR(base_.ctx.device, base_.ctx.swapchain, UINT64_MAX, f.imageAvailable, VK_NULL_HANDLE, &imageIdx);

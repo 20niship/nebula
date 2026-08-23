@@ -35,7 +35,6 @@ struct FluidArgs : public argparse::Args {
   float& scorr_k              = kwarg("scorr-k", "artificial pressure k").set_default(0.0f);
   float& surface_tension      = kwarg("surface-tension", "surface tension cohesion sigma").set_default(0.0f);
   float& damping              = kwarg("damping", "linear velocity damping 1/s").set_default(0.6f);
-  std::string& scenario       = kwarg("scenario", "dam-break | source-flow").set_default(std::string("dam-break"));
   int& max_diffuse            = kwarg("max-diffuse", "max spray/foam/bubble diffuse particle count (0=disabled, issue #47)").set_default(0);
 };
 
@@ -62,7 +61,7 @@ public:
     engine_.pc_.scorrK         = args.scorr_k;
     engine_.pc_.surfaceTension = args.surface_tension;
     engine_.pc_.linearDamping  = args.damping;
-    setupScenario(args.scenario, cfg);
+    setupScenario(cfg);
     mainLoop(args.n_shots);
     cleanup();
   }
@@ -82,35 +81,35 @@ private:
   float nextDiagTime_                  = 0.0f;
   static constexpr float DIAG_INTERVAL = 1.0f;
 
-  void setupScenario(const std::string& scenario, const FluidConfig& cfg) {
+  void setupScenario(const FluidConfig& cfg) {
     const glm::vec3 w = cfg.domainSize;
     const float m     = cfg.cellSize * 0.5f;      // margin
     const float d     = cfg.particleSpacing();
 
-    if(scenario == "source-flow") {
-      // TC2: 左端から右方向へ移動するボックスソース
-      // X が広いドメイン (domain-size-x=40 を推奨) で左から右へ流体が噴出
-      auto src                = std::make_shared<AABBEmitter>();
-      src->center             = glm::vec3(w.x * 0.05f, w.y * 0.5f, w.z * 0.5f);
-      src->size               = glm::vec3(w.x * 0.07f, w.y * 0.35f, w.z * 0.35f);
-      src->center_vel         = glm::vec3(w.x * 0.10f, 0.0f, 0.0f); // 10% domain/s で右移動
-      src->vel                = glm::vec3(w.x * 0.08f, 0.0f, 0.0f); // 放出粒子に右向き初速
-      const uint32_t boxCount = (uint32_t)(src->size.x * src->size.y * src->size.z / (d * d * d));
-      src->particles_per_step = std::max(1u, boxCount / 400u);
-      src->step_count         = 0; // 無限
-      engine_.addEmitter(src);
-    } else {
-      // dam-break (デフォルト): 左半分上部 (X: 左半分, Z: 上半分)。Y(奥行き)は薄い直方体にしN≈10万に抑える(デフォルトdomain=20mでの実測調整値)
-      const float damDepthY = 1.3f;
+    // 固定エミッタ: ダムブレイクブロック (左半分上部、1回のみ充填)
+    // Y(奥行き)は薄い直方体にしN≈10万に抑える(デフォルトdomain=20mでの実測調整値)
+    const float damDepthY = 1.3f;
 
-      auto src                = std::make_shared<AABBEmitter>();
-      src->center             = glm::vec3(w.x * 0.25f, w.y * 0.5f, w.z * 0.75f);
-      src->size               = glm::vec3(w.x * 0.5f - 2.0f * m, damDepthY, w.z * 0.5f - 2.0f * m);
-      src->vel                = glm::vec3(0.0f);
-      src->particles_per_step = (uint32_t)(src->size.x * src->size.y * src->size.z / (d * d * d)); // 箱を一気に充填
-      src->step_count         = -1;               // 1回のみ
-      engine_.addEmitter(src);
-    }
+    auto dam                = std::make_shared<AABBEmitter>();
+    dam->center             = glm::vec3(w.x * 0.25f, w.y * 0.5f, w.z * 0.75f);
+    dam->size               = glm::vec3(w.x * 0.5f - 2.0f * m, damDepthY, w.z * 0.5f - 2.0f * m);
+    dam->vel                = glm::vec3(0.0f);
+    dam->particles_per_step = (uint32_t)(dam->size.x * dam->size.y * dam->size.z / (d * d * d)); // 箱を一気に充填
+    dam->step_count         = -1;               // 1回のみ
+    engine_.addEmitter(dam);
+
+    // 移動エミッタ: 左端から右方向へ移動するボックスソース (無限放出)
+    // X が広いドメイン (domain-size-x=40 を推奨) で左から右へ流体が噴出。
+    // ダムと Z 半分ずつ領域を分けているため干渉しない
+    auto src                = std::make_shared<AABBEmitter>();
+    src->center             = glm::vec3(w.x * 0.05f, w.y * 0.5f, w.z * 0.25f);
+    src->size               = glm::vec3(w.x * 0.07f, w.y * 0.35f, w.z * 0.35f);
+    src->center_vel         = glm::vec3(w.x * 0.10f, 0.0f, 0.0f); // 10% domain/s で右移動
+    src->vel                = glm::vec3(w.x * 0.08f, 0.0f, 0.0f); // 放出粒子に右向き初速
+    const uint32_t boxCount = (uint32_t)(src->size.x * src->size.y * src->size.z / (d * d * d));
+    src->particles_per_step = std::max(1u, boxCount / 400u);
+    src->step_count         = 0;                  // 無限
+    engine_.addEmitter(src);
   }
 
   void initVulkan(const FluidConfig& cfg, const std::string& boundaryObj, float rho0Arg) {

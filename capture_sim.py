@@ -6,9 +6,7 @@
 全シム完了後、対応フレームを 4×5 グリッドに合成して MP4 動画を書き出す。
 
 テストケース一覧:
-  TC1:  流体 ダムブレイク                                      fluid_pbf
-  TC2:  流体 移動ソースフロー                                   fluid_pbf
-  TC3:  高粘性ゼリー流体                                       fluid_pbf
+  TC1:  流体 ダムブレイク + 移動ソース                                fluid_pbf
   TC4:  布シミュレーション（2隅固定）                          cloth_3d
   TC5:  布2枚 + 布-布衝突                                      cloth_scene --scene 5
   TC6:  煙パーティクル                                         smoke
@@ -55,7 +53,7 @@ VIDEO_FPS = 60     # 出力動画 FPS
 THUMB_W   = 480    # 4列 × 480 = 1920px (ffmpeg scale と一致)
 THUMB_H   = 270    # 16:9
 GRID_COLS = 4
-GRID_ROWS = 5      # 4×5=20 セル; TC1–TC11 + TC-A,B,E,F,G,H,M,K,L (TC-C/D/I/J除外、20使用・空きなし)
+GRID_ROWS = 5      # 4×5=20 セル; TC1,TC4–TC11 + TC-A,B,E,F,G,H,M,K,L (TC-C/D/I/J除外、18使用・空き2)
 
 # テストケース定義
 # exe=None のエントリは空きセル（グリッドのパディング用）
@@ -63,25 +61,10 @@ SIMS = [
     # ── PBF 流体 / 布 / 煙 / ソフトボディ ───────────────────────────────────
     {
         "id": "tc1", "exe": "fluid_pbf",
-        "title": "TC1: Dam Break",
-        "env": {}, "extra_args": ["--scenario", "dam-break"],
-        "params": "N~100K | dam-break (left-top half)",
-    },
-    {
-        "id": "tc2", "exe": "fluid_pbf",
-        "title": "TC2: Moving Source Flow",
+        "title": "TC1: Dam Break + Moving Source",
         "env": {},
-        "extra_args": [
-            "--scenario", "source-flow",
-            "--domain-size-x", "40",
-        ],
-        "params": "N~110K | moving AABB source | world=40",
-    },
-    {
-        "id": "tc3", "exe": "fluid_pbf",
-        "title": "TC3: Jelly (High Viscosity)",
-        "env": {"SIM_VISCOSITY_C": "0.5"}, "extra_args": [],
-        "params": "N~100K | rho0=2097 | visc=0.50",
+        "extra_args": ["--domain-size-x", "40"],
+        "params": "N~40K | fixed dam-block + moving AABB source | world=40",
     },
     {
         "id": "tc4", "exe": "cloth_3d",

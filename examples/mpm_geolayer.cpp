@@ -6,9 +6,9 @@
 
 #include <argparse/argparse.hpp>
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
-#include <vector>
 
 static const std::string SHADER_DIR_STR = SHADER_DIR;
 
@@ -19,6 +19,7 @@ struct MpmGeoLayerArgs : public argparse::Args {
   float& domain_size_y        = kwarg("domain-size-y", "domain physical size Y [m]").set_default(10.0f);
   float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(10.0f);
   float& cell_size            = kwarg("cell-size", "MPM grid cell size [m]").set_default(10.0f / 64.0f);
+  int& particles              = kwarg("particles", "total seed particle count (split evenly across the 3 layers)").set_default(1920);
   float& dt                   = kwarg("dt", "frame timestep [s]").set_default(1.0f / 60.0f);
   int& substeps               = kwarg("substeps", "substeps per frame").set_default(25);
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
@@ -33,11 +34,12 @@ public:
     dt_                 = args.dt;
     base_.screenshotDir = args.screenshot_dir;
 
-    engine_.domainSize = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
-    engine_.cellSize   = args.cell_size;
+    engine_.domainSize   = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
+    engine_.cellSize     = args.cell_size;
+    engine_.maxParticles = uint32_t(args.particles);
 
     base_.initWindow("MPM Geo-Layer – 地層崩壊シミュレーション");
-    initVulkan(args.substeps);
+    initVulkan(args.substeps, uint32_t(args.particles));
     mainLoop(args.n_shots);
     cleanup();
   }
@@ -63,7 +65,18 @@ private:
     engine_.setColliders(cols);
   }
 
-  void initVulkan(int substeps) {
+  // AABB内に一括放出する初期ブロックEmitterを追加する(粒子数をgridResと切り離すため)。
+  void addSeedEmitter(const glm::vec3& center, const glm::vec3& size, uint32_t count, uint32_t materialId) {
+    auto seed                = std::make_shared<AABBEmitter>();
+    seed->center             = center;
+    seed->size               = size;
+    seed->particleType       = materialId;
+    seed->particles_per_step = int(count);
+    seed->step_count         = -1;
+    engine_.addEmitter(seed);
+  }
+
+  void initVulkan(int substeps, uint32_t particleCount) {
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
@@ -90,22 +103,17 @@ private:
 
     engine_.setMaterials({mat0, mat1, mat2});
 
-    // Y インデックスで3層に分割 (init()の自動シードは(iz,iy,ix)順にgr格子を埋めるため同じ順序で走査)
-    const glm::uvec3 gr = domain::gridRes(engine_.domainSize, engine_.cellSize);
-    const uint32_t N    = engine_.liveParticleCount();
-    const uint32_t nx   = gr.x;
-    const uint32_t ny   = gr.y;
-    std::vector<uint32_t> matIds(N);
-    for(uint32_t i = 0; i < N; i++) {
-      uint32_t iy = (i / nx) % ny;
-      if(iy < ny / 3)
-        matIds[i] = 0u; // 下1/3: 硬岩
-      else if(iy < 2 * ny / 3)
-        matIds[i] = 1u; // 中1/3: 弱粘土
-      else
-        matIds[i] = 2u; // 上1/3: 緩い土
-    }
-    engine_.setParticleMaterialIds(matIds);
+    // 縦に細長い柱 (旧cfg.nx/ny/nz=8,30,8相当) を3層に分けたEmitterで再現する。
+    const glm::vec3& d    = engine_.domainSize;
+    const float minDomain = std::min({d.x, d.y, d.z});
+    const float sp        = minDomain * 0.40f / 30.0f;
+    const glm::vec3 fullSize(sp * 7.0f, sp * 29.0f, sp * 7.0f);
+    const glm::vec3 cx(d.x * 0.5f, d.y * 0.70f, d.z * 0.5f);
+    const glm::vec3 layerSize(fullSize.x, fullSize.y / 3.0f, fullSize.z);
+    const uint32_t layerCount = particleCount / 3u;
+    addSeedEmitter(cx - glm::vec3(0.0f, fullSize.y / 3.0f, 0.0f), layerSize, layerCount, 0u); // 下1/3: 硬岩
+    addSeedEmitter(cx, layerSize, layerCount, 1u);                                            // 中1/3: 弱粘土
+    addSeedEmitter(cx + glm::vec3(0.0f, fullSize.y / 3.0f, 0.0f), layerSize, layerCount, 2u);  // 上1/3: 緩い土
 
     rebuildColliders();
 

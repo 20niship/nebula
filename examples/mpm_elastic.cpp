@@ -4,6 +4,8 @@
 
 #include <argparse/argparse.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 
@@ -16,6 +18,7 @@ struct MpmElasticArgs : public argparse::Args {
   float& domain_size_y        = kwarg("domain-size-y", "domain physical size Y [m]").set_default(10.0f);
   float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(10.0f);
   float& cell_size            = kwarg("cell-size", "MPM grid cell size [m]").set_default(10.0f / 64.0f);
+  int& particles              = kwarg("particles", "seed particle count").set_default(8000);
   float& E                    = kwarg("E", "Young modulus [Pa]").set_default(1e4f);
   float& nu                   = kwarg("nu", "Poisson ratio").set_default(0.3f);
   float& rho0                 = kwarg("rho0", "density [kg/m^3]").set_default(1000.0f);
@@ -39,9 +42,10 @@ public:
     engine_.E          = args.E;
     engine_.nu         = args.nu;
     engine_.rho0       = args.rho0;
+    engine_.maxParticles = uint32_t(args.particles);
 
     base_.initWindow("MPM Elastic – Vulkan GPU MPM");
-    initVulkan(args.substeps, args.flip_ratio_arg);
+    initVulkan(args.substeps, args.flip_ratio_arg, uint32_t(args.particles));
     mainLoop(args.n_shots);
     cleanup();
   }
@@ -55,7 +59,22 @@ private:
 
   std::shared_ptr<GravityForce> gravity_;
 
-  void initVulkan(int substeps, float flipRatio) {
+  // 旧MPMConfig::nx/ny/nzが担っていたブロックシードをEmitter経由の一括放出で再現する(粒子数をgridResと切り離すため)。
+  void addSeedEmitter(uint32_t count, uint32_t materialId = 0u) {
+    const float side      = std::cbrt(float(count)); // 立方体近似の一辺の粒子数
+    const glm::vec3& d    = engine_.domainSize;
+    const float minDomain = std::min({d.x, d.y, d.z});
+    const float sp        = minDomain * 0.40f / side;
+    auto seed                = std::make_shared<AABBEmitter>();
+    seed->center             = glm::vec3(d.x * 0.5f, d.y * 0.70f, d.z * 0.5f);
+    seed->size               = glm::vec3(sp * (side - 1.0f));
+    seed->particleType       = materialId;
+    seed->particles_per_step = int(count);
+    seed->step_count         = -1;
+    engine_.addEmitter(seed);
+  }
+
+  void initVulkan(int substeps, float flipRatio, uint32_t particleCount) {
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
@@ -64,6 +83,7 @@ private:
     engine_.addForce(gravity_);
     engine_.numSubsteps = substeps;
     engine_.flip_ratio  = flipRatio;
+    addSeedEmitter(particleCount);
 
     // 既存のパーティクルシェーダーを流用（posIdx/velIdx は同じ形式）
     graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/particle.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");

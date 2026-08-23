@@ -63,7 +63,7 @@ SIMS = [
         "id": "tc1", "exe": "fluid_pbf",
         "title": "TC1: Dam Break + Moving Source",
         "env": {},
-        "extra_args": ["--domain-size-x", "40"],
+        "extra_args": [],
         "params": "N~40K | fixed dam-block + moving AABB source | world=40",
     },
     {

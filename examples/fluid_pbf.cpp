@@ -19,10 +19,10 @@ static const std::string SHADER_DIR_STR = SHADER_DIR;
 // ── CLI ───────────────────────────────────────────────────────────────────────
 
 struct FluidArgs : public argparse::Args {
-  float& domain_size_x        = kwarg("domain-size-x", "domain physical size X [m]").set_default(20.0f);
-  float& domain_size_y        = kwarg("domain-size-y", "domain physical size Y [m]").set_default(20.0f);
-  float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(20.0f);
-  float& cell_size            = kwarg("cell-size", "hash grid cell size [m]").set_default(20.0f / 32.0f);
+  float& domain_size_x        = kwarg("domain-size-x", "domain physical size X [m]").set_default(40.0f);
+  float& domain_size_y        = kwarg("domain-size-y", "domain physical size Y [m]").set_default(40.0f);
+  float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(40.0f);
+  float& cell_size            = kwarg("cell-size", "hash grid cell size [m]").set_default(40.0f / 128.0f);
   int& max_boundary           = kwarg("max-boundary", "max boundary particle count").set_default(20000);
   float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 60.0f);
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
@@ -94,7 +94,7 @@ private:
     dam->center             = glm::vec3(w.x * 0.25f, w.y * 0.5f, w.z * 0.75f);
     dam->size               = glm::vec3(w.x * 0.5f - 2.0f * m, damDepthY, w.z * 0.5f - 2.0f * m);
     dam->vel                = glm::vec3(0.0f);
-    dam->particles_per_step = (uint32_t)(dam->size.x * dam->size.y * dam->size.z / (d * d * d)); // 箱を一気に充填
+    dam->particles_per_step = (uint32_t)(dam->size.x * dam->size.y * dam->size.z * 4 / (d * d * d));
     dam->step_count         = -1;               // 1回のみ
     engine_.addEmitter(dam);
 

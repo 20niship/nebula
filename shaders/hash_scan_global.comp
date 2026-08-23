@@ -5,15 +5,6 @@
 // Pass 2b-1: グループサムの exclusive prefix scan のみ実行
 // スキャン結果を cellOffset[totalCells + lid] に書き戻す
 // kHashAddBase_ が担当セルへの並列加算を行う（旧: このカーネルが 256 writes/thread を逐次実行）
-//
-// nebula本家パッチ: 元実装は「local_size:1024で1 workgroup dispatch」のまま nGroups<=1024 を
-// 前提にしていたが、nGroups=(hashCells+255)/256 は hashCells=2^(bx+by+bz) に応じて容易に1024を
-// 超える(例: domain=24x8x4mでも既にnGroups=2048)。1024を超えた分のグループは元実装だと
-// gsum=0のまま読み書きされず、cellOffsetの exclusive prefix が0固定で壊れたまま残り、
-// hash_sort.comp のバケットソートがそのセル群で衝突・上書きし近傍探索が破綻する
-// (大きい/細長いドメインほどnGroupsが増え影響範囲が広がるため顕在化しやすい)。
-// nGroupsを1024要素ずつのチャンクに分けてcarry(直前チャンクの合計)を引き継ぐ多段スキャンに変更し、
-// nGroupsの大きさに関わらず正しいexclusive prefixを書き戻す。
 
 layout(local_size_x = 1024) in;
 
@@ -24,6 +15,8 @@ void main() {
     uint lid        = gl_LocalInvocationID.x;
     uint totalCells = pc.hashCells;
     uint nGroups    = (totalCells + 255u) / 256u;
+
+    // nGroupsを1024要素ずつのチャンクに分け, 直前チャンクの合計を引き継ぐ多段スキャンとする
     uint nChunks    = (nGroups + 1023u) / 1024u;
 
     if (lid == 0u) carry = 0u;

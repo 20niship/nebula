@@ -14,7 +14,7 @@ https://github.com/user-attachments/assets/fc7bfe51-39a6-4694-a515-f3288ba808cb
 | `cloth_scene` | ClothSceneEngine | Multi-cloth scenes (`--scene 5` = two stacked cloths / `--scene 7` = a single cloth "wrung" by rotating its 4 corners about a central axis) |
 | `string_2d` | (standalone) | 2D string for self-collision validation (XPBD distance constraints, a harness that auto-exits after 3s) |
 | `xpbd_softbody` | SoftBodyEngine | XPBD tetrahedral soft bodies (a Stanford Bunny + 9 jelly cubes dropping and colliding) |
-| `fluid_pbf` | FluidEngine | Position Based Fluids with vorticity confinement and XSPH viscosity. `dam-break` / `source-flow` scenarios, dynamic loading of arbitrary OBJ boundaries |
+| `fluid_pbf` | FluidEngine | Position Based Fluids with vorticity confinement and XSPH viscosity. `dam-break` scenario with fixed dam + moving source emitters, dynamic loading of arbitrary OBJ boundaries |
 | `fluid_sphere` | FluidEngine | PBF fluid confined inside a sphere-shaped OBJ boundary |
 | `fluid_absorb` | FluidEngine | An elliptical puddle absorbed by a cylindrical "absorber port" that sweeps across it along X |
 | `fluid_milk_crown` | FluidEngine | Surface tension (Akinci cohesion) demo: a puddle emitter plus a falling droplet emitter, verifying the droplet stays cohesive as it falls and lands |

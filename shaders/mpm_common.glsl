@@ -297,6 +297,16 @@ mat3 henckyStress(mat3 F, float mu, float lam) {
     return U * diag * transpose(U);
 }
 
+// henckyStress()のsvd3再計算を省く版。塑性射影(projectVonMises/projectDruckerPrager)が
+// 既に計算済みのU・log特異値epsをそのまま使う(塑性リターンマッピングはU/Vを変えないため
+// 数学的に同一)。G2Pで1粒子あたりsvd3(=jacobiEigen3 20回イテレーション)呼び出しを半減する。
+mat3 henckyStressFromEigen(mat3 U, vec3 eps, float mu, float lam) {
+    float trEps = eps.x + eps.y + eps.z;
+    vec3 kp     = lam * trEps * vec3(1.0) + 2.0 * mu * eps;
+    mat3 diag   = mat3(kp.x, 0, 0,  0, kp.y, 0,  0, 0, kp.z);
+    return U * diag * transpose(U);
+}
+
 // ── 弱圧縮流体 Kirchhoff 応力 ─────────────────────────────────────────────
 // J = det(F), K = 体積弾性率
 // τ = K * (J - 1) * I (線形 EOS)

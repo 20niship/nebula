@@ -12,29 +12,20 @@
 #include "ComputePipeline.h"
 #include "EngineBase.h"
 
-// issue #46フォローアップ: ドメインは domainSize(vec3, 物理サイズ[m]) + cellSize(float,
-// 全軸共通のセルサイズ[m]) で指定する (FluidConfig/MPMConfig と同じ規約)。Pyro は
-// 「スレッドID=Morton符号」の稠密グリッド設計のため、実際の GPU dispatch/バッファ確保は
-// 各軸の実セル数(nx,ny,nz)を包含する最小の 2 のべき乗立方体(cubeRes)単位で行う。
-// cubeRes への丸めは domain::mortonCubeRes() が自動的に行うため、ユーザーが 2 のべき乗を
-// 意識する必要はない。
-struct PyroConfig {
+// Houdini Pyro 的なグリッド(オイラー)ソルバー。PyroConfigは廃止済み(issue #98相当): 設定値はinit()前にpublicメンバへ直接設定し、GPU側状態はPyroSimPC pc_一箇所で管理する。
+class PyroEngine : public EngineBase {
+public:
+  // Pyroは「スレッドID=Morton符号」の稠密グリッド設計のため、GPU dispatch/バッファ確保はcubeRes(2のべき乗立方体)単位で行う(domain::mortonCubeRes()が自動丸め)。
   glm::vec3 domainSize{10.0f, 10.0f, 10.0f}; // ドメイン物理サイズ [m] (旧 world_size)
-  float cellSize        = 10.0f / 64.0f;     // 全軸共通のセルサイズ [m] (旧 grid_res の逆算値)
-  uint32_t maxEmitters  = 32;                // 同時に登録できる Emitter の上限 (SSBO 固定容量)
+  float cellSize       = 10.0f / 64.0f;      // 全軸共通のセルサイズ [m] (旧 grid_res の逆算値)
+  uint32_t maxEmitters = 32;                 // 同時に登録できる Emitter の上限 (SSBO 固定容量)
 
   glm::uvec3 gridRes() const { return domain::gridRes(domainSize, cellSize); } // 各軸の実セル数 (nx,ny,nz)。2^n不要
   uint32_t cubeRes() const { return domain::mortonCubeRes(gridRes()); }        // Morton dispatch用の立方体解像度 (自動的に2^n、CPU限定)
   uint32_t totalCells() const { return domain::hashCellsCube(gridRes()); }     // = cubeRes()^3。GPUバッファ確保数/dispatch数
   uint32_t nGroups() const { return domain::nGroups(totalCells()); }
-};
 
-// Houdini Pyro 的なグリッド(オイラー)ソルバー。MPMEngine と異なりパーティクルを
-// 持たず、Morton順の Dense セル中心グリッド上で density/temperature/fuel/velocity
-// を直接解く (semi-Lagrangian 移流 + 圧力投影 + 燃焼反応)。
-class PyroEngine : public EngineBase {
-public:
-  void init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const PyroConfig& cfg = {});
+  void init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir);
   void cleanup();
 
   void step(VkCommandBuffer cmd, float dt);
@@ -45,23 +36,12 @@ public:
   void printGpuProfile();
 #endif
 
-  const PyroConfig& config() const { return cfg_; }
+  // pc_と同名同義の物理パラメータ(buoyancyAlpha等)は個別メンバを持たずpc_を直接書き換える。numPressureItersはRed-Black Gauss-Seidel sweep回数(1 sweepにつきred/black 2ディスパッチ)。
+  int numPressureIters = 10; // CPU側ループ回数(PyroSimPCに対応フィールドなし)
+  int numSubsteps      = 1;  // CPU側ループ回数(PyroSimPCに対応フィールドなし)
 
-  // ── 物理パラメータ (CLI から調整可能) ─────────────────────────────
-  float buoyancyAlpha      = 1.2f;  // 温度浮力係数
-  float buoyancyBeta       = 0.4f;  // 密度による重さ (下降) 係数
-  float ambientTemp        = 0.0f;  // 環境温度
-  float vorticityEps       = 0.0f;  // 渦度閉じ込め強度 (Phase2)
-  float densityDissipation = 0.05f; // 密度減衰係数 [1/s]
-  float tempDissipation    = 0.2f;  // 温度減衰係数 [1/s] (環境温度への復帰)
-  float ignitionTemp       = 0.0f;  // 発火温度 (Phase3)
-  float burnRate           = 0.0f;  // 燃料消費速度 [1/s] (Phase3)
-  float heatRelease        = 0.0f;  // 燃焼による温度上昇量 (Phase3)
-  float smokeYieldPerFuel  = 0.0f;  // 燃焼による密度生成量 (Phase3)
-  float flameBrightness    = 0.0f;  // 燃焼による発光量 (Phase3)
-  // 圧力投影 Red-Black Gauss-Seidel sweep回数 (1 sweepにつきred/black 2ディスパッチ)。
-  int numPressureIters     = 10;
-  int numSubsteps          = 1;
+  // GPU側状態の唯一の格納先。バッファindex類はinit()で一度だけ設定される。
+  PyroSimPC pc_{};
 
   // ── 障害物 SDF (任意形状、mpm_stl_drop.cpp 由来の MeshSDF.h で構築) ──────
   // Morton 順に並んだ float SDF 配列 (totalCells() 要素)。負値=障害物内部。
@@ -97,8 +77,6 @@ protected:
   const char* forceShaderName() const override { return "pyro_forces.comp"; }
 
 private:
-  PyroConfig cfg_;
-
   // ダブルバッファ (A/B): cur_==0 なら [0]が現在値/[1]が次フレーム書き込み先
   uint32_t velIdx_[2]         = {0, 0};
   uint32_t densityIdx_[2]     = {0, 0};
@@ -114,7 +92,7 @@ private:
   uint32_t colliderSDFIdx_ = 0; // 0 = 無効
 
   // Emitter
-  uint32_t emittersIdx_         = 0; // init() で cfg_.maxEmitters 分を固定確保
+  uint32_t emittersIdx_         = 0; // init() で maxEmitters 分を固定確保
   uint32_t emittersActiveCount_ = 0; // 直近 updateEmitters() でアップロードした有効数
   std::vector<std::shared_ptr<Emitter>> emitters_;
   std::vector<int> emitterStepsDone_;

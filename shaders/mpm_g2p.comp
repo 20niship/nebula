@@ -17,7 +17,9 @@
 layout(local_size_x = 256) in;
 
 // ── Von Mises 塑性射影 ────────────────────────────────────────────────────
-mat3 projectVonMises(mat3 F, float mu, float lam, float q_max) {
+// U_out/eps_out: 射影後のU(=svd3のU、リターンマッピングで不変)とlog特異値。
+// 呼び出し側がhenckyStressFromEigen()に渡してsvd3の再計算を省くために使う。
+mat3 projectVonMises(mat3 F, float mu, float lam, float q_max, out mat3 U_out, out vec3 eps_out) {
     mat3 U; vec3 sigma; mat3 V;
     svd3(F, U, sigma, V);
     sigma = max(abs(sigma), vec3(1e-6));
@@ -35,11 +37,14 @@ mat3 projectVonMises(mat3 F, float mu, float lam, float q_max) {
         sigma = exp(eps);
         F = U * mat3(sigma.x, 0, 0,  0, sigma.y, 0,  0, 0, sigma.z) * transpose(V);
     }
+    U_out   = U;
+    eps_out = eps;
     return F;
 }
 
 // ── Drucker-Prager 塑性射影 ───────────────────────────────────────────────
-mat3 projectDruckerPrager(mat3 F, float mu, float lam, float M, float q_c) {
+// U_out/eps_out: projectVonMisesと同じくsvd3再計算省略用
+mat3 projectDruckerPrager(mat3 F, float mu, float lam, float M, float q_c, out mat3 U_out, out vec3 eps_out) {
     mat3 U; vec3 sigma; mat3 V;
     svd3(F, U, sigma, V);
     sigma = max(abs(sigma), vec3(1e-6));
@@ -64,7 +69,9 @@ mat3 projectDruckerPrager(mat3 F, float mu, float lam, float M, float q_c) {
         }
     }
 
-    sigma = exp(eps);
+    sigma   = exp(eps);
+    U_out   = U;
+    eps_out = eps;
     return U * mat3(sigma.x, 0, 0,  0, sigma.y, 0,  0, 0, sigma.z) * transpose(V);
 }
 
@@ -164,14 +171,17 @@ void main() {
         F_new   = pow(J, 1.0 / 3.0) * mat3(1.0);
         tau_new = fluidStressJ(J, mat_bulkK);
     } else if (mat_model == MAT_VON_MISES) {
-        F_new   = projectVonMises(F_new, mat_mu, mat_lam, mat_qmax);
-        tau_new = henckyStress(F_new, mat_mu, mat_lam);
+        mat3 U_e; vec3 eps_e;
+        F_new   = projectVonMises(F_new, mat_mu, mat_lam, mat_qmax, U_e, eps_e);
+        tau_new = henckyStressFromEigen(U_e, eps_e, mat_mu, mat_lam);
     } else if (mat_model == MAT_DRUCKER_PRAGER || mat_model == MAT_GRANULAR_POWDER) {
-        F_new   = projectDruckerPrager(F_new, mat_mu, mat_lam, mat_M, mat_qc);
-        tau_new = henckyStress(F_new, mat_mu, mat_lam);
+        mat3 U_e; vec3 eps_e;
+        F_new   = projectDruckerPrager(F_new, mat_mu, mat_lam, mat_M, mat_qc, U_e, eps_e);
+        tau_new = henckyStressFromEigen(U_e, eps_e, mat_mu, mat_lam);
     } else if (mat_model == MAT_VISCOPLASTIC_MUD) {
-        F_new   = projectDruckerPrager(F_new, mat_mu, mat_lam, mat_M, mat_qc);
-        tau_new = henckyStress(F_new, mat_mu, mat_lam);
+        mat3 U_e; vec3 eps_e;
+        F_new   = projectDruckerPrager(F_new, mat_mu, mat_lam, mat_M, mat_qc, U_e, eps_e);
+        tau_new = henckyStressFromEigen(U_e, eps_e, mat_mu, mat_lam);
         // 粘性偏差応力: 2η * dev(sym(∇v))
         mat3  D    = 0.5 * (vgrad + transpose(vgrad));
         float trD  = D[0][0] + D[1][1] + D[2][2];

@@ -5,31 +5,50 @@
 // Pass 2b-1: グループサムの exclusive prefix scan のみ実行
 // スキャン結果を cellOffset[totalCells + lid] に書き戻す
 // kHashAddBase_ が担当セルへの並列加算を行う（旧: このカーネルが 256 writes/thread を逐次実行）
-// local_size: 1024 で 1 workgroup dispatch
+//
+// nebula本家パッチ: 元実装は「local_size:1024で1 workgroup dispatch」のまま nGroups<=1024 を
+// 前提にしていたが、nGroups=(hashCells+255)/256 は hashCells=2^(bx+by+bz) に応じて容易に1024を
+// 超える(例: domain=24x8x4mでも既にnGroups=2048)。1024を超えた分のグループは元実装だと
+// gsum=0のまま読み書きされず、cellOffsetの exclusive prefix が0固定で壊れたまま残り、
+// hash_sort.comp のバケットソートがそのセル群で衝突・上書きし近傍探索が破綻する
+// (大きい/細長いドメインほどnGroupsが増え影響範囲が広がるため顕在化しやすい)。
+// nGroupsを1024要素ずつのチャンクに分けてcarry(直前チャンクの合計)を引き継ぐ多段スキャンに変更し、
+// nGroupsの大きさに関わらず正しいexclusive prefixを書き戻す。
 
 layout(local_size_x = 1024) in;
 
 shared uint sgrp[1024];
+shared uint carry;
 
 void main() {
     uint lid        = gl_LocalInvocationID.x;
     uint totalCells = pc.hashCells;
     uint nGroups    = (totalCells + 255u) / 256u;
+    uint nChunks    = (nGroups + 1023u) / 1024u;
 
-    uint gsum = (lid < nGroups) ? buffers[pc.cellOffsetIdx].data[totalCells + lid] : 0u;
-    sgrp[lid] = gsum;
+    if (lid == 0u) carry = 0u;
     barrier();
 
-    // Hillis-Steele inclusive scan
-    for (uint stride = 1u; stride < 1024u; stride <<= 1u) {
-        uint src = (lid >= stride) ? sgrp[lid - stride] : 0u;
+    for (uint chunk = 0u; chunk < nChunks; ++chunk) {
+        uint gidx = chunk * 1024u + lid;
+        uint gsum = (gidx < nGroups) ? buffers[pc.cellOffsetIdx].data[totalCells + gidx] : 0u;
+        sgrp[lid] = gsum;
         barrier();
-        sgrp[lid] += src;
-        barrier();
-    }
 
-    // exclusive prefix を書き戻す（kHashAddBase_ が base として読む）
-    if (lid < nGroups) {
-        buffers[pc.cellOffsetIdx].data[totalCells + lid] = (lid > 0u) ? sgrp[lid - 1u] : 0u;
+        // Hillis-Steele inclusive scan (チャンク内)
+        for (uint stride = 1u; stride < 1024u; stride <<= 1u) {
+            uint src = (lid >= stride) ? sgrp[lid - stride] : 0u;
+            barrier();
+            sgrp[lid] += src;
+            barrier();
+        }
+
+        if (gidx < nGroups) {
+            uint excl = (lid > 0u) ? sgrp[lid - 1u] : 0u;
+            buffers[pc.cellOffsetIdx].data[totalCells + gidx] = excl + carry;
+        }
+        barrier();
+        if (lid == 1023u) carry += sgrp[1023u];
+        barrier();
     }
 }

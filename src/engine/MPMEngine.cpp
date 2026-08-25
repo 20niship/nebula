@@ -96,6 +96,8 @@ void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool d
   // 最大 64 個のプリミティブを事前確保 (colliderCount_ == 0 で無効)
   collidersIdx_  = attrBuf_.addAttribute("colliders", sizeof(ColliderPrimitive), 64);
   colliderCount_ = 0;
+  colliderForceIdx_  = attrBuf_.addAttribute("colliderForce", sizeof(glm::vec4), 64);
+  colliderTorqueIdx_ = attrBuf_.addAttribute("colliderTorque", sizeof(glm::vec4), 64);
 
   // ── 初期パーティクルデータをアップロード ──────────────────────────────
   {
@@ -172,6 +174,8 @@ void MPMEngine::cleanup() {
 
 VkBuffer MPMEngine::getPositionBuffer() const { return attrBuf_.getBuffer("P"); }
 VkBuffer MPMEngine::getVelocityBuffer() const { return attrBuf_.getBuffer("v"); }
+VkBuffer MPMEngine::getColliderForceBuffer() const { return attrBuf_.getBuffer("colliderForce"); }
+VkBuffer MPMEngine::getColliderTorqueBuffer() const { return attrBuf_.getBuffer("colliderTorque"); }
 
 // ── メッシュSDFコライダー ────────────────────────────────────────────────
 
@@ -373,6 +377,8 @@ MPMSimPC MPMEngine::buildPC(float subDt) const {
   pc.flip_ratio       = flip_ratio;
   pc.colliderIdx      = collidersIdx_;
   pc.colliderCount    = colliderCount_;
+  pc.colliderForceIdx  = colliderForceIdx_;
+  pc.colliderTorqueIdx = colliderTorqueIdx_;
   pc.B0Idx            = B0Idx_;
   pc.B1Idx            = B1Idx_;
   pc.B2Idx            = B2Idx_;
@@ -408,6 +414,19 @@ void MPMEngine::step(VkCommandBuffer cmd, float dt) {
   const uint32_t N  = nParticles_; // ライブパーティクル数
   const uint32_t NC = cfg_.totalCells();
   float subDt       = dt / float(std::max(1, numSubsteps));
+
+  // コライダー反力/反トルクは全サブステップ分を積算してから1回だけ読み戻すため、フレーム先頭で一度だけゼロクリアする
+  {
+    ZoneScopedN("ZeroColliderForce");
+    VkDeviceSize forceBytes = VkDeviceSize(64) * sizeof(glm::vec4);
+    vkCmdFillBuffer(cmd, attrBuf_.getBuffer("colliderForce"), 0, forceBytes, 0u);
+    vkCmdFillBuffer(cmd, attrBuf_.getBuffer("colliderTorque"), 0, forceBytes, 0u);
+    VkMemoryBarrier b{};
+    b.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &b, 0, nullptr, 0, nullptr);
+  }
 
   for(int sub = 0; sub < numSubsteps; ++sub) {
     MPMSimPC pc = buildPC(subDt);

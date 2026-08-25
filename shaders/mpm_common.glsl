@@ -12,7 +12,7 @@ layout(push_constant) uniform PC {
     uint  F0Idx;         // 8   vec4×N  F 列0 (xyz) + σ_xx (w)
     uint  F1Idx;         // 12  vec4×N  F 列1 (xyz) + σ_yy (w)
     uint  typeFlagIdx;   // 16  (reserved)
-    uint  reserved20;    // 20  旧cellCountIdx
+    uint  colliderForceIdx; // 20  vec4×64 コライダーが受け取った力積(fixed-point、旧reserved20)
     uint  reserved24;    // 24  旧cellOffsetIdx
     uint  reserved28;    // 28  旧sortedIdxIdx
     uint  particleCount; // 32  ライブ粒子数
@@ -37,7 +37,7 @@ layout(push_constant) uniform PC {
     uint  B0Idx;         // 132 B 列0 (xyz, APIC) + σ_xy (w)
     uint  B1Idx;         // 136 B 列1 (xyz, APIC) + σ_xz (w)
     uint  B2Idx;         // 140 B 列2 (xyz, APIC) + σ_yz (w)
-    uint  reserved144;   // 144 旧NanoVDB SDF境界条件用、未使用化(MESH_SDFに統一)
+    uint  colliderTorqueIdx; // 144 vec4×64 コライダーが受け取った反トルク積(fixed-point、旧reserved144)
     uint  gridMomIdx;    // 148
     uint  gridMassIdx;   // 152
     float restitution;   // 156

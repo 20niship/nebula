@@ -46,20 +46,31 @@ vec4 quatConj(vec4 q) { return vec4(-q.xyz, q.w); }
 }
 
 // ローカル空間でのSDF値+法線(中心差分)。out_n_local_はワールドへ戻す前のローカル法線。
+// 遠方判定: MESH_SDF_TRILERPはグリッド外の点をグリッド端セルへクランプするため、
+// ベイクしたローカルグリッドの範囲外(コライダーから離れた場所)を「表面直上」と誤判定してしまう。
+// これがドメイン全体を巻き込む速度爆発の原因だったため、範囲外は明示的に「衝突なし」を返す。
 #define MESH_SDF_SAMPLE(bufIdx_, localP_, localMin_, cellSize_, res_, out_sdf_, out_n_local_) \
 { \
-    MESH_SDF_TRILERP(bufIdx_, localP_, localMin_, cellSize_, res_, out_sdf_) \
-    float eps = (cellSize_) * 0.5; \
-    float sdx0, sdx1, sdy0, sdy1, sdz0, sdz1; \
-    MESH_SDF_TRILERP(bufIdx_, (localP_) + vec3(eps, 0.0, 0.0), localMin_, cellSize_, res_, sdx1) \
-    MESH_SDF_TRILERP(bufIdx_, (localP_) - vec3(eps, 0.0, 0.0), localMin_, cellSize_, res_, sdx0) \
-    MESH_SDF_TRILERP(bufIdx_, (localP_) + vec3(0.0, eps, 0.0), localMin_, cellSize_, res_, sdy1) \
-    MESH_SDF_TRILERP(bufIdx_, (localP_) - vec3(0.0, eps, 0.0), localMin_, cellSize_, res_, sdy0) \
-    MESH_SDF_TRILERP(bufIdx_, (localP_) + vec3(0.0, 0.0, eps), localMin_, cellSize_, res_, sdz1) \
-    MESH_SDF_TRILERP(bufIdx_, (localP_) - vec3(0.0, 0.0, eps), localMin_, cellSize_, res_, sdz0) \
-    vec3 g = vec3(sdx1 - sdx0, sdy1 - sdy0, sdz1 - sdz0); \
-    float glen = length(g); \
-    out_n_local_ = (glen > 1e-6) ? (g / glen) : vec3(0.0, 1.0, 0.0); \
+    vec3 gposChk_ = ((localP_) - (localMin_)) / (cellSize_); \
+    float padCells_ = 1.5; \
+    float resMax_ = float(int(res_) - 1) + padCells_; \
+    if (any(lessThan(gposChk_, vec3(-padCells_))) || any(greaterThan(gposChk_, vec3(resMax_)))) { \
+        out_sdf_ = 1e6; \
+        out_n_local_ = vec3(0.0, 1.0, 0.0); \
+    } else { \
+        MESH_SDF_TRILERP(bufIdx_, localP_, localMin_, cellSize_, res_, out_sdf_) \
+        float eps = (cellSize_) * 0.5; \
+        float sdx0, sdx1, sdy0, sdy1, sdz0, sdz1; \
+        MESH_SDF_TRILERP(bufIdx_, (localP_) + vec3(eps, 0.0, 0.0), localMin_, cellSize_, res_, sdx1) \
+        MESH_SDF_TRILERP(bufIdx_, (localP_) - vec3(eps, 0.0, 0.0), localMin_, cellSize_, res_, sdx0) \
+        MESH_SDF_TRILERP(bufIdx_, (localP_) + vec3(0.0, eps, 0.0), localMin_, cellSize_, res_, sdy1) \
+        MESH_SDF_TRILERP(bufIdx_, (localP_) - vec3(0.0, eps, 0.0), localMin_, cellSize_, res_, sdy0) \
+        MESH_SDF_TRILERP(bufIdx_, (localP_) + vec3(0.0, 0.0, eps), localMin_, cellSize_, res_, sdz1) \
+        MESH_SDF_TRILERP(bufIdx_, (localP_) - vec3(0.0, 0.0, eps), localMin_, cellSize_, res_, sdz0) \
+        vec3 g = vec3(sdx1 - sdx0, sdy1 - sdy0, sdz1 - sdz0); \
+        float glen = length(g); \
+        out_n_local_ = (glen > 1e-6) ? (g / glen) : vec3(0.0, 1.0, 0.0); \
+    } \
 }
 
 // ── 解析 SDF 関数 (buffers[] 不使用) ──────────────────────────────────────────
@@ -116,8 +127,10 @@ float capsuleSDF(vec3 p, vec3 cpos, vec3 axisVec, float cr, out vec3 out_n) {
 // ── MPM グリッド / PBF 粒子への速度境界条件 ──────────────────────────────────
 // v: 入出力速度, n: 外向き法線, v_coll: コライダー速度
 // 法線方向の相対速度が負のとき: 反発 + 摩擦
-void applyColliderBC(inout vec3 v, vec3 n, vec3 v_coll,
+// 戻り値 v_before-v_after (BC非適用時はゼロ) はコライダー反力集計用の力積計算に使う
+vec3 applyColliderBC(inout vec3 v, vec3 n, vec3 v_coll,
                      float restitution, float friction) {
+    vec3 v_before = v;
     vec3  v_rel = v - v_coll;
     float v_n   = dot(v_rel, n);
     if (v_n < 0.0) {
@@ -128,6 +141,7 @@ void applyColliderBC(inout vec3 v, vec3 n, vec3 v_coll,
         if (vtLen > 1e-8) v_t *= max(0.0, 1.0 - friction * abs(v_n) / vtLen);
         v = v_coll + v_t - restitution * v_n_vec;
     }
+    return v_before - v;
 }
 
 #endif // COLLIDER_COMMON_GLSL

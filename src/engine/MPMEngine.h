@@ -44,6 +44,8 @@ public:
   VkBuffer getColliderForceBuffer() const;
   VkBuffer getColliderTorqueBuffer() const;
   uint32_t colliderForceCount() const { return pc_.colliderCount; }
+  // trueならmpm_grid_update.compのatomicAdd集計とstep()冒頭のゼロクリアdispatchを毎フレーム発行する。falseなら両方とも一切発行されずGPU負荷は増えない(既定false)。
+  bool enableColliderForceFeedback = false;
 
   // 外部から調整可能
   float restitution     = 0.3f;

@@ -29,8 +29,18 @@ void FluidEngine::computeBarrier(VkCommandBuffer cmd) {
 void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const FluidConfig& cfg) {
   cfg_ = cfg;
 
-  // h/d 比に対応した静止密度を自動設定（ImGui から上書き可能）
+  // h/d 比に対応した静止密度を自動設定（呼び出し側で上書き可能）
   // rho0 = cfg_.computeRestDensity();
+
+  // pc_ の既定値 (呼び出し側は init() 後に pc_.xxx を直接上書きすればよい)
+  pc_.cfmEpsilon       = 3000.0f; // CFM 緩和 ε (式11)。元のハードコード値
+  pc_.scorrK           = 0.001f;  // 人工圧力 k (式13; 0=無効)
+  pc_.vorticityEpsilon = 0.1f;    // 渦度閉じ込め ε (式16)
+  pc_.linearDamping    = 0.02f;   // 速度減衰 [1/s]。元のハードコード値
+  pc_.smokeRiseAccel   = 8.0f;    // 煙の浮力加速度 [m/s²] (typeFlag==4)
+  pc_.smokeDamping     = 0.5f;    // 煙の速度減衰係数 [1/s] (typeFlag==4)
+  pc_.restitution      = 0.1f;    // ※PBF流体では未使用（衝突は位置投影のみ）
+  pc_.friction         = 0.05f;   // ※PBF流体では未使用
 
   initEngineBase(device, allocator, descriptorPool, cmdPool, queue);
 
@@ -509,8 +519,6 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     pc.gridRes           = cfg_.gridRes();
     pc.worldMin          = glm::vec3(0.0f);
     pc.worldMax          = cfg_.domainSize;
-    pc.restitution       = restitution;
-    pc.friction          = friction;
     pc.particleRadius    = cfg_.cellSize * 0.5f;
     pc.forceBufIdx       = forcesIdx_;
     pc.couplingForceIdx  = 0;
@@ -522,17 +530,8 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     pc.bendCompliance    = viscosityC;
     pc.forceCount        = (uint32_t)forces_.size();
     pc.fluidStart        = cfg_.max_boundary;
-    // PBF 論文準拠パラメータ
-    pc.cfmEpsilon       = cfmEpsilon;
-    pc.scorrK           = scorrK;
-    pc.surfaceTension   = surfaceTension;
-    pc.vorticityEpsilon = vorticityEpsilon;
-    pc.linearDamping    = linearDamping;
-    // 煙・粉体パラメータ
-    pc.smokeRiseAccel = smokeRiseAccel;
-    pc.smokeDamping   = smokeDamping;
     pc.maxDiffuseParticles = cfg_.maxDiffuseParticles;
-    // pc.powderFriction → SimPC では pinnedTargetIdx に転用。FluidEngine では未使用 (0のまま)。
+    // 残りのPBF/煙パラメータはpc_に直接設定済みの値をそのまま使う(呼び出し側がpc_.xxxを書き換える)。
 
     // ① Predict + SDF 壁衝突 (1 dispatch; 境界は invMass==0 固定なので nFluid_ のみ)
     {

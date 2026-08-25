@@ -3,10 +3,9 @@
 #include "graphics/GraphicsPipeline.h"
 
 #include <argparse/argparse.hpp>
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_vulkan.h>
 
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 
@@ -15,13 +14,11 @@ static const std::string SHADER_DIR_STR = SHADER_DIR;
 // ── CLI ───────────────────────────────────────────────────────────────────
 
 struct MpmElasticArgs : public argparse::Args {
-  int& nx                     = kwarg("nx", "particle grid X").set_default(20);
-  int& ny                     = kwarg("ny", "particle grid Y").set_default(20);
-  int& nz                     = kwarg("nz", "particle grid Z").set_default(20);
   float& domain_size_x        = kwarg("domain-size-x", "domain physical size X [m]").set_default(10.0f);
   float& domain_size_y        = kwarg("domain-size-y", "domain physical size Y [m]").set_default(10.0f);
   float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(10.0f);
   float& cell_size            = kwarg("cell-size", "MPM grid cell size [m]").set_default(10.0f / 64.0f);
+  int& particles              = kwarg("particles", "seed particle count").set_default(8000);
   float& E                    = kwarg("E", "Young modulus [Pa]").set_default(1e4f);
   float& nu                   = kwarg("nu", "Poisson ratio").set_default(0.3f);
   float& rho0                 = kwarg("rho0", "density [kg/m^3]").set_default(1000.0f);
@@ -40,18 +37,15 @@ public:
     dt_                 = args.dt;
     base_.screenshotDir = args.screenshot_dir;
 
-    MPMConfig cfg;
-    cfg.nx         = uint32_t(args.nx);
-    cfg.ny         = uint32_t(args.ny);
-    cfg.nz         = uint32_t(args.nz);
-    cfg.domainSize = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
-    cfg.cellSize   = args.cell_size;
-    cfg.E          = args.E;
-    cfg.nu         = args.nu;
-    cfg.rho0       = args.rho0;
+    engine_.domainSize = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
+    engine_.cellSize   = args.cell_size;
+    engine_.E          = args.E;
+    engine_.nu         = args.nu;
+    engine_.rho0       = args.rho0;
+    engine_.maxParticles = uint32_t(args.particles);
 
     base_.initWindow("MPM Elastic – Vulkan GPU MPM");
-    initVulkan(cfg, args.substeps, args.flip_ratio_arg);
+    initVulkan(args.substeps, args.flip_ratio_arg, uint32_t(args.particles));
     mainLoop(args.n_shots);
     cleanup();
   }
@@ -63,27 +57,38 @@ private:
   float dt_      = 1.0f / 60.0f;
   float simTime_ = 0.0f;
 
-  // issue #30 デモ: 従来は下方向(-Y)のスカラー重力しか指定できなかったが、
-  // addForce() で任意方向の重力を追加できることを示す
-  bool diagonalGravityEnabled_ = false;
-  std::shared_ptr<GravityForce> diagonalGravity_;
   std::shared_ptr<GravityForce> gravity_;
 
-  void initVulkan(const MPMConfig& cfg, int substeps, float flipRatio) {
+  // 旧MPMConfig::nx/ny/nzが担っていたブロックシードをEmitter経由の一括放出で再現する(粒子数をgridResと切り離すため)。
+  void addSeedEmitter(uint32_t count, uint32_t materialId = 0u) {
+    const float side      = std::cbrt(float(count)); // 立方体近似の一辺の粒子数
+    const glm::vec3& d    = engine_.domainSize;
+    const float minDomain = std::min({d.x, d.y, d.z});
+    const float sp        = minDomain * 0.40f / side;
+    auto seed                = std::make_shared<AABBEmitter>();
+    seed->center             = glm::vec3(d.x * 0.5f, d.y * 0.70f, d.z * 0.5f);
+    seed->size               = glm::vec3(sp * (side - 1.0f));
+    seed->particleType       = materialId;
+    seed->particles_per_step = int(count);
+    seed->step_count         = -1;
+    engine_.addEmitter(seed);
+  }
+
+  void initVulkan(int substeps, float flipRatio, uint32_t particleCount) {
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
-    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
+    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR);
     gravity_ = GravityForce::FromDirection({0.0f, 1.0f, 0.0f}, 9.8f); // Y-up
     engine_.addForce(gravity_);
     engine_.numSubsteps = substeps;
     engine_.flip_ratio  = flipRatio;
+    addSeedEmitter(particleCount);
 
     // 既存のパーティクルシェーダーを流用（posIdx/velIdx は同じ形式）
     graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/particle.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");
 
     base_.createFrameData();
-    base_.initImGui();
   }
 
   void recordComputeCmd(VkCommandBuffer cmd) {
@@ -143,12 +148,10 @@ private:
     renderPc.velIdx        = engine_.velIdx;
     renderPc.particleCount = engine_.liveParticleCount();
     renderPc.worldMin      = glm::vec3(0.0f);
-    renderPc.worldMax      = engine_.config().domainSize;
+    renderPc.worldMax      = engine_.domainSize;
 
     graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.liveParticleCount());
 
-    // ImGui
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
   }
@@ -166,72 +169,6 @@ private:
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    ImGui::SetNextWindowPos({10, 10}, ImGuiCond_Once);
-    ImGui::SetNextWindowSize({300, 0}, ImGuiCond_Once);
-    ImGui::Begin("MPM Elastic");
-    const auto& cfg = engine_.config();
-    const glm::uvec3 gr = cfg.gridRes();
-    ImGui::Text("FPS: %.1f | N=%u | gridRes=%u,%u,%u", ImGui::GetIO().Framerate, engine_.liveParticleCount(), gr.x, gr.y, gr.z);
-    ImGui::Text("E=%.0f Pa, nu=%.2f, rho0=%.0f", cfg.E, cfg.nu, cfg.rho0);
-    ImGui::Text("dt_sub=%.4f s | t=%.2f s", dt_ / float(engine_.numSubsteps), simTime_);
-    ImGui::Separator();
-    ImGui::SliderFloat("重力", &gravity_->strength, 0.0f, 20.0f);
-    ImGui::SliderInt("サブステップ", &engine_.numSubsteps, 1, 50);
-    ImGui::Separator();
-    ImGui::Text("issue #30: Force API デモ");
-    if(ImGui::Checkbox("斜め重力を追加 (X方向に傾ける)", &diagonalGravityEnabled_)) {
-      if(diagonalGravityEnabled_) {
-        diagonalGravity_ = GravityForce::FromDirection(glm::normalize(glm::vec3(0.5f, -1.0f, 0.0f)), 6.0f);
-        engine_.addForce(diagonalGravity_);
-      } else {
-        engine_.removeForce(diagonalGravity_);
-        diagonalGravity_.reset();
-      }
-    }
-    if(diagonalGravityEnabled_) ImGui::SliderFloat("斜め重力の強さ", &diagonalGravity_->strength, 0.0f, 20.0f);
-    // 転写モード: PIC=散逸大, APIC=散逸小(角運動量保存), FLIP=散逸最小(0<r≤1)
-    int transferMode            = (engine_.flip_ratio < -0.5f) ? 2 : (engine_.flip_ratio > 0.01f) ? 1 : 0;
-    const char* transferModes[] = {"PIC (散逸大)", "FLIP (r=0.95)", "APIC (散逸小)"};
-    if(ImGui::Combo("転写モード", &transferMode, transferModes, 3)) {
-      if(transferMode == 0)
-        engine_.flip_ratio = 0.0f;
-      else if(transferMode == 2)
-        engine_.flip_ratio = -1.0f;
-      else if(engine_.flip_ratio <= 0.01f)
-        engine_.flip_ratio = 0.95f;
-    }
-    if(transferMode == 1) ImGui::SliderFloat("FLIP 比率", &engine_.flip_ratio, 0.01f, 1.0f);
-    const char* models[] = {"弾性", "Von Mises", "Drucker-Prager"};
-    int pm               = int(engine_.plasticModel);
-    if(ImGui::Combo("塑性モデル", &pm, models, 3)) engine_.plasticModel = uint32_t(pm);
-    if(engine_.plasticModel == 1) ImGui::SliderFloat("降伏応力 q_max", &engine_.q_max, 1e2f, 1e6f);
-    if(engine_.plasticModel == 2) {
-      ImGui::SliderFloat("摩擦 M", &engine_.M_friction, 0.0f, 1.5f);
-      ImGui::SliderFloat("粘着力 q_c", &engine_.q_cohesion, 0.0f, 1e4f);
-    }
-    ImGui::Separator();
-    static float col_r = 1.5f, col_x = 5.0f, col_y = 3.0f, col_z = 5.0f;
-    ImGui::Text("球コライダー");
-    ImGui::SliderFloat("半径", &col_r, 0.5f, 4.0f);
-    ImGui::SliderFloat("X", &col_x, 1.0f, cfg.domainSize.x - 1.0f);
-    ImGui::SliderFloat("Y", &col_y, 1.0f, cfg.domainSize.y - 1.0f);
-    ImGui::SliderFloat("Z", &col_z, 1.0f, cfg.domainSize.z - 1.0f);
-    if(ImGui::Button("コライダー設定")) {
-      ColliderSet cols;
-      cols.addSphere({col_x, col_y, col_z}, col_r);
-      engine_.setColliders(cols);
-    }
-    ImGui::SameLine();
-    if(ImGui::Button("クリア")) {
-      engine_.clearAnalyticColliders();
-    }
-    ImGui::End();
-
-    ImGui::Render();
     simTime_ += dt_;
 
     f.timelineValue++;

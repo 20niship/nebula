@@ -9,9 +9,6 @@
 #include <argparse/argparse.hpp>
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_vulkan.h>
 
 #include <algorithm>
 #include <array>
@@ -171,7 +168,6 @@ private:
     particlePipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/particle.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");
 
     base_.createFrameData();
-    base_.initImGui();
   }
 
   void updateAnimatedPins() {
@@ -251,7 +247,6 @@ private:
     }
     particlePipe_.draw(cmd, engine_.descriptorSet, pc, engine_.totalParticleCount());
 
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
   }
@@ -268,27 +263,6 @@ private:
     }
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
-
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    ImGui::Begin("Cloth Scene Control");
-    ImGui::Text("Scene %d | FPS: %.1f | 頂点: %u | t=%.2fs", scene_, ImGui::GetIO().Framerate, engine_.totalParticleCount(), simTime_);
-    ImGui::Separator();
-    ImGui::SliderFloat("重力", &gravity_->strength, 0.0f, 20.0f);
-    ImGui::SliderFloat("反発係数", &engine_.restitution, 0.0f, 1.0f);
-    ImGui::SliderFloat("摩擦係数", &engine_.friction, 0.0f, 1.0f);
-    ImGui::SliderFloat("伸び剛性", &engine_.stretchCompliance, 0.0f, 1e-2f, "%.6f");
-    ImGui::SliderFloat("曲げ剛性", &engine_.bendCompliance, 0.0f, 1e-1f, "%.6f");
-    ImGui::SliderFloat("風 X", &wind_->direction.x, -10.0f, 10.0f);
-    ImGui::SliderFloat("風 Z", &wind_->direction.y, -10.0f, 10.0f);
-    ImGui::SliderInt("反復", &engine_.solverIterations, 1, 10);
-    ImGui::SliderInt("サブステップ", &engine_.numSubsteps, 1, 20);
-    ImGui::Checkbox("自己衝突", &engine_.enableSelfCollision);
-    ImGui::End();
-
-    ImGui::Render();
 
     updateAnimatedPins();
     simTime_ += dt_;

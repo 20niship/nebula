@@ -3,9 +3,6 @@
 #include "graphics/GraphicsPipeline.h"
 
 #include <argparse/argparse.hpp>
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_vulkan.h>
 
 #include <fstream>
 #include <stdexcept>
@@ -111,7 +108,6 @@ private:
     graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/sb_wire.vert.spv", SHADER_DIR_STR + "/sb_wire.frag.spv", VK_PRIMITIVE_TOPOLOGY_LINE_LIST);
 
     base_.createFrameData();
-    base_.initImGui();
   }
 
   void recordComputeCmd(VkCommandBuffer cmd) {
@@ -173,7 +169,6 @@ private:
     // LINE_LIST: 1辺 = 頂点2個
     graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.totalEdgeCount() * 2);
 
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
   }
@@ -191,28 +186,6 @@ private:
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    ImGui::SetNextWindowPos({10, 10}, ImGuiCond_Once);
-    ImGui::SetNextWindowSize({310, 0}, ImGuiCond_Once);
-    ImGui::Begin("XPBD Soft Body");
-    ImGui::Text("FPS: %.1f  |  N=%u  |  t=%.2f s", ImGui::GetIO().Framerate, engine_.totalParticleCount(), simTime_);
-    ImGui::Text("dt_sub=%.4f s", dt_ / float(engine_.numSubsteps));
-    ImGui::Separator();
-    ImGui::SliderFloat("重力", &gravity_->strength, 0.0f, 20.0f);
-    ImGui::SliderFloat("反発係数", &engine_.restitution, 0.0f, 1.0f);
-    ImGui::SliderFloat("摩擦係数", &engine_.friction, 0.0f, 1.0f);
-    ImGui::SliderFloat("エッジ剛性", &engine_.stretchCompliance, 1e-7f, 1e-3f, "%.2e");
-    ImGui::SliderFloat("体積剛性", &engine_.volCompliance, 1e-6f, 1e-1f, "%.2e");
-    ImGui::SliderFloat("線形減衰", &engine_.linearDamping, 0.0f, 0.2f);
-    ImGui::SliderFloat("衝突半径", &engine_.particleCollisionRadius, 0.0f, 1.0f);
-    ImGui::SliderInt("ソルバー反復", &engine_.solverIterations, 1, 20);
-    ImGui::SliderInt("サブステップ", &engine_.numSubsteps, 1, 50);
-    ImGui::End();
-
-    ImGui::Render();
     simTime_ += dt_;
 
     // スクリーンショット

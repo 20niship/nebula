@@ -14,7 +14,7 @@ https://github.com/user-attachments/assets/fc7bfe51-39a6-4694-a515-f3288ba808cb
 | `cloth_scene` | ClothSceneEngine | 複数布シーン（`--scene 5`=布2枚重ね / `--scene 7`=4隅を軸周りに回転させて絞る） |
 | `string_2d` | （専用実装） | 自己衝突検証用の 2D 糸（XPBD 距離拘束、3秒で自動終了するハーネス） |
 | `xpbd_softbody` | SoftBodyEngine | XPBD 四面体ソフトボディ（Stanford Bunny + ジェリーキューブ9個の落下・衝突） |
-| `fluid_pbf` | FluidEngine | Position Based Fluids（渦度保存・XSPH粘性・CFM緩和）。dam-break / source-flow の2シナリオ、任意OBJ境界の動的ロード対応 |
+| `fluid_pbf` | FluidEngine | Position Based Fluids（渦度保存・XSPH粘性・CFM緩和）。dam-break シナリオ（固定ダム＋移動ソースの2エミッタ）、任意OBJ境界の動的ロード対応 |
 | `fluid_sphere` | FluidEngine | 球体OBJを境界として読み込み、内部にPBF流体を閉じ込める |
 | `fluid_absorb` | FluidEngine | 楕円形の水たまりを、X方向に移動する円柱型「吸収ポート」が通過して吸収していくデモ |
 | `fluid_milk_crown` | FluidEngine | 表面張力 (Akinci cohesion) デモ。水たまりエミッタ + 落下水滴エミッタで、水滴が塊のまま落下・着水することを確認する |

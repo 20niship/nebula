@@ -3,12 +3,8 @@
 #include "core/Force.h"
 #include "engine/FluidEngine.h"
 #include "graphics/GraphicsPipeline.h"
-#include "utils.hpp"
 
 #include <argparse/argparse.hpp>
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_vulkan.h>
 
 #include <algorithm>
 #include <array>
@@ -19,16 +15,15 @@
 #include <vk_mem_alloc.h>
 
 static const std::string SHADER_DIR_STR = SHADER_DIR;
-static const std::string ASSET_DIR_STR  = ASSET_DIR;
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
 
 struct FluidArgs : public argparse::Args {
-  float& domain_size_x        = kwarg("domain-size-x", "domain physical size X [m]").set_default(20.0f);
-  float& domain_size_y        = kwarg("domain-size-y", "domain physical size Y [m]").set_default(20.0f);
-  float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(20.0f);
-  float& cell_size            = kwarg("cell-size", "hash grid cell size [m]").set_default(20.0f / 32.0f);
-  int& max_boundary           = kwarg("max-boundary", "max boundary particle count").set_default(200000);
+  float& domain_size_x        = kwarg("domain-size-x", "domain physical size X [m]").set_default(40.0f);
+  float& domain_size_y        = kwarg("domain-size-y", "domain physical size Y [m]").set_default(40.0f);
+  float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(40.0f);
+  float& cell_size            = kwarg("cell-size", "hash grid cell size [m]").set_default(40.0f / 128.0f);
+  int& max_boundary           = kwarg("max-boundary", "max boundary particle count").set_default(20000);
   float& dt                   = kwarg("dt", "timestep (sec)").set_default(1.0f / 60.0f);
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
@@ -40,7 +35,6 @@ struct FluidArgs : public argparse::Args {
   float& scorr_k              = kwarg("scorr-k", "artificial pressure k").set_default(0.0f);
   float& surface_tension      = kwarg("surface-tension", "surface tension cohesion sigma").set_default(0.0f);
   float& damping              = kwarg("damping", "linear velocity damping 1/s").set_default(0.6f);
-  std::string& scenario       = kwarg("scenario", "dam-break | source-flow").set_default(std::string("dam-break"));
   int& max_diffuse            = kwarg("max-diffuse", "max spray/foam/bubble diffuse particle count (0=disabled, issue #47)").set_default(0);
 };
 
@@ -62,12 +56,12 @@ public:
 
     base_.initWindow("Vulkan Sim – PBF Fluid");
     initVulkan(cfg, args.boundary_obj, args.rho0);
-    engine_.viscosityC    = args.viscosity;
-    engine_.cfmEpsilon    = args.cfm_eps;
-    engine_.scorrK        = args.scorr_k;
-    engine_.surfaceTension = args.surface_tension;
-    engine_.linearDamping = args.damping;
-    setupScenario(args.scenario, cfg);
+    engine_.viscosityC       = args.viscosity;
+    engine_.pc_.cfmEpsilon     = args.cfm_eps;
+    engine_.pc_.scorrK         = args.scorr_k;
+    engine_.pc_.surfaceTension = args.surface_tension;
+    engine_.pc_.linearDamping  = args.damping;
+    setupScenario(cfg);
     mainLoop(args.n_shots);
     cleanup();
   }
@@ -84,41 +78,38 @@ private:
   float simTime_  = 0.0f;
   float bSpacing_ = 0.156f;
 
-  char objPath_[256] = {};
-  std::string loadStatus_;
-
   float nextDiagTime_                  = 0.0f;
   static constexpr float DIAG_INTERVAL = 1.0f;
 
-  void setupScenario(const std::string& scenario, const FluidConfig& cfg) {
+  void setupScenario(const FluidConfig& cfg) {
     const glm::vec3 w = cfg.domainSize;
     const float m     = cfg.cellSize * 0.5f;      // margin
     const float d     = cfg.particleSpacing();
 
-    if(scenario == "source-flow") {
-      // TC2: 左端から右方向へ移動するボックスソース
-      // X が広いドメイン (domain-size-x=40 を推奨) で左から右へ流体が噴出
-      auto src                = std::make_shared<AABBEmitter>();
-      src->center             = glm::vec3(w.x * 0.05f, w.y * 0.5f, w.z * 0.5f);
-      src->size               = glm::vec3(w.x * 0.07f, w.y * 0.35f, w.z * 0.35f);
-      src->center_vel         = glm::vec3(w.x * 0.10f, 0.0f, 0.0f); // 10% domain/s で右移動
-      src->vel                = glm::vec3(w.x * 0.08f, 0.0f, 0.0f); // 放出粒子に右向き初速
-      const uint32_t boxCount = (uint32_t)(src->size.x * src->size.y * src->size.z / (d * d * d));
-      src->particles_per_step = std::max(1u, boxCount / 400u);
-      src->step_count         = 0; // 無限
-      engine_.addEmitter(src);
-    } else {
-      // dam-break (デフォルト): 左半分上部 (X: 左半分, Z: 上半分)。Y(奥行き)は薄い直方体にしN≈10万に抑える(デフォルトdomain=20mでの実測調整値)
-      const float damDepthY = 1.3f;
+    // 固定エミッタ: ダムブレイクブロック (左半分上部、1回のみ充填)
+    // Y(奥行き)は薄い直方体にしN≈10万に抑える(デフォルトdomain=20mでの実測調整値)
+    const float damDepthY = 1.3f;
 
-      auto src                = std::make_shared<AABBEmitter>();
-      src->center             = glm::vec3(w.x * 0.25f, w.y * 0.5f, w.z * 0.75f);
-      src->size               = glm::vec3(w.x * 0.5f - 2.0f * m, damDepthY, w.z * 0.5f - 2.0f * m);
-      src->vel                = glm::vec3(0.0f);
-      src->particles_per_step = (uint32_t)(src->size.x * src->size.y * src->size.z / (d * d * d)); // 箱を一気に充填
-      src->step_count         = -1;               // 1回のみ
-      engine_.addEmitter(src);
-    }
+    auto dam                = std::make_shared<AABBEmitter>();
+    dam->center             = glm::vec3(w.x * 0.25f, w.y * 0.5f, w.z * 0.75f);
+    dam->size               = glm::vec3(w.x * 0.5f - 2.0f * m, damDepthY, w.z * 0.5f - 2.0f * m);
+    dam->vel                = glm::vec3(0.0f);
+    dam->particles_per_step = (uint32_t)(dam->size.x * dam->size.y * dam->size.z * 4 / (d * d * d));
+    dam->step_count         = -1;               // 1回のみ
+    engine_.addEmitter(dam);
+
+    // 移動エミッタ: 左端から右方向へ移動するボックスソース (無限放出)
+    // X が広いドメイン (domain-size-x=40 を推奨) で左から右へ流体が噴出。
+    // ダムと Z 半分ずつ領域を分けているため干渉しない
+    auto src                = std::make_shared<AABBEmitter>();
+    src->center             = glm::vec3(w.x * 0.05f, w.y * 0.5f, w.z * 0.25f);
+    src->size               = glm::vec3(w.x * 0.07f, w.y * 0.35f, w.z * 0.35f);
+    src->center_vel         = glm::vec3(w.x * 0.10f, 0.0f, 0.0f); // 10% domain/s で右移動
+    src->vel                = glm::vec3(w.x * 0.08f, 0.0f, 0.0f); // 放出粒子に右向き初速
+    const uint32_t boxCount = (uint32_t)(src->size.x * src->size.y * src->size.z / (d * d * d));
+    src->particles_per_step = std::max(1u, boxCount / 400u);
+    src->step_count         = 0;                  // 無限
+    engine_.addEmitter(src);
   }
 
   void initVulkan(const FluidConfig& cfg, const std::string& boundaryObj, float rho0Arg) {
@@ -131,13 +122,11 @@ private:
     gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f); // Z-up
     engine_.addForce(gravity_);
 
-    std::snprintf(objPath_, sizeof(objPath_), "%s", (ASSET_DIR_STR + "/sphere.obj").c_str());
     if(!boundaryObj.empty()) {
       try {
         engine_.loadBoundary(boundaryObj, bSpacing_);
-        loadStatus_ = "OK: " + std::to_string(engine_.nBoundary) + " boundary particles";
       } catch(const std::exception& e) {
-        loadStatus_ = std::string("Error: ") + e.what();
+        std::fprintf(stderr, "Error loading boundary: %s\n", e.what());
       }
     }
 
@@ -153,7 +142,6 @@ private:
     }
 
     base_.createFrameData();
-    base_.initImGui();
   }
 
   void recordComputeCmd(VkCommandBuffer cmd) {
@@ -231,7 +219,6 @@ private:
       foamGraphicsPipe_.draw(cmd, engine_.descriptorSet, foamPc, engine_.config().maxDiffuseParticles);
     }
 
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
   }
@@ -249,40 +236,6 @@ private:
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    ImGui::Begin("PBF Fluid Control");
-    ImGui::Text("FPS: %.1f  |  流体: %u / %u  境界: %u  経過: %.2f s", ImGui::GetIO().Framerate, engine_.nFluid(), engine_.config().fluidCount(), engine_.nBoundary, simTime_);
-    ImGui::Separator();
-    sim_ui::fluid_reset_button(engine_, simTime_);
-    ImGui::Separator();
-    sim_ui::fluid_params(engine_, *gravity_);
-    ImGui::Separator();
-    if(sim_ui::foam_params(engine_, foamParams_)) engine_.setFoamParams(foamParams_);
-    ImGui::Separator();
-    ImGui::Text("境界粒子 (OBJ)");
-    ImGui::InputText("OBJ パス", objPath_, sizeof(objPath_));
-    ImGui::SliderFloat("粒子間隔", &bSpacing_, 0.05f, 0.5f);
-    if(ImGui::IsItemHovered()) ImGui::SetTooltip("境界粒子の配置間隔 [m]。小さいほど密になるがメモリが増える。");
-    if(ImGui::Button("ロード")) {
-      try {
-        engine_.loadBoundary(objPath_, bSpacing_);
-        loadStatus_ = "OK: " + std::to_string(engine_.nBoundary) + " 境界粒子";
-      } catch(const std::exception& e) {
-        loadStatus_ = std::string("エラー: ") + e.what();
-      }
-    }
-    ImGui::SameLine();
-    if(ImGui::Button("クリア")) {
-      engine_.clearBoundary();
-      loadStatus_ = "クリア済み";
-    }
-    if(!loadStatus_.empty()) ImGui::TextWrapped("%s", loadStatus_.c_str());
-    ImGui::End();
-
-    ImGui::Render();
     simTime_ += dt_;
 
     f.timelineValue++;

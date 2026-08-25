@@ -24,7 +24,7 @@ void PyroEngine::dispatchPyro(VkCommandBuffer cmd, ComputePipeline& k, const Pyr
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, k.pipeline);
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, k.pipelineLayout, 0, 1, &attrBuf_.descriptorSet, 0, nullptr);
   vkCmdPushConstants(cmd, k.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PyroSimPC), &pc);
-  vkCmdDispatch(cmd, cfg_.nGroups(), 1, 1);
+  vkCmdDispatch(cmd, nGroups(), 1, 1);
 }
 
 void PyroEngine::dispatchAndBarrier(VkCommandBuffer cmd, ComputePipeline& k, const PyroSimPC& pc, const char* label) {
@@ -46,16 +46,13 @@ void PyroEngine::dispatchAndBarrier(VkCommandBuffer cmd, ComputePipeline& k, con
 
 // ── 初期化 ────────────────────────────────────────────────────────────────
 
-void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const PyroConfig& cfg) {
-  // Morton符号化は10bit幅(軸あたり最大1024)のため、domainSize/cellSizeから導出される
-  // cubeRes がこれを超える場合のみ例外を投げる(2^nへの丸め自体はdomain::mortonCubeRes()が
-  // 自動的に行うため、ユーザーが明示的に2^nを指定する必要はない)。
-  if(cfg.cubeRes() > 1024) throw std::runtime_error("PyroConfig: domainSize/cellSize から導出される Morton cube 解像度が上限を超えています (cubeRes=" + std::to_string(cfg.cubeRes()) + " > 1024)");
+void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir) {
+  // Morton符号化は10bit幅(軸あたり最大1024)のため、domainSize/cellSizeから導出されるcubeResがこれを超える場合のみ例外を投げる。
+  if(cubeRes() > 1024) throw std::runtime_error("PyroEngine: domainSize/cellSize から導出される Morton cube 解像度が上限を超えています (cubeRes=" + std::to_string(cubeRes()) + " > 1024)");
 
-  cfg_ = cfg;
   initEngineBase(device, allocator, descriptorPool, cmdPool, queue);
 
-  const uint32_t NC = cfg_.totalCells();
+  const uint32_t NC = totalCells();
 
   velIdx_[0]         = attrBuf_.addAttribute("velA", sizeof(glm::vec4), NC);
   velIdx_[1]         = attrBuf_.addAttribute("velB", sizeof(glm::vec4), NC);
@@ -69,8 +66,21 @@ void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool 
   pressureIdx_       = attrBuf_.addAttribute("pres", sizeof(float), NC);
   divergenceIdx_     = attrBuf_.addAttribute("div", sizeof(float), NC);
   curlIdx_           = attrBuf_.addAttribute("curl", sizeof(glm::vec4), NC);
-  emittersIdx_       = attrBuf_.addAttribute("pyroEmitters", sizeof(EmitterGPU), cfg_.maxEmitters);
+  emittersIdx_       = attrBuf_.addAttribute("pyroEmitters", sizeof(EmitterGPU), maxEmitters);
   cur_               = 0;
+
+  // pc_ の既定値 (呼び出し側は init() 後に pc_.xxx を直接上書きすればよい)
+  pc_.buoyancyAlpha      = 1.2f;  // 温度浮力係数
+  pc_.buoyancyBeta       = 0.4f;  // 密度による重さ (下降) 係数
+  pc_.ambientTemp        = 0.0f;  // 環境温度
+  pc_.vorticityEps       = 0.0f;  // 渦度閉じ込め強度
+  pc_.densityDissipation = 0.05f; // 密度減衰係数 [1/s]
+  pc_.tempDissipation    = 0.2f;  // 温度減衰係数 [1/s] (環境温度への復帰)
+  pc_.ignitionTemp       = 0.0f;  // 発火温度
+  pc_.burnRate           = 0.0f;  // 燃料消費速度 [1/s]
+  pc_.heatRelease        = 0.0f;  // 燃焼による温度上昇量
+  pc_.smokeYieldPerFuel  = 0.0f;  // 燃焼による密度生成量
+  pc_.flameBrightness    = 0.0f;  // 燃焼による発光量
 
   // GPU バッファは未初期化のため、全フィールドを明示的にゼロクリアする
   {
@@ -119,10 +129,10 @@ void PyroEngine::cleanup() {
 // ── 障害物 SDF ────────────────────────────────────────────────────────────
 
 void PyroEngine::setColliderSDF(const std::vector<float>& mortonSDF) {
-  if(mortonSDF.size() != cfg_.totalCells())
-    throw std::runtime_error("PyroEngine::setColliderSDF: mortonSDF size (" + std::to_string(mortonSDF.size()) + ") must equal cfg().totalCells() (" + std::to_string(cfg_.totalCells()) + ")");
+  if(mortonSDF.size() != totalCells())
+    throw std::runtime_error("PyroEngine::setColliderSDF: mortonSDF size (" + std::to_string(mortonSDF.size()) + ") must equal totalCells() (" + std::to_string(totalCells()) + ")");
   if(colliderSDFIdx_ == 0) {
-    colliderSDFIdx_ = attrBuf_.addAttribute("colliderSDF", sizeof(float), cfg_.totalCells());
+    colliderSDFIdx_ = attrBuf_.addAttribute("colliderSDF", sizeof(float), totalCells());
   }
   attrBuf_.upload("colliderSDF", mortonSDF.data(), mortonSDF.size() * sizeof(float), cmdPool_, queue_);
 }
@@ -161,7 +171,7 @@ void PyroEngine::updateEmitters(float dt) {
       shouldEmit = (done < emitter.step_count);
 
     if(!shouldEmit) continue;
-    if(active.size() < cfg_.maxEmitters) active.push_back(emitter.pack());
+    if(active.size() < maxEmitters) active.push_back(emitter.pack());
     done++;
     emitter.center += emitter.center_vel * dt;
   }
@@ -214,7 +224,7 @@ void PyroEngine::printGpuProfile() {
 // ── Push Constants 構築 ──────────────────────────────────────────────────
 
 PyroSimPC PyroEngine::buildPC(float dt) const {
-  PyroSimPC pc{};
+  PyroSimPC pc       = pc_; // 物理パラメータ(buoyancyAlpha等)はpc_に設定済みの値をそのまま使う
   pc.velIdxA         = velIdx_[cur_];
   pc.velIdxB         = velIdx_[1 - cur_];
   pc.densityIdxA     = densityIdx_[cur_];
@@ -232,27 +242,13 @@ PyroSimPC PyroEngine::buildPC(float dt) const {
   // emittersIdx/emitterCount は updateEmitters() 後に step() 側で設定する (0=無効)
   pc.emittersIdx  = 0;
   pc.emitterCount = 0;
-  pc.hashCells    = cfg_.totalCells();
-  pc.gridRes      = cfg_.gridRes();
+  pc.hashCells    = totalCells();
+  pc.gridRes      = gridRes();
 
   pc.dt       = dt;
-  pc.cellSize = cfg_.cellSize;
+  pc.cellSize = cellSize;
   pc.worldMin = glm::vec3(0.0f);
-  pc.worldMax = cfg_.domainSize;
-
-  pc.buoyancyAlpha = buoyancyAlpha;
-  pc.buoyancyBeta  = buoyancyBeta;
-  pc.ambientTemp   = ambientTemp;
-  pc.vorticityEps  = vorticityEps;
-
-  pc.densityDissipation = densityDissipation;
-  pc.tempDissipation    = tempDissipation;
-  pc.ignitionTemp       = ignitionTemp;
-  pc.burnRate           = burnRate;
-
-  pc.heatRelease       = heatRelease;
-  pc.smokeYieldPerFuel = smokeYieldPerFuel;
-  pc.flameBrightness   = flameBrightness;
+  pc.worldMax = domainSize;
 
   pc.forceBufIdx = forcesIdx_;
   pc.forceCount  = (uint32_t)forces_.size();
@@ -295,7 +291,7 @@ void PyroEngine::step(VkCommandBuffer cmd, float dt) {
     dispatchAndBarrier(cmd, kForces_, pc, "forces");
 
     // ②b 渦度閉じ込め (2パス: curl → 閉じ込め力適用、A バッファへインプレース)
-    if(vorticityEps > 0.0f) {
+    if(pc.vorticityEps > 0.0f) {
       dispatchAndBarrier(cmd, kCurl_, pc, "curl");
       dispatchAndBarrier(cmd, kVorticityForce_, pc, "vorticity_force");
     }
@@ -415,8 +411,8 @@ void appendChannelLinear(const std::vector<uint8_t>& mortonRaw, const glm::uvec3
 } // namespace
 
 void PyroEngine::dumpFrame(const std::string& path, float simTime) const {
-  const glm::uvec3 realRes   = cfg_.gridRes();
-  const uint32_t cubeCells   = cfg_.totalCells();
+  const glm::uvec3 realRes   = gridRes();
+  const uint32_t cubeCells   = totalCells();
   const uint32_t realCellCnt = realRes.x * realRes.y * realRes.z;
 
   // sdf は障害物未設定 (hasCollider()==false) だと GPU バッファが存在しないため、
@@ -452,8 +448,8 @@ void PyroEngine::dumpFrame(const std::string& path, float simTime) const {
   f.write(reinterpret_cast<const char*>(&realRes.x), sizeof(uint32_t));
   f.write(reinterpret_cast<const char*>(&realRes.y), sizeof(uint32_t));
   f.write(reinterpret_cast<const char*>(&realRes.z), sizeof(uint32_t));
-  float cellSize = cfg_.cellSize; // 旧 worldSize(単一float)。直方体対応につき意味を cellSize に変更 (バイト数不変)
-  f.write(reinterpret_cast<const char*>(&cellSize), sizeof(float));
+  float cs = cellSize; // 旧 worldSize(単一float)。直方体対応につき意味を cellSize に変更 (バイト数不変)
+  f.write(reinterpret_cast<const char*>(&cs), sizeof(float));
   f.write(reinterpret_cast<const char*>(&simTime), sizeof(float));
   uint32_t numChannels = uint32_t(std::size(channels));
   f.write(reinterpret_cast<const char*>(&numChannels), sizeof(uint32_t));

@@ -5,10 +5,9 @@
 #include "graphics/GraphicsPipeline.h"
 
 #include <argparse/argparse.hpp>
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_vulkan.h>
 
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 
@@ -21,13 +20,13 @@ struct MpmSnowImpactArgs : public argparse::Args {
   float& domain_size_y        = kwarg("domain-size-y", "domain physical size Y [m]").set_default(10.0f);
   float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(10.0f);
   float& cell_size            = kwarg("cell-size", "MPM grid cell size [m]").set_default(10.0f / 64.0f);
+  int& particles               = kwarg("particles", "seed particle count").set_default(85184);
   float& dt                   = kwarg("dt", "frame timestep [s]").set_default(1.0f / 60.0f);
   int& substeps               = kwarg("substeps", "substeps per frame").set_default(25);
-  int& pn                     = kwarg("pn", "particle grid per side (N^3 total)").set_default(44);
   float& box_speed            = kwarg("box-speed", "obstacle box speed [m/s]").set_default(6.0f);
   float& box_scale            = kwarg("box-scale", "obstacle box half-extent scale (1=original)").set_default(0.5f);
   int& launch_frame           = kwarg("launch-frame", "box starts moving automatically at this frame (-1=manual button only)").set_default(60);
-  bool& large                 = flag("large", "高解像度プリセット: pn×2(粒子8倍)・cell-size÷2・box-speed×2・substeps×2");
+  bool& large                 = flag("large", "高解像度プリセット: particles×8・cell-size÷2・box-speed×2・substeps×2");
   std::string& collider_mesh  = kwarg("collider-mesh", "衝突オブジェクトのOBJパス(未指定なら従来のボックス)").set_default(std::string(""));
   float& collider_mesh_scale  = kwarg("collider-mesh-scale", "collider-meshの等方拡大率").set_default(8.0f);
   float& spin_rate            = kwarg("spin-rate", "移動中の自転角速度[rad/s] (0=回転なし、collider-mesh専用)").set_default(0.0f);
@@ -40,8 +39,8 @@ struct MpmSnowImpactArgs : public argparse::Args {
 class MpmSnowImpactApp {
 public:
   void run(const MpmSnowImpactArgs& args) {
-    // --large: pn×2(粒子8倍)・cell-size÷2(粒子/セル比を維持しgridResを2の累乗に保つ)・box-speed×2・substeps×2(速い衝突を細かいtimestepでトンネリングなく解く)
-    const int pn         = args.large ? args.pn * 2 : args.pn;
+    // --large: particles×8・cell-size÷2・box-speed×2・substeps×2(速い衝突を細かいtimestepでトンネリングなく解く)
+    const uint32_t particleCount = args.large ? uint32_t(args.particles) * 8u : uint32_t(args.particles);
     const float cellSize = args.large ? args.cell_size * 0.5f : args.cell_size;
     const int substeps   = args.large ? args.substeps * 2 : args.substeps;
 
@@ -54,15 +53,12 @@ public:
     colliderMeshScale_  = args.collider_mesh_scale;
     spinRate_           = args.spin_rate;
 
-    MPMConfig cfg;
-    cfg.nx         = uint32_t(pn);
-    cfg.ny         = uint32_t(pn);
-    cfg.nz         = uint32_t(pn);
-    cfg.domainSize = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
-    cfg.cellSize   = cellSize;
+    engine_.domainSize   = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
+    engine_.cellSize     = cellSize;
+    engine_.maxParticles = particleCount;
 
     base_.initWindow(args.large ? "MPM Snow Impact – 移動箱コライダー衝突 (Large)" : "MPM Snow Impact – 移動箱コライダー衝突");
-    initVulkan(cfg, substeps);
+    initVulkan(substeps, particleCount);
     mainLoop(args.n_shots);
     cleanup();
   }
@@ -85,12 +81,12 @@ private:
   std::string colliderMeshPath_;
   float colliderMeshScale_ = 8.0f;
   float spinRate_          = 0.0f;
-  uint32_t meshSdfIdx_      = 0;
+  uint32_t meshSdfIdx_     = 0;
   LocalMeshSDF meshSdfGrid_;
   glm::quat meshRot_ = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
 
   void rebuildColliders() {
-    const glm::vec3 ws = engine_.config().domainSize;
+    const glm::vec3 ws = engine_.domainSize;
     ColliderSet cols;
     cols.addPlane({0.0f, 0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, 0.1f, 0.5f);
     glm::vec3 vel = boxMoving_ ? glm::vec3(-boxSpeed_, 0.0f, 0.0f) : glm::vec3(0.0f);
@@ -104,11 +100,26 @@ private:
     engine_.setColliders(cols);
   }
 
-  void initVulkan(const MPMConfig& cfg, int substeps) {
+  // 旧MPMConfig::nx/ny/nzが担っていたブロックシードをEmitter経由の一括放出で再現する(粒子数をgridResと切り離すため)。
+  void addSeedEmitter(uint32_t count, uint32_t materialId = 0u) {
+    const float side      = std::cbrt(float(count)); // 立方体近似の一辺の粒子数
+    const glm::vec3& d    = engine_.domainSize;
+    const float minDomain = std::min({d.x, d.y, d.z});
+    const float sp        = minDomain * 0.40f / side;
+    auto seed                = std::make_shared<AABBEmitter>();
+    seed->center             = glm::vec3(d.x * 0.5f, d.y * 0.70f, d.z * 0.5f);
+    seed->size               = glm::vec3(sp * (side - 1.0f));
+    seed->particleType       = materialId;
+    seed->particles_per_step = int(count);
+    seed->step_count         = -1;
+    engine_.addEmitter(seed);
+  }
+
+  void initVulkan(int substeps, uint32_t particleCount) {
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
-    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
+    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR);
     engine_.numSubsteps = substeps;
     gravity_            = GravityForce::FromDirection({0.0f, -1.0f, 0.0f}, 9.8f); // Y-up
     engine_.addForce(gravity_);
@@ -122,17 +133,17 @@ private:
     snow.model  = uint32_t(MaterialModel::VON_MISES);
     snow.q_max  = 3000.0f;
     engine_.setMaterials({snow});
+    addSeedEmitter(particleCount);
 
     if(!colliderMeshPath_.empty()) {
       meshSdfIdx_ = engine_.loadColliderMesh(colliderMeshPath_, meshSdfGrid_, 48, colliderMeshScale_);
     }
 
-    boxPosX_ = cfg.domainSize.x * 0.85f;
+    boxPosX_ = engine_.domainSize.x * 0.85f;
     rebuildColliders();
 
     graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/particle.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");
     base_.createFrameData();
-    base_.initImGui();
   }
 
   void recordComputeCmd(VkCommandBuffer cmd) {
@@ -189,11 +200,10 @@ private:
     renderPc.velIdx        = engine_.velIdx;
     renderPc.particleCount = engine_.liveParticleCount();
     renderPc.worldMin      = glm::vec3(0.0f);
-    renderPc.worldMax      = engine_.config().domainSize;
+    renderPc.worldMax      = engine_.domainSize;
 
     graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.liveParticleCount());
 
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
   }
@@ -211,42 +221,9 @@ private:
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    ImGui::SetNextWindowPos({10, 10}, ImGuiCond_Once);
-    ImGui::SetNextWindowSize({310, 0}, ImGuiCond_Once);
-    ImGui::Begin("MPM Snow Impact");
-
-    ImGui::Text("FPS: %.1f | N=%u | t=%.2f s", ImGui::GetIO().Framerate, engine_.liveParticleCount(), simTime_);
-    ImGui::Text("Snow: VON_MISES  E=50kPa  q=3kPa  rho=300 kg/m3");
-    ImGui::Text("Box X: %.2f  %s", boxPosX_, boxMoving_ ? "[移動中]" : "[停止]");
-    ImGui::Separator();
-
-    if(!boxMoving_) {
-      if(launchFrame_ >= 0 && frameCount_ < launchFrame_) {
-        ImGui::TextDisabled("自動発進まで: %d フレーム", launchFrame_ - frameCount_);
-      }
-      if(ImGui::Button("Launch Box →衝突開始")) {
-        boxPosX_   = engine_.config().domainSize.x * 0.85f;
-        boxMoving_ = true;
-        rebuildColliders();
-      }
-    } else {
-      ImGui::TextDisabled("箱が移動中...");
-    }
-    ImGui::SliderFloat("速度 [m/s]", &boxSpeed_, 0.1f, 10.0f);
-    ImGui::Separator();
-    ImGui::SliderFloat("重力", &gravity_->strength, 0.0f, 20.0f);
-    ImGui::SliderInt("サブステップ", &engine_.numSubsteps, 1, 50);
-
-    ImGui::End();
-    ImGui::Render();
-
-    // 固定フレームに到達したらボタン操作なしで自動的に箱を発進させる
+    // 固定フレームに到達したら自動的に箱を発進させる
     if(!boxMoving_ && launchFrame_ >= 0 && frameCount_ >= launchFrame_) {
-      boxPosX_   = engine_.config().domainSize.x * 0.85f;
+      boxPosX_   = engine_.domainSize.x * 0.85f;
       boxMoving_ = true;
     }
 

@@ -9,7 +9,7 @@
 // gather方式(旧実装)は1粒子データを最大27回、隣接セルスレッドから間接参照で
 // 重複読み込みしていたが、scatterでは粒子ごとに1回の連続読み込みで済む。
 //
-// ノード規約・重み計算はG2P(mpm_g2p.comp)と同一: base = floor((xp-worldMin)/h) - 1
+// ノード規約・重み計算はG2P(mpm_g2p.comp)と同一: base = floor(xp/h) - 1 (ドメイン下限は常に原点)
 // dispatch: (particleCount + 255) / 256
 
 layout(local_size_x = 256) in;
@@ -41,7 +41,7 @@ void main() {
     float D_inv = 4.0 / (pc.cellSize * pc.cellSize);
     mat3 tau = readStressW(p);
 
-    ivec3 base = ivec3(floor((xp - pc.worldMin) / pc.cellSize)) - ivec3(1);
+    ivec3 base = ivec3(floor(xp / pc.cellSize)) - ivec3(1);
 
     for (int iz = 0; iz < 3; iz++)
     for (int iy = 0; iy < 3; iy++)
@@ -50,7 +50,7 @@ void main() {
         if (any(lessThan(nijk, ivec3(0))) ||
             any(greaterThanEqual(nijk, ivec3(pc.gridRes)))) continue;
 
-        vec3 xi = (vec3(nijk) + 0.5) * pc.cellSize + pc.worldMin;
+        vec3 xi = (vec3(nijk) + 0.5) * pc.cellSize;
         vec3 d = (xp - xi) / pc.cellSize;
 
         float wx = bspline2(d.x), wy = bspline2(d.y), wz = bspline2(d.z);

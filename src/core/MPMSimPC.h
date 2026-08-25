@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <glm/glm.hpp>
 
-// MPM 専用 Push Constants — 188 bytes。reserved20/24/28は旧cellCountIdx/cellOffsetIdx/sortedIdxIdx(MLS-MPM化で空間ハッシュ/ソート廃止に伴い未使用化、offset-churn回避のためreserved化のみ)。hashCellsは旧gridRes(スカラー)を改名したもので空間ハッシュ/MPMグリッドバッファの実要素数(=domain::hashCells()、cubeRes^3。nx*ny*nzではない)を表す。
+// MPM 専用 Push Constants — 188 bytes。reserved24/28は旧cellOffsetIdx/sortedIdxIdx(MLS-MPM化で未使用化)、hashCellsは空間ハッシュ/MPMグリッドバッファの実要素数(cubeRes^3)。旧reserved20/144はcolliderForceIdx/colliderTorqueIdxとして再利用(ローカルpatch、サイズ不変)。
 struct MPMSimPC {
   // ── Bindless バッファインデックス (48 bytes) ──────────────────────────
   uint32_t posIdx;        // 0   vec4×N  (xyz=position, w=initial volume Vp)
@@ -10,7 +10,7 @@ struct MPMSimPC {
   uint32_t F0Idx;         // 8   vec4×N  F 列0 (xyz) + σ_xx (w)
   uint32_t F1Idx;         // 12  vec4×N  F 列1 (xyz) + σ_yy (w)
   uint32_t typeFlagIdx;   // 16  uint×N  (reserved)
-  uint32_t reserved20;    // 20  旧cellCountIdx
+  uint32_t colliderForceIdx; // 20  vec4×64 コライダーが受け取った力積(fixed-point, 旧reserved20)
   uint32_t reserved24;    // 24  旧cellOffsetIdx
   uint32_t reserved28;    // 28  旧sortedIdxIdx
   uint32_t particleCount; // 32  (ライブパーティクル数)
@@ -47,7 +47,7 @@ struct MPMSimPC {
   uint32_t B2Idx;         // 140 APIC B行列 列2 (xyz) + σ_yz (w)
 
   // ── Grid buffer indices (16 bytes) ───────────────────────────────────
-  uint32_t reserved144; // 144 旧NanoVDB SDF境界条件用(mpm_nanovdb_bc.comp削除に伴い未使用化、colliderIdx/MESH_SDFに統一)
+  uint32_t colliderTorqueIdx; // 144 vec4×64 コライダーが受け取った反トルク積(fixed-point, 旧reserved144)
   uint32_t gridMomIdx;  // 148 vec4×CELLS グリッド運動量/速度
   uint32_t gridMassIdx; // 152 float×CELLS グリッド質量
   float restitution;    // 156

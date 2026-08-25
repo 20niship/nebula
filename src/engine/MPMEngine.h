@@ -71,6 +71,10 @@ public:
   uint32_t liveParticleCount() const { return nParticles_; }
   VkBuffer getPositionBuffer() const;
   VkBuffer getVelocityBuffer() const;
+  // コライダーが今フレーム受け取った力積/トルク積(fixed-point, vec4×64, 未使用スロットは0)。CPU側でdt割りして反力[N]/[N・m]に変換する
+  VkBuffer getColliderForceBuffer() const;
+  VkBuffer getColliderTorqueBuffer() const;
+  uint32_t colliderForceCount() const { return colliderCount_; }
 
   // ImGui から調整可能
   float restitution     = 0.3f;
@@ -149,6 +153,8 @@ private:
   // 解析コライダー SSBO (Phase 3)
   uint32_t collidersIdx_  = 0;
   uint32_t colliderCount_ = 0; // 0 = 無効
+  uint32_t colliderForceIdx_  = 0;
+  uint32_t colliderTorqueIdx_ = 0;
 
   // メッシュSDFコライダー: アップロードごとに一意なバッファ名を振るためのカウンタ
   uint32_t nextMeshSDFId_ = 0;

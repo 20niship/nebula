@@ -116,7 +116,16 @@ void main() {
             }
 
             if (sdf <= band) {
-                applyColliderBC(v, col_n, vColl, crest, cfric);
+                vec3 dv = applyColliderBC(v, col_n, vColl, crest, cfric);
+                // mass*(v_after-v_before) = コライダーが物体(粒子)に及ぼした力積 = 接地反力そのもの(実測: 静止重量とほぼ一致する符号・大きさで検証済み)。全サブステップ分をatomicAddで積算し、CPU側でΣ/frame_dtして平均反力[N]に変換する
+                vec3 impulseOnCollider = -mass * dv;
+                atomicAdd(buffers[pc.colliderForceIdx].data[ci*4u + 0u], encodeFixed(impulseOnCollider.x));
+                atomicAdd(buffers[pc.colliderForceIdx].data[ci*4u + 1u], encodeFixed(impulseOnCollider.y));
+                atomicAdd(buffers[pc.colliderForceIdx].data[ci*4u + 2u], encodeFixed(impulseOnCollider.z));
+                vec3 torqueOnCollider = cross(xi - cpos, impulseOnCollider);
+                atomicAdd(buffers[pc.colliderTorqueIdx].data[ci*4u + 0u], encodeFixed(torqueOnCollider.x));
+                atomicAdd(buffers[pc.colliderTorqueIdx].data[ci*4u + 1u], encodeFixed(torqueOnCollider.y));
+                atomicAdd(buffers[pc.colliderTorqueIdx].data[ci*4u + 2u], encodeFixed(torqueOnCollider.z));
             }
         }
     }

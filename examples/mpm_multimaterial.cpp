@@ -4,24 +4,22 @@
 #include "graphics/GraphicsPipeline.h"
 
 #include <argparse/argparse.hpp>
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_vulkan.h>
 
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <string>
-#include <vector>
 
 static const std::string SHADER_DIR_STR = SHADER_DIR;
 
 // ── CLI ───────────────────────────────────────────────────────────────────
 
 struct MpmMultiArgs : public argparse::Args {
-  int& n                      = kwarg("n", "particle grid N (N×N×N)").set_default(16);
   float& domain_size_x        = kwarg("domain-size-x", "domain physical size X [m]").set_default(10.0f);
   float& domain_size_y        = kwarg("domain-size-y", "domain physical size Y [m]").set_default(10.0f);
   float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(10.0f);
   float& cell_size            = kwarg("cell-size", "MPM grid cell size [m]").set_default(10.0f / 64.0f);
+  int& particles              = kwarg("particles", "total seed particle count (split evenly between the two materials)").set_default(4096);
   float& dt                   = kwarg("dt", "frame timestep [s]").set_default(1.0f / 60.0f);
   int& substeps               = kwarg("substeps", "substeps per frame").set_default(25);
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
@@ -36,15 +34,12 @@ public:
     dt_                 = args.dt;
     base_.screenshotDir = args.screenshot_dir;
 
-    MPMConfig cfg;
-    cfg.nx         = uint32_t(args.n);
-    cfg.ny         = uint32_t(args.n);
-    cfg.nz         = uint32_t(args.n);
-    cfg.domainSize = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
-    cfg.cellSize   = args.cell_size;
+    engine_.domainSize   = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
+    engine_.cellSize     = args.cell_size;
+    engine_.maxParticles = uint32_t(args.particles);
 
     base_.initWindow("MPM Multi-Material – 弾性体 + 砂");
-    initVulkan(cfg, args.substeps);
+    initVulkan(args.substeps, uint32_t(args.particles));
     mainLoop(args.n_shots);
     cleanup();
   }
@@ -57,13 +52,24 @@ private:
   float dt_      = 1.0f / 60.0f;
   float simTime_ = 0.0f;
 
-  void initVulkan(const MPMConfig& cfg, int substeps) {
+  // AABB内に一括放出する初期ブロックEmitterを追加する(粒子数をgridResと切り離すため)。
+  void addSeedEmitter(const glm::vec3& center, const glm::vec3& size, uint32_t count, uint32_t materialId) {
+    auto seed                = std::make_shared<AABBEmitter>();
+    seed->center             = center;
+    seed->size               = size;
+    seed->particleType       = materialId;
+    seed->particles_per_step = int(count);
+    seed->step_count         = -1;
+    engine_.addEmitter(seed);
+  }
+
+  void initVulkan(int substeps, uint32_t particleCount) {
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
-    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
+    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR);
     engine_.numSubsteps = substeps;
-    gravity_ = GravityForce::FromDirection({0.0f, 1.0f, 0.0f}, 9.8f); // Y-up
+    gravity_            = GravityForce::FromDirection({0.0f, 1.0f, 0.0f}, 9.8f); // Y-up
     engine_.addForce(gravity_);
 
     // slot 0: ゼリー状弾性体 (下半分)
@@ -72,21 +78,20 @@ private:
     MaterialParams mat1 = presetSand(5e4f, 0.3f, 1600.0f);
     engine_.setMaterials({mat0, mat1});
 
-    // パーティクルの material id を設定 (上半分 = 砂, 下半分 = 弾性体)
-    const uint32_t N  = cfg.particleCount();
-    const uint32_t nx = cfg.nx;
-    const uint32_t ny = cfg.ny;
-    std::vector<uint32_t> matIds(N);
-    for(uint32_t i = 0; i < N; i++) {
-      uint32_t iy = (i / nx) % ny;
-      matIds[i]   = (iy >= ny / 2) ? 1u : 0u; // 上半分=砂
-    }
-    engine_.setParticleMaterialIds(matIds);
+    // 旧cfg.nx/ny/nz相当のブロック形状を上下半分の2Emitterに分けて再現する。
+    const glm::vec3& d    = engine_.domainSize;
+    const float side       = std::cbrt(float(particleCount));
+    const float minDomain = std::min({d.x, d.y, d.z});
+    const float sp        = minDomain * 0.40f / side;
+    const glm::vec3 fullSize(sp * (side - 1.0f));
+    const glm::vec3 cx(d.x * 0.5f, d.y * 0.70f, d.z * 0.5f);
+    const glm::vec3 halfSize(fullSize.x, fullSize.y * 0.5f, fullSize.z);
+    addSeedEmitter(cx - glm::vec3(0.0f, fullSize.y * 0.25f, 0.0f), halfSize, particleCount / 2u, 0u); // 下半分=弾性体
+    addSeedEmitter(cx + glm::vec3(0.0f, fullSize.y * 0.25f, 0.0f), halfSize, particleCount / 2u, 1u); // 上半分=砂
 
     graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/particle.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");
 
     base_.createFrameData();
-    base_.initImGui();
   }
 
   void recordComputeCmd(VkCommandBuffer cmd) {
@@ -143,11 +148,10 @@ private:
     renderPc.velIdx        = engine_.velIdx;
     renderPc.particleCount = engine_.liveParticleCount();
     renderPc.worldMin      = glm::vec3(0.0f);
-    renderPc.worldMax      = engine_.config().domainSize;
+    renderPc.worldMax      = engine_.domainSize;
 
     graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.liveParticleCount());
 
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
   }
@@ -165,25 +169,6 @@ private:
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    ImGui::SetNextWindowPos({10, 10}, ImGuiCond_Once);
-    ImGui::SetNextWindowSize({310, 0}, ImGuiCond_Once);
-    ImGui::Begin("MPM Multi-Material");
-    const auto& cfg = engine_.config();
-    const glm::uvec3 gr = cfg.gridRes();
-    ImGui::Text("FPS: %.1f | N=%u | gridRes=%u,%u,%u", ImGui::GetIO().Framerate, engine_.liveParticleCount(), gr.x, gr.y, gr.z);
-    ImGui::Text("t=%.2f s | %u^3 particles", simTime_, cfg.nx);
-    ImGui::Text("[下半分] slot 0: Hencky 弾性体 (E=10kPa, nu=0.4)");
-    ImGui::Text("[上半分] slot 1: Drucker-Prager 砂 (E=50kPa, M=0.577)");
-    ImGui::Separator();
-    ImGui::SliderFloat("重力", &gravity_->strength, 0.0f, 20.0f);
-    ImGui::SliderInt("サブステップ", &engine_.numSubsteps, 1, 50);
-    ImGui::End();
-
-    ImGui::Render();
     simTime_ += dt_;
 
     f.timelineValue++;

@@ -41,7 +41,7 @@ void main() {
 
     // Force(空間ノイズ用の位置)より前倒しで計算 (issue #30)
     ivec3 ijk = mortonDecodeI(gid);
-    vec3 forcePos = (vec3(ijk) + 0.5) * pc.cellSize + pc.worldMin;
+    vec3 forcePos = (vec3(ijk) + 0.5) * pc.cellSize;
     uint forceTypeFlag = 0u; // MPMグリッドセルにtypeFlagはないため常時全Force適用
 
     // FORCE_AUTOGEN_BEGIN
@@ -82,32 +82,34 @@ void main() {
                                uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 10u]));
             float crest = uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 11u]);
             float cfric = uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 12u]);
+            // 姿勢クォータニオン・角速度はBOX/CYLINDER/MESH_SDFが使用(他typeは(0,0,0,1)/(0,0,0)で無回転のまま動く)
+            vec4  cq    = vec4(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 16u]),
+                                uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 17u]),
+                                uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 18u]),
+                                uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 19u]));
+            vec3  cw    = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 20u]),
+                                uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 21u]),
+                                uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 22u]));
 
             vec3  col_n;
             float sdf;
-            float band  = 0.0; // MESH_SDF専用: 今stepで進む距離分だけ早めに判定しトンネリングを防ぐ(静止時は0=真の表面でのみ判定、box等と同じ挙動を維持)
-            vec3  vColl = cvel;
+            float band  = 0.0; // MESH_SDF専用: 今stepで進む距離分だけ早めに判定しトンネリングを防ぐ(静止時は0=真の表面でのみ判定、box等の解析形状は厳密sdfなので不要)
+            vec3  vColl = cvel + cross(cw, xi - cpos);
             if (ctype == COLL_SPHERE) {
                 sdf = sphereSDF(xi, cpos, cr, col_n);
             } else if (ctype == COLL_BOX) {
-                sdf = boxSDF(xi, cpos, cnrm, col_n);
+                sdf = boxSDF(xi, cpos, cnrm, cq, col_n);
+            } else if (ctype == COLL_CYLINDER) {
+                sdf = cylinderSDF(xi, cpos, cr, cnrm.y, cq, col_n);
             } else if (ctype == COLL_CAPSULE) {
                 sdf = capsuleSDF(xi, cpos, cnrm, cr, col_n);
             } else if (ctype == COLL_MESH_SDF) {
                 uint  sdfBufIdx = buffers[pc.colliderIdx].data[cbase + 13u];
                 uint  meshRes   = buffers[pc.colliderIdx].data[cbase + 14u];
-                vec4  cq        = vec4(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 16u]),
-                                        uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 17u]),
-                                        uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 18u]),
-                                        uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 19u]));
-                vec3  cw        = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 20u]),
-                                        uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 21u]),
-                                        uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 22u]));
                 vec3 localP = quatRotate(quatConj(cq), xi - cpos);
                 vec3 nLocal;
                 MESH_SDF_SAMPLE(sdfBufIdx, localP, cnrm, cr, meshRes, sdf, nLocal)
                 col_n = quatRotate(cq, nLocal);
-                vColl = cvel + cross(cw, xi - cpos);
                 float vApproach = -dot(v - vColl, col_n); // 法線方向の接近速度(正=接近中)
                 band = max(0.0, vApproach) * pc.dt * 1.5;
             } else {

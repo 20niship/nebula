@@ -7,9 +7,6 @@
 
 #include <argparse/argparse.hpp>
 #include <glm/gtc/quaternion.hpp>
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_vulkan.h>
 
 #include <cmath>
 #include <cstdio>
@@ -19,42 +16,6 @@
 
 static const std::string SHADER_DIR_STR = SHADER_DIR;
 
-// ローカルY軸=車軸。巻き順だけでは外向き統一できないため重心逆向きなら法線反転する(test_mpm.cppのmakeCubeTrisと同じ流儀)。
-static std::vector<MeshTriangle> makeCylinderTris(float radius, float halfHeight, int nSegments = 32) {
-  std::vector<glm::vec3> ringLo(nSegments), ringHi(nSegments);
-  for(int i = 0; i < nSegments; ++i) {
-    float a  = 2.0f * float(M_PI) * float(i) / float(nSegments);
-    float cx = radius * std::cos(a);
-    float cz = radius * std::sin(a);
-    ringLo[i] = {cx, -halfHeight, cz};
-    ringHi[i] = {cx, halfHeight, cz};
-  }
-  const glm::vec3 centerLo(0.0f, -halfHeight, 0.0f);
-  const glm::vec3 centerHi(0.0f, halfHeight, 0.0f);
-
-  std::vector<MeshTriangle> tris;
-  auto pushTri = [&](glm::vec3 a, glm::vec3 b, glm::vec3 c) {
-    MeshTriangle t;
-    t.v[0]              = a;
-    t.v[1]              = b;
-    t.v[2]              = c;
-    glm::vec3 n         = glm::normalize(glm::cross(b - a, c - a));
-    glm::vec3 centroid  = (a + b + c) / 3.0f;
-    if(glm::dot(n, centroid) < 0.0f) n = -n;
-    t.n = n;
-    tris.push_back(t);
-  };
-
-  for(int i = 0; i < nSegments; ++i) {
-    int j = (i + 1) % nSegments;
-    pushTri(centerLo, ringLo[i], ringLo[j]); // 底面キャップ
-    pushTri(centerHi, ringHi[j], ringHi[i]); // 上面キャップ
-    pushTri(ringLo[i], ringLo[j], ringHi[j]); // 側面
-    pushTri(ringLo[i], ringHi[j], ringHi[i]);
-  }
-  return tris;
-}
-
 // ── CLI ───────────────────────────────────────────────────────────────────
 
 struct TireSandArgs : public argparse::Args {
@@ -63,19 +24,19 @@ struct TireSandArgs : public argparse::Args {
   float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(3.0f);
   float& cell_size            = kwarg("cell-size", "MPM grid cell size [m]").set_default(3.0f / 128.0f);
   float& dt                   = kwarg("dt", "frame timestep [s]").set_default(1.0f / 60.0f);
-  int& substeps                = kwarg("substeps", "substeps per frame").set_default(40);
-  int& sand_nx                 = kwarg("sand-nx", "砂粒子配置 X方向グリッド数").set_default(300);
-  int& sand_nz                 = kwarg("sand-nz", "砂粒子配置 Z方向グリッド数").set_default(300);
-  int& sand_layers             = kwarg("sand-layers", "砂粒子配置 厚み方向レイヤ数").set_default(4);
-  float& sand_thickness        = kwarg("sand-thickness", "砂堆積層の厚み [m]").set_default(0.05f);
-  float& tire_radius           = kwarg("tire-radius", "タイヤ半径 [m]").set_default(0.35f);
-  float& tire_width            = kwarg("tire-width", "タイヤ幅(車軸方向) [m]").set_default(0.25f);
-  float& tire_speed            = kwarg("tire-speed", "タイヤ移動速度 [m/s]").set_default(1.5f);
-  float& tire_embed            = kwarg("tire-embed", "タイヤが砂層に沈み込む深さ [m]").set_default(0.12f);
-  float& slip_ratio            = kwarg("slip-ratio", "すべりなし転がり角速度に対する倍率(1=スリップなし、>1でスピンして土を巻き上げる)").set_default(10.0f);
-  int& launch_frame            = kwarg("launch-frame", "タイヤが自動発進するフレーム").set_default(30);
-  int& n_shots                  = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
-  std::string& screenshot_dir  = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
+  int& substeps               = kwarg("substeps", "substeps per frame").set_default(40);
+  int& sand_nx                = kwarg("sand-nx", "砂粒子配置 X方向グリッド数").set_default(300);
+  int& sand_nz                = kwarg("sand-nz", "砂粒子配置 Z方向グリッド数").set_default(300);
+  int& sand_layers            = kwarg("sand-layers", "砂粒子配置 厚み方向レイヤ数").set_default(4);
+  float& sand_thickness       = kwarg("sand-thickness", "砂堆積層の厚み [m]").set_default(0.05f);
+  float& tire_radius          = kwarg("tire-radius", "タイヤ半径 [m]").set_default(0.35f);
+  float& tire_width           = kwarg("tire-width", "タイヤ幅(車軸方向) [m]").set_default(0.25f);
+  float& tire_speed           = kwarg("tire-speed", "タイヤ移動速度 [m/s]").set_default(1.5f);
+  float& tire_embed           = kwarg("tire-embed", "タイヤが砂層に沈み込む深さ [m]").set_default(0.12f);
+  float& slip_ratio           = kwarg("slip-ratio", "すべりなし転がり角速度に対する倍率(1=スリップなし、>1でスピンして土を巻き上げる)").set_default(10.0f);
+  int& launch_frame           = kwarg("launch-frame", "タイヤが自動発進するフレーム").set_default(30);
+  int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
+  std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
 };
 
 // ── App ───────────────────────────────────────────────────────────────────
@@ -92,14 +53,12 @@ public:
     launchFrame_        = args.launch_frame;
     sandThickness_      = args.sand_thickness;
 
-    MPMConfig cfg;
-    cfg.nx = cfg.ny = cfg.nz = 0;
-    cfg.domainSize           = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
-    cfg.cellSize              = args.cell_size;
-    cfg.maxParticles          = uint32_t(args.sand_nx) * uint32_t(args.sand_nz) * uint32_t(args.sand_layers);
+    engine_.domainSize   = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
+    engine_.cellSize     = args.cell_size;
+    engine_.maxParticles = uint32_t(args.sand_nx) * uint32_t(args.sand_nz) * uint32_t(args.sand_layers);
 
     base_.initWindow("MPM Tire Sand — 転がるタイヤと砂の巻き上げ");
-    initVulkan(cfg, args.substeps, args.sand_nx, args.sand_nz, args.sand_layers, args.tire_width);
+    initVulkan(args.substeps, args.sand_nx, args.sand_nz, args.sand_layers, args.tire_width);
     mainLoop(args.n_shots);
     cleanup();
   }
@@ -109,35 +68,34 @@ private:
   MPMEngine engine_;
   GraphicsPipeline graphicsPipe_;
   std::shared_ptr<GravityForce> gravity_;
-  float dt_       = 1.0f / 60.0f;
-  float simTime_  = 0.0f;
-  int frameCount_ = 0;
+  float dt_        = 1.0f / 60.0f;
+  float simTime_   = 0.0f;
+  int frameCount_  = 0;
   int launchFrame_ = 30;
 
-  float tirePosX_     = 0.0f;
-  float tireSpeed_    = 1.5f;
-  float tireRadius_   = 0.35f;
-  float tireEmbed_    = 0.12f;
-  float slipRatio_    = 10.0f;
-  float tireCenterY_  = 0.0f;
+  float tirePosX_      = 0.0f;
+  float tireSpeed_     = 1.5f;
+  float tireRadius_    = 0.35f;
+  float tireEmbed_     = 0.12f;
+  float slipRatio_     = 10.0f;
+  float tireCenterY_   = 0.0f;
   float sandThickness_ = 0.05f;
-  bool tireMoving_    = false;
+  bool tireMoving_     = false;
 
-  uint32_t tireSdfIdx_ = 0;
-  LocalMeshSDF tireSdfGrid_;
-  glm::quat baseRot_  = glm::quat(1.0f, 0.0f, 0.0f, 0.0f); // ローカルY(車軸)をワールドZへ向ける固定回転
-  glm::quat spinQuat_ = glm::quat(1.0f, 0.0f, 0.0f, 0.0f); // 転がりによる蓄積スピン(ワールドZ軸まわり)
+  float tireHalfHeight_ = 0.0f;
+  glm::quat baseRot_    = glm::quat(1.0f, 0.0f, 0.0f, 0.0f); // ローカルY(車軸)をワールドZへ向ける固定回転
+  glm::quat spinQuat_   = glm::quat(1.0f, 0.0f, 0.0f, 0.0f); // 転がりによる蓄積スピン(ワールドZ軸まわり)
 
   // 砂粒子配置: ドメイン全体(余白5%)をsandThickness厚みで敷き詰める
-  void placeSand(const MPMConfig& cfg, int nx_p, int nz_p, int nlay) {
-    const float x0 = cfg.domainSize.x * 0.05f, x1 = cfg.domainSize.x * 0.95f;
-    const float z0 = cfg.domainSize.z * 0.05f, z1 = cfg.domainSize.z * 0.95f;
+  void placeSand(int nx_p, int nz_p, int nlay) {
+    const float x0 = engine_.domainSize.x * 0.05f, x1 = engine_.domainSize.x * 0.95f;
+    const float z0 = engine_.domainSize.z * 0.05f, z1 = engine_.domainSize.z * 0.95f;
     const float dx = (x1 - x0) / float(nx_p);
     const float dz = (z1 - z0) / float(nz_p);
     const float dy = sandThickness_ / float(nlay);
     const float Vp = dx * dz * dy;
 
-    const int maxN = int(cfg.maxParticleCount());
+    const int maxN = int(engine_.maxParticles);
     std::vector<glm::vec4> pos, vel;
     pos.reserve(std::min(nx_p * nz_p * nlay, maxN));
     vel.reserve(pos.capacity());
@@ -157,7 +115,7 @@ private:
 
   // 床(平面) + ドメイン4壁 + 転がるタイヤ(MESH_SDF)をまとめて登録
   void rebuildColliders() {
-    const glm::vec3 ws = engine_.config().domainSize;
+    const glm::vec3 ws = engine_.domainSize;
     ColliderSet cols;
     cols.addPlane({ws.x * 0.5f, 0.0f, ws.z * 0.5f}, {0, 1, 0}, 0.0f, 0.5f);
     cols.addPlane({0.0f, ws.y * 0.5f, ws.z * 0.5f}, {1, 0, 0}, 0.0f, 0.1f);
@@ -165,40 +123,38 @@ private:
     cols.addPlane({ws.x * 0.5f, ws.y * 0.5f, 0.0f}, {0, 0, 1}, 0.0f, 0.1f);
     cols.addPlane({ws.x * 0.5f, ws.y * 0.5f, ws.z}, {0, 0, -1}, 0.0f, 0.1f);
 
-    glm::vec3 vel    = tireMoving_ ? glm::vec3(-tireSpeed_, 0.0f, 0.0f) : glm::vec3(0.0f);
+    glm::vec3 vel = tireMoving_ ? glm::vec3(-tireSpeed_, 0.0f, 0.0f) : glm::vec3(0.0f);
     glm::vec3 pos(tirePosX_, tireCenterY_, ws.z * 0.5f);
     // すべりなし転がり角速度(接地点速度0)に slipRatio_ を掛けてスピンさせ、スリップで土を巻き上げる
     glm::vec3 angVel = tireMoving_ ? glm::vec3(0.0f, 0.0f, slipRatio_ * tireSpeed_ / tireRadius_) : glm::vec3(0.0f);
-    cols.addMeshSDF(tireSdfIdx_, tireSdfGrid_, pos, meshRot(), vel, angVel, 0.1f, 0.6f);
+    cols.addCylinder(pos, tireRadius_, tireHalfHeight_, 0.1f, 0.6f, vel, meshRot(), angVel);
     engine_.setColliders(cols);
   }
 
   glm::quat meshRot() const { return spinQuat_ * baseRot_; }
 
-  void initVulkan(const MPMConfig& cfg, int substeps, int sandNx, int sandNz, int sandLayers, float tireWidth) {
+  void initVulkan(int substeps, int sandNx, int sandNz, int sandLayers, float tireWidth) {
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
-    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
+    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR);
     engine_.numSubsteps = substeps;
-    gravity_             = GravityForce::FromDirection({0.0f, -1.0f, 0.0f}, 9.8f); // Y-up
+    gravity_            = GravityForce::FromDirection({0.0f, -1.0f, 0.0f}, 9.8f); // Y-up
     engine_.addForce(gravity_);
     engine_.flip_ratio = 0.0f; // PIC (DP材料での発散を避ける、mpm_avalancheと同じ知見)
 
     engine_.setMaterials({presetSand(5e4f, 0.3f, 1600.0f)});
 
-    baseRot_      = glm::angleAxis(glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f)); // ローカルY(高さ)→ワールドZ(車軸)
-    tireSdfGrid_  = bakeLocalMeshSDF(makeCylinderTris(tireRadius_, tireWidth * 0.5f), 40);
-    tireSdfIdx_   = engine_.uploadColliderMeshSDF(tireSdfGrid_);
-    tireCenterY_  = tireRadius_ + sandThickness_ - tireEmbed_;
-    tirePosX_     = cfg.domainSize.x * 0.85f;
+    baseRot_        = glm::angleAxis(glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f)); // ローカルY(高さ)→ワールドZ(車軸)
+    tireHalfHeight_ = tireWidth * 0.5f;
+    tireCenterY_    = tireRadius_ + sandThickness_ - tireEmbed_;
+    tirePosX_       = engine_.domainSize.x * 0.85f;
     rebuildColliders();
 
-    placeSand(cfg, sandNx, sandNz, sandLayers);
+    placeSand(sandNx, sandNz, sandLayers);
 
     graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/particle.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");
     base_.createFrameData();
-    base_.initImGui();
   }
 
   void recordComputeCmd(VkCommandBuffer cmd) {
@@ -255,10 +211,9 @@ private:
     renderPc.velIdx        = engine_.velIdx;
     renderPc.particleCount = engine_.liveParticleCount();
     renderPc.worldMin      = glm::vec3(0.0f);
-    renderPc.worldMax      = engine_.config().domainSize;
+    renderPc.worldMax      = engine_.domainSize;
     graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.liveParticleCount());
 
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
   }
@@ -280,34 +235,17 @@ private:
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    ImGui::SetNextWindowPos({10, 10}, ImGuiCond_Once);
-    ImGui::SetNextWindowSize({330, 0}, ImGuiCond_Once);
-    ImGui::Begin("MPM Tire Sand");
-    ImGui::Text("FPS: %.1f | N=%u | t=%.2f s", ImGui::GetIO().Framerate, engine_.liveParticleCount(), simTime_);
-    ImGui::Text("Sand: DRUCKER_PRAGER  E=50kPa  rho=1600 kg/m3");
-    ImGui::Text("Tire X: %.2f  %s", tirePosX_, tireMoving_ ? "[転動中]" : "[停止]");
-    ImGui::Separator();
-    ImGui::SliderFloat("タイヤ速度 [m/s]", &tireSpeed_, 0.1f, 5.0f);
-    ImGui::SliderFloat("重力", &gravity_->strength, 0.0f, 20.0f);
-    ImGui::SliderInt("サブステップ", &engine_.numSubsteps, 1, 60);
-    ImGui::End();
-    ImGui::Render();
-
     // 固定フレームで自動発進、端に到達したら停止 → 次に自動再発進(ループ)
     if(!tireMoving_ && launchFrame_ >= 0 && frameCount_ >= launchFrame_) {
-      tirePosX_   = engine_.config().domainSize.x * 0.85f;
+      tirePosX_   = engine_.domainSize.x * 0.85f;
       spinQuat_   = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
       tireMoving_ = true;
     }
     if(tireMoving_) {
-      tirePosX_          -= tireSpeed_ * dt_;
-      float angVelZ       = slipRatio_ * tireSpeed_ / tireRadius_;
-      spinQuat_            = glm::angleAxis(angVelZ * dt_, glm::vec3(0.0f, 0.0f, 1.0f)) * spinQuat_;
-      if(tirePosX_ - tireRadius_ < engine_.config().domainSize.x * 0.1f) tireMoving_ = false;
+      tirePosX_ -= tireSpeed_ * dt_;
+      float angVelZ = slipRatio_ * tireSpeed_ / tireRadius_;
+      spinQuat_     = glm::angleAxis(angVelZ * dt_, glm::vec3(0.0f, 0.0f, 1.0f)) * spinQuat_;
+      if(tirePosX_ - tireRadius_ < engine_.domainSize.x * 0.1f) tireMoving_ = false;
       ZoneScopedN("RebuildColliders");
       rebuildColliders();
     }

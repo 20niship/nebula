@@ -94,27 +94,18 @@ protected:
   const char* forceShaderName() const override { return "predict_sdf.comp"; }
 
 public:
-  // ImGui から調整可能なパラメータ
-  float restitution = 0.1f;  // ※PBF流体では未使用（衝突は位置投影のみ）
-  float friction    = 0.05f; // ※PBF流体では未使用
-  float rho0        = 35.0f;
-  float viscosityC  = 0.01f;
-  int pbfIterations = 2;
-  int numSubsteps   = 2;
-
-  float cfmEpsilon       = 3000.0f; // CFM 緩和 ε (式11)。元のハードコード値
-  float scorrK           = 0.001f;  // 人工圧力 k (式13; 0=無効)
-  float surfaceTension   = 0.0f;    // 表面張力係数 σ (Akinci 2013 cohesion; 0=無効)
-  float vorticityEpsilon = 0.1f;    // 渦度閉じ込め ε (式16)
-  float linearDamping    = 0.02f;   // 速度減衰 [1/s]。元のハードコード値
-  bool vorticityEnabled  = false;   // 渦度閉じ込めの ON/OFF
-
-  // ── 煙・粉体パラメータ ──────────────────────────────────────────────────────
-  float smokeRiseAccel = 8.0f; // 煙の浮力加速度 [m/s²] (typeFlag==4)
-  float smokeDamping   = 0.5f; // 煙の速度減衰係数 [1/s] (typeFlag==4)
-  float powderFriction = 0.0f; // 粉体摩擦係数 [1/s] (typeFlag==5; 将来拡張用)
+  // pc_ と同名同義の項目(restitution/cfmEpsilon等)は個別メンバを持たずpc_を直接書き換える。
+  float rho0        = 35.0f; // pc_.stretchCompliance に転用格納(布用フィールド名と紛らわしいため独立管理)
+  float viscosityC  = 0.01f; // pc_.bendCompliance に転用格納(同上)
+  int pbfIterations = 2;     // CPU側ループ回数(SimPCに対応フィールドなし)
+  int numSubsteps   = 2;     // CPU側ループ回数(SimPCに対応フィールドなし)
+  bool vorticityEnabled = false; // 渦度閉じ込めdispatchの実行有無(CPU側分岐)
+  float powderFriction  = 0.0f;  // 粉体摩擦係数 [1/s] (typeFlag==5; 将来拡張用。現状未使用)
 
   uint32_t nBoundary = 0;
+
+  // GPU側状態の唯一の格納先。バッファindex類はinit()/setAbsorbers()で一度だけ設定される。
+  SimPC pc_{};
 
   // ── 吸収形状ディスクリプタ ───────────────────────────────────────────────────
   // type: 0=Sphere, 1=CylinderZ, 2=Box, 3=CapsuleZ
@@ -240,7 +231,4 @@ private:
   void reclaimDeadSlots_();          // slotDeath_<=simTime_ の生存スロットを空きへ回収する
 
   void computeBarrier(VkCommandBuffer cmd);
-
-  // バッファindex類はinit()/setAbsorbers()で一度だけ設定され、step()内で毎substep書き換わる値のみ更新される
-  SimPC pc_{};
 };

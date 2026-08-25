@@ -4,12 +4,8 @@
 #include "core/Force.h"
 #include "engine/FluidEngine.h"
 #include "graphics/GraphicsPipeline.h"
-#include "utils.hpp"
 
 #include <argparse/argparse.hpp>
-#include <imgui.h>
-#include <imgui_impl_glfw.h>
-#include <imgui_impl_vulkan.h>
 
 #include <algorithm>
 #include <array>
@@ -105,16 +101,16 @@ private:
 
     gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f); // Z-up
     engine_.addForce(gravity_);
-    engine_.viscosityC    = 0.01f;
-    engine_.pbfIterations = 2;
-    engine_.numSubsteps   = 2;
-    engine_.rho0            = large_ ? cfg.computeRestDensity() : 30.0f; // h/dの絶対スケールが--largeで大きく変わるためハードコード値でなくcomputeRestDensity()を使う(通常モードは実測チューニング済みの30.0fを踏襲)
-    engine_.linearDamping  = 0.02f;
-    engine_.surfaceTension = surfaceTension;
+    engine_.viscosityC        = 0.01f;
+    engine_.pbfIterations     = 2;
+    engine_.numSubsteps       = 2;
+    engine_.rho0              = large_ ? cfg.computeRestDensity() : 30.0f; // h/dの絶対スケールが--largeで大きく変わるためハードコード値でなくcomputeRestDensity()を使う(通常モードは実測チューニング済みの30.0fを踏襲)
+    engine_.pc_.linearDamping    = 0.02f;
+    engine_.pc_.surfaceTension   = surfaceTension;
     if(large_) {
       // cfmEpsilon/scorrKの既定値はh≈1.25m規模のチューニング値で、--large(h=0.02m)ではCFM緩和項がgrad項優位になり密度拘束が過剰に硬くなり暴走するため大幅に緩める(TC13で実測確認)
-      engine_.cfmEpsilon = 1e6f;
-      engine_.scorrK     = 0.0f;
+      engine_.pc_.cfmEpsilon = 1e6f;
+      engine_.pc_.scorrK     = 0.0f;
     }
 
     if(large_) {
@@ -126,7 +122,6 @@ private:
     }
 
     base_.createFrameData();
-    base_.initImGui();
   }
 
   void setupScenario(const FluidConfig& cfg) {
@@ -248,7 +243,6 @@ private:
 
     graphicsPipe_.draw(cmd, engine_.descriptorSet, pc, engine_.nFluid());
 
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
   }
@@ -266,21 +260,6 @@ private:
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    ImGui::SetNextWindowPos({10, 10}, ImGuiCond_Once);
-    ImGui::SetNextWindowSize({320, 0}, ImGuiCond_Once);
-    ImGui::Begin("Milk Crown");
-    ImGui::Text("FPS: %.1f  |  流体: %u / %u  経過: %.2f s", ImGui::GetIO().Framerate, engine_.nFluid(), engine_.config().fluidCount(), simTime_);
-    ImGui::Separator();
-    sim_ui::fluid_reset_button(engine_, simTime_);
-    ImGui::Separator();
-    sim_ui::fluid_params(engine_, *gravity_);
-    ImGui::End();
-
-    ImGui::Render();
     simTime_ += dt_;
 
     f.timelineValue++;

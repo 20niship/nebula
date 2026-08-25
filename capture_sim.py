@@ -6,9 +6,7 @@
 全シム完了後、対応フレームを 4×5 グリッドに合成して MP4 動画を書き出す。
 
 テストケース一覧:
-  TC1:  流体 ダムブレイク                                      fluid_pbf
-  TC2:  流体 移動ソースフロー                                   fluid_pbf
-  TC3:  高粘性ゼリー流体                                       fluid_pbf
+  TC1:  流体 ダムブレイク + 移動ソース                                fluid_pbf
   TC4:  布シミュレーション（2隅固定）                          cloth_3d
   TC5:  布2枚 + 布-布衝突                                      cloth_scene --scene 5
   TC6:  煙パーティクル                                         smoke
@@ -22,6 +20,7 @@
   TC-F: MPM マルチマテリアル — 弾性体 + Drucker-Prager 砂      mpm_multimaterial
   TC-G: MPM 雪衝突 — 移動箱SDF (粒子50倍・高速・半サイズ箱・固定フレーム自動衝突) mpm_snow_impact
   TC-H: MPM 地層崩壊 — 硬岩/弱粘土/緩土 3層                  mpm_geolayer
+  TC-M: MPM タイヤ転がり — スリップ砂巻き上げ                 mpm_tire_sand
   TC-K: Pyro 牛への爆風 — 流速ヒートマップ表示                 pyro_cow_blast
   TC-L: Pyro 爆発 (キノコ雲) — smoke/fire ボリューム表示       pyro_explosion
 使い方:
@@ -54,7 +53,7 @@ VIDEO_FPS = 60     # 出力動画 FPS
 THUMB_W   = 480    # 4列 × 480 = 1920px (ffmpeg scale と一致)
 THUMB_H   = 270    # 16:9
 GRID_COLS = 4
-GRID_ROWS = 5      # 4×5=20 セル; TC1–TC11 + TC-A,B,E,F,G,H,K,L (TC-C/D/I/J除外、19使用 + 空き1)
+GRID_ROWS = 5      # 4×5=20 セル; TC1,TC4–TC11 + TC-A,B,E,F,G,H,M,K,L (TC-C/D/I/J除外、18使用・空き2)
 
 # テストケース定義
 # exe=None のエントリは空きセル（グリッドのパディング用）
@@ -62,25 +61,10 @@ SIMS = [
     # ── PBF 流体 / 布 / 煙 / ソフトボディ ───────────────────────────────────
     {
         "id": "tc1", "exe": "fluid_pbf",
-        "title": "TC1: Dam Break",
-        "env": {}, "extra_args": ["--scenario", "dam-break"],
-        "params": "N~100K | dam-break (left-top half)",
-    },
-    {
-        "id": "tc2", "exe": "fluid_pbf",
-        "title": "TC2: Moving Source Flow",
+        "title": "TC1: Dam Break + Moving Source",
         "env": {},
-        "extra_args": [
-            "--scenario", "source-flow",
-            "--domain-size-x", "40",
-        ],
-        "params": "N~110K | moving AABB source | world=40",
-    },
-    {
-        "id": "tc3", "exe": "fluid_pbf",
-        "title": "TC3: Jelly (High Viscosity)",
-        "env": {"SIM_VISCOSITY_C": "0.5"}, "extra_args": [],
-        "params": "N~100K | rho0=2097 | visc=0.50",
+        "extra_args": [],
+        "params": "N~40K | fixed dam-block + moving AABB source | world=40",
     },
     {
         "id": "tc4", "exe": "cloth_3d",
@@ -136,20 +120,18 @@ SIMS = [
         "title": "TC-A: MPM Elastic — PIC",
         "env": {},
         "extra_args": [
-            "--nx", "20", "--ny", "20", "--nz", "20",
-            "--grid-res", "64", "--substeps", "25", "--flip-ratio", "0.0",
+            "--particles", "8000", "--substeps", "25", "--flip-ratio", "0.0",
         ],
-        "params": "nx=ny=nz=20 | flip=0.00 | 散逸大",
+        "params": "N=8000 | flip=0.00 | 散逸大",
     },
     {
         "id": "tc_apic", "exe": "mpm_elastic",
         "title": "TC-B: MPM Elastic — APIC",
         "env": {},
         "extra_args": [
-            "--nx", "20", "--ny", "20", "--nz", "20",
-            "--grid-res", "64", "--substeps", "25", "--flip-ratio", "-1.0",
+            "--particles", "8000", "--substeps", "25", "--flip-ratio", "-1.0",
         ],
-        "params": "nx=ny=nz=20 | flip=-1.00 | 角運動量保存",
+        "params": "N=8000 | flip=-1.00 | 角運動量保存",
     },
     {
         "id": "tc_avalanche", "exe": "mpm_avalanche",
@@ -157,7 +139,7 @@ SIMS = [
         "env": {},
         "extra_args": [
             "--max-n", "80000",
-            "--grid-res", "128", "--substeps", "30", "--flip-ratio", "-1.0",
+            "--substeps", "30", "--flip-ratio", "-1.0",
         ],
         "params": "N=80K | Drucker-Prager snow | 地形 SDF コライダー",
     },
@@ -167,8 +149,7 @@ SIMS = [
         "title": "TC-F: MPM Multi-Material",
         "env": {},
         "extra_args": [
-            "--n", "20",
-            "--grid-res", "64", "--substeps", "25",
+            "--particles", "8000", "--substeps", "25",
         ],
         "params": "N=8000 | 下半分=Hencky弾性体 | 上半分=Drucker-Prager砂",
     },
@@ -177,8 +158,8 @@ SIMS = [
         "title": "TC-G: MPM Snow Impact",
         "env": {},
         "extra_args": [
-            "--pn", "44",
-            "--grid-res", "64", "--substeps", "25",
+            "--particles", "85184",
+            "--substeps", "25",
             "--box-speed", "6.0",
             "--box-scale", "0.5",
         ],
@@ -189,9 +170,19 @@ SIMS = [
         "title": "TC-H: MPM Geo-Layer Collapse",
         "env": {},
         "extra_args": [
-            "--grid-res", "64", "--substeps", "25",
+            "--particles", "1920", "--substeps", "25",
         ],
         "params": "N=1920 | 下=硬岩ELASTIC | 中=弱粘土VON_MISES | 上=緩土D-P",
+    },
+    {
+        "id": "tc_tire", "exe": "mpm_tire_sand",
+        "title": "TC-M: MPM Tire Rolling Sand",
+        "env": {},
+        "extra_args": [
+            "--sand-nx", "150", "--sand-nz", "150", "--sand-layers", "4",
+            "--substeps", "25", "--launch-frame", "20",
+        ],
+        "params": "N~90K | 転がりタイヤ(解析円柱コライダー) | slip-ratio=10で土巻き上げ",
     },
     # ── Pyro (グリッドベース煙・火炎) ────────────────────────────────────────
     {

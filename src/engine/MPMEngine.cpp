@@ -106,8 +106,8 @@ void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool d
   }
 
   // ── 解析コライダー SSBO: 最大64個のプリミティブを事前確保 (colliderCount == 0 で無効) ──
-  pc_.colliderIdx   = attrBuf_.addAttribute("colliders", sizeof(ColliderPrimitive), 64);
-  pc_.colliderCount = 0;
+  pc_.colliderIdx       = attrBuf_.addAttribute("colliders", sizeof(ColliderPrimitive), 64);
+  pc_.colliderCount     = 0;
   pc_.colliderForceIdx  = attrBuf_.addAttribute("colliderForce", sizeof(glm::vec4), 64);
   pc_.colliderTorqueIdx = attrBuf_.addAttribute("colliderTorque", sizeof(glm::vec4), 64);
 
@@ -371,6 +371,10 @@ MPMSimPC MPMEngine::buildPC(float subDt) const {
   pc.restitution   = restitution;
   pc.wall_friction = wall_friction;
   pc.plasticModel  = plasticModel;
+  if(!enableColliderForceFeedback) {
+    pc.colliderForceIdx  = 0;
+    pc.colliderTorqueIdx = 0;
+  }
   return pc;
 }
 
@@ -394,8 +398,8 @@ void MPMEngine::step(VkCommandBuffer cmd, float dt) {
   const uint32_t NC = pc_.hashCells;
   float subDt       = dt / float(std::max(1, numSubsteps));
 
-  // コライダー反力/反トルクは全サブステップ分を積算してから1回だけ読み戻すため、フレーム先頭で一度だけゼロクリアする
-  {
+  // コライダー反力/反トルクは全サブステップ分を積算してから1回だけ読み戻すため、フレーム先頭で一度だけゼロクリアする(enableColliderForceFeedback=false時はdispatch自体を発行せずGPU負荷を増やさない)
+  if(enableColliderForceFeedback) {
     ZoneScopedN("ZeroColliderForce");
     VkDeviceSize forceBytes = VkDeviceSize(64) * sizeof(glm::vec4);
     vkCmdFillBuffer(cmd, attrBuf_.getBuffer("colliderForce"), 0, forceBytes, 0u);

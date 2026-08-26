@@ -188,9 +188,6 @@ private:
 
     simTime_ += dt_;
 
-    // スクリーンショット
-    if(nShots_ > 0) base_.saveScreenshot(imageIdx, nShots_);
-
     f.timelineValue++;
     vkResetCommandBuffer(f.computeCmd, 0);
     recordComputeCmd(f.computeCmd);
@@ -240,7 +237,11 @@ private:
     present.swapchainCount     = 1;
     present.pSwapchains        = &base_.ctx.swapchain;
     present.pImageIndices      = &imageIdx;
-    result                     = vkQueuePresentKHR(base_.ctx.graphicsQueue, &present);
+
+    // グラフィクスsubmit後(描画済み)に読む。drawFrame先頭で呼ぶと前サイクルの未描画スワップチェーン画像を読み真っ黒になる
+    if(nShots_ > 0) base_.saveScreenshot(imageIdx, nShots_);
+
+    result = vkQueuePresentKHR(base_.ctx.graphicsQueue, &present);
     if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || base_.framebufferResized) {
       base_.framebufferResized = false;
       base_.ctx.recreateSwapchain();

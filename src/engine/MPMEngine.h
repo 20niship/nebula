@@ -40,6 +40,12 @@ public:
   uint32_t liveParticleCount() const { return nParticles_; }
   VkBuffer getPositionBuffer() const;
   VkBuffer getVelocityBuffer() const;
+  // コライダーが今フレーム受け取った力積/トルク積(fixed-point, vec4×64, 未使用スロットは0)。CPU側でdt割りして反力[N]/[N・m]に変換する
+  VkBuffer getColliderForceBuffer() const;
+  VkBuffer getColliderTorqueBuffer() const;
+  uint32_t colliderForceCount() const { return pc_.colliderCount; }
+  // trueならmpm_grid_update.compのatomicAdd集計とstep()冒頭のゼロクリアdispatchを毎フレーム発行する。falseなら両方とも一切発行されずGPU負荷は増えない(既定false)。
+  bool enableColliderForceFeedback = false;
 
   // 外部から調整可能
   float restitution     = 0.3f;

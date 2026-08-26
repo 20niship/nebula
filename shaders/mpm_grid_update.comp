@@ -1,9 +1,9 @@
 #version 450
 #extension GL_EXT_nonuniform_qualifier : enable
-#include "mpm_common.glsl"
 #include "collider_common.glsl"
 #include "force_common.glsl"
 #include "force_noise.glsl"
+#include "mpm_common.glsl"
 
 // MPM グリッド更新: 運動量→速度変換 + 重力 + 壁 BC + 解析コライダー BC
 //
@@ -15,113 +15,112 @@
 layout(local_size_x = 256) in;
 
 void main() {
-    uint gid = gl_GlobalInvocationID.x;
-    uint totalCells = pc.hashCells;
-    if (gid >= totalCells) return;
+  uint gid        = gl_GlobalInvocationID.x;
+  uint totalCells = pc.hashCells;
+  if(gid >= totalCells) return;
 
-    // P2G(scatter)はgridMass/gridMomを固定小数点整数atomicAddで蓄積している。ここで最初に通常floatへデコードする
-    float mass = decodeFixed(readUint(pc.gridMassIdx, gid));
-    if (mass < 1e-10) return;
+  // P2G(scatter)はgridMass/gridMomを固定小数点整数atomicAddで蓄積している。ここで最初に通常floatへデコードする
+  float mass = decodeFixed(readUint(pc.gridMassIdx, gid));
+  if(mass < 1e-10) return;
 
-    vec3 mom = vec3(decodeFixed(readUint(pc.gridMomIdx, gid * 4u)),
-                     decodeFixed(readUint(pc.gridMomIdx, gid * 4u + 1u)),
-                     decodeFixed(readUint(pc.gridMomIdx, gid * 4u + 2u)));
-    vec3 v   = mom / mass;
+  vec3 mom = vec3(decodeFixed(readUint(pc.gridMomIdx, gid * 4u)), decodeFixed(readUint(pc.gridMomIdx, gid * 4u + 1u)), decodeFixed(readUint(pc.gridMomIdx, gid * 4u + 2u)));
+  vec3 v   = mom / mass;
 
-    // グリッド速度キャップ: 過圧縮粒子の弾性応力蓄積による速度爆発を防ぐ
-    // 自由落下 10m の終端速度 ~14 m/s を上限として非物理的なピークを除去
-    {
-        float vspeed = length(v);
-        float vmax_grid = 15.0;  // m/s
-        if (vspeed > vmax_grid) v *= vmax_grid / vspeed;
-    }
+  // グリッド速度キャップ: 過圧縮粒子の弾性応力蓄積による速度爆発を防ぐ
+  // 自由落下 10m の終端速度 ~14 m/s を上限として非物理的なピークを除去
+  {
+    float vspeed    = length(v);
+    float vmax_grid = 15.0; // m/s
+    if(vspeed > vmax_grid) v *= vmax_grid / vspeed;
+  }
 
-    // FLIP: 物理適用前の速度を後半バッファへ退避 (G2P が v_i_old として参照)
-    writeVec4(pc.gridMomIdx, gid + totalCells, vec4(v, 0.0));
+  // FLIP: 物理適用前の速度を後半バッファへ退避 (G2P が v_i_old として参照)
+  writeVec4(pc.gridMomIdx, gid + totalCells, vec4(v, 0.0));
 
-    // Force(空間ノイズ用の位置)より前倒しで計算 (issue #30)
-    ivec3 ijk = mortonDecodeI(gid);
-    vec3 forcePos = (vec3(ijk) + 0.5) * pc.cellSize;
-    uint forceTypeFlag = 0u; // MPMグリッドセルにtypeFlagはないため常時全Force適用
+  // Force(空間ノイズ用の位置)より前倒しで計算 (issue #30)
+  ivec3 ijk          = mortonDecodeI(gid);
+  vec3 forcePos      = (vec3(ijk) + 0.5) * pc.cellSize;
+  uint forceTypeFlag = 0u; // MPMグリッドセルにtypeFlagはないため常時全Force適用
 
-    // FORCE_AUTOGEN_BEGIN
-    // Engine::addForce/removeForce/setForces() 実行時に ForceShaderCompiler が
-    // このブロックを登録済み Force 群の速度適用コード(各ForceのglslApplyVelocity()
-    // から動的生成)で置換し、shaderc で全体を再コンパイルする (issue #30)。この
-    // プレースホルダのままでも単体で valid な GLSL であること (既定=何もしない)。
-    // 注意: mpm_grid_update.comp には predP/p の概念がないため、
-    // FORCE_AUTOGEN_POST マーカー(位置制約)はここには存在しない。
-    // FORCE_AUTOGEN_END
+  // FORCE_AUTOGEN_BEGIN
+  // Engine::addForce/removeForce/setForces() 実行時に ForceShaderCompiler が
+  // このブロックを登録済み Force 群の速度適用コード(各ForceのglslApplyVelocity()
+  // から動的生成)で置換し、shaderc で全体を再コンパイルする (issue #30)。この
+  // プレースホルダのままでも単体で valid な GLSL であること (既定=何もしない)。
+  // 注意: mpm_grid_update.comp には predP/p の概念がないため、
+  // FORCE_AUTOGEN_POST マーカー(位置制約)はここには存在しない。
+  // FORCE_AUTOGEN_END
 
-    // ② 軸平行壁 BC (B-spline support = 1.5h → 境界 2 ノード以内を不透過)
-    ivec3 N = ivec3(pc.gridRes) - ivec3(1);
-    if (ijk.x <= 1     && v.x < 0.0) v.x = 0.0;
-    if (ijk.x >= N.x-1 && v.x > 0.0) v.x = 0.0;
-    if (ijk.y <= 1     && v.y < 0.0) v.y = 0.0;
-    if (ijk.y >= N.y-1 && v.y > 0.0) v.y = 0.0;
-    if (ijk.z <= 1     && v.z < 0.0) v.z = 0.0;
-    if (ijk.z >= N.z-1 && v.z > 0.0) v.z = 0.0;
+  // ② 軸平行壁 BC (B-spline support = 1.5h → 境界 2 ノード以内を不透過)
+  ivec3 N = ivec3(pc.gridRes) - ivec3(1);
+  if(ijk.x <= 1 && v.x < 0.0) v.x = 0.0;
+  if(ijk.x >= N.x - 1 && v.x > 0.0) v.x = 0.0;
+  if(ijk.y <= 1 && v.y < 0.0) v.y = 0.0;
+  if(ijk.y >= N.y - 1 && v.y > 0.0) v.y = 0.0;
+  if(ijk.z <= 1 && v.z < 0.0) v.z = 0.0;
+  if(ijk.z >= N.z - 1 && v.z > 0.0) v.z = 0.0;
 
-    // ③ 解析コライダー BC
-    // MoltenVK: buffers[] は main() でのみアクセス可（関数内不可）
-    if (pc.colliderCount > 0u) {
-        vec3 xi = forcePos; // Forceブロックで計算済みの位置を再利用
+  // ③ 解析コライダー BC
+  // MoltenVK: buffers[] は main() でのみアクセス可（関数内不可）
+  if(pc.colliderCount > 0u) {
+    vec3 xi = forcePos; // Forceブロックで計算済みの位置を再利用
 
-        for (uint ci = 0u; ci < pc.colliderCount; ci++) {
-            uint  cbase = ci * 24u;
-            uint  ctype = buffers[pc.colliderIdx].data[cbase];
-            vec3  cpos  = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 1u]),
-                               uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 2u]),
-                               uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 3u]));
-            vec3  cnrm  = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 4u]),
-                               uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 5u]),
-                               uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 6u]));
-            float cr    = uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 7u]);
-            vec3  cvel  = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 8u]),
-                               uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 9u]),
-                               uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 10u]));
-            float crest = uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 11u]);
-            float cfric = uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 12u]);
-            // 姿勢クォータニオン・角速度はBOX/CYLINDER/MESH_SDFが使用(他typeは(0,0,0,1)/(0,0,0)で無回転のまま動く)
-            vec4  cq    = vec4(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 16u]),
-                                uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 17u]),
-                                uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 18u]),
-                                uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 19u]));
-            vec3  cw    = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 20u]),
-                                uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 21u]),
-                                uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 22u]));
+    for(uint ci = 0u; ci < pc.colliderCount; ci++) {
+      uint cbase  = ci * 24u;
+      uint ctype  = buffers[pc.colliderIdx].data[cbase];
+      vec3 cpos   = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 1u]), uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 2u]), uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 3u]));
+      vec3 cnrm   = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 4u]), uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 5u]), uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 6u]));
+      float cr    = uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 7u]);
+      vec3 cvel   = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 8u]), uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 9u]), uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 10u]));
+      float crest = uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 11u]);
+      float cfric = uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 12u]);
+      // 姿勢クォータニオン・角速度はBOX/CYLINDER/MESH_SDFが使用(他typeは(0,0,0,1)/(0,0,0)で無回転のまま動く)
+      vec4 cq = vec4(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 16u]), uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 17u]), uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 18u]), uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 19u]));
+      vec3 cw = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 20u]), uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 21u]), uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 22u]));
 
-            vec3  col_n;
-            float sdf;
-            float band  = 0.0; // MESH_SDF専用: 今stepで進む距離分だけ早めに判定しトンネリングを防ぐ(静止時は0=真の表面でのみ判定、box等の解析形状は厳密sdfなので不要)
-            vec3  vColl = cvel + cross(cw, xi - cpos);
-            if (ctype == COLL_SPHERE) {
-                sdf = sphereSDF(xi, cpos, cr, col_n);
-            } else if (ctype == COLL_BOX) {
-                sdf = boxSDF(xi, cpos, cnrm, cq, col_n);
-            } else if (ctype == COLL_CYLINDER) {
-                sdf = cylinderSDF(xi, cpos, cr, cnrm.y, cq, col_n);
-            } else if (ctype == COLL_CAPSULE) {
-                sdf = capsuleSDF(xi, cpos, cnrm, cr, col_n);
-            } else if (ctype == COLL_MESH_SDF) {
-                uint  sdfBufIdx = buffers[pc.colliderIdx].data[cbase + 13u];
-                uint  meshRes   = buffers[pc.colliderIdx].data[cbase + 14u];
-                vec3 localP = quatRotate(quatConj(cq), xi - cpos);
-                vec3 nLocal;
-                MESH_SDF_SAMPLE(sdfBufIdx, localP, cnrm, cr, meshRes, sdf, nLocal)
-                col_n = quatRotate(cq, nLocal);
-                float vApproach = -dot(v - vColl, col_n); // 法線方向の接近速度(正=接近中)
-                band = max(0.0, vApproach) * pc.dt * 1.5;
-            } else {
-                // COLL_PLANE (default)
-                sdf = planeSDF(xi, cpos, cnrm, col_n);
-            }
+      vec3 col_n;
+      float sdf;
+      float band = 0.0; // MESH_SDF専用: 今stepで進む距離分だけ早めに判定しトンネリングを防ぐ(静止時は0=真の表面でのみ判定、box等の解析形状は厳密sdfなので不要)
+      vec3 vColl = cvel + cross(cw, xi - cpos);
+      if(ctype == COLL_SPHERE) {
+        sdf = sphereSDF(xi, cpos, cr, col_n);
+      } else if(ctype == COLL_BOX) {
+        sdf = boxSDF(xi, cpos, cnrm, cq, col_n);
+      } else if(ctype == COLL_CYLINDER) {
+        sdf = cylinderSDF(xi, cpos, cr, cnrm.y, cq, col_n);
+      } else if(ctype == COLL_CAPSULE) {
+        sdf = capsuleSDF(xi, cpos, cnrm, cr, col_n);
+      } else if(ctype == COLL_MESH_SDF) {
+        uint sdfBufIdx = buffers[pc.colliderIdx].data[cbase + 13u];
+        uint meshRes   = buffers[pc.colliderIdx].data[cbase + 14u];
+        vec3 localP    = quatRotate(quatConj(cq), xi - cpos);
+        vec3 nLocal;
+        MESH_SDF_SAMPLE(sdfBufIdx, localP, cnrm, cr, meshRes, sdf, nLocal)
+        col_n           = quatRotate(cq, nLocal);
+        float vApproach = -dot(v - vColl, col_n); // 法線方向の接近速度(正=接近中)
+        band            = max(0.0, vApproach) * pc.dt * 1.5;
+      } else {
+        // COLL_PLANE (default)
+        sdf = planeSDF(xi, cpos, cnrm, col_n);
+      }
 
-            if (sdf <= band) {
-                applyColliderBC(v, col_n, vColl, crest, cfric);
-            }
+      if(sdf <= band) {
+        vec3 dv = applyColliderBC(v, col_n, vColl, crest, cfric);
+        // colliderForceIdx==0は反力フィードバック無効(既定)を意味しatomicAdd自体を発行しない(colliderIdxと同じ「0=無効」規約)。有効時のみ: mass*(v_after-v_before)=コライダーが物体(粒子)に及ぼした力積=接地反力そのもの(実測:
+        // 静止重量とほぼ一致する符号・大きさで検証済み)。全サブステップ分をatomicAddで積算し、CPU側でΣ/frame_dtして平均反力[N]に変換する
+        if(pc.colliderForceIdx != 0u) {
+          vec3 impulseOnCollider = -mass * dv;
+          atomicAdd(buffers[pc.colliderForceIdx].data[ci * 4u + 0u], encodeFixed(impulseOnCollider.x));
+          atomicAdd(buffers[pc.colliderForceIdx].data[ci * 4u + 1u], encodeFixed(impulseOnCollider.y));
+          atomicAdd(buffers[pc.colliderForceIdx].data[ci * 4u + 2u], encodeFixed(impulseOnCollider.z));
+          vec3 torqueOnCollider = cross(xi - cpos, impulseOnCollider);
+          atomicAdd(buffers[pc.colliderTorqueIdx].data[ci * 4u + 0u], encodeFixed(torqueOnCollider.x));
+          atomicAdd(buffers[pc.colliderTorqueIdx].data[ci * 4u + 1u], encodeFixed(torqueOnCollider.y));
+          atomicAdd(buffers[pc.colliderTorqueIdx].data[ci * 4u + 2u], encodeFixed(torqueOnCollider.z));
         }
+      }
     }
+  }
 
-    writeVec4(pc.gridMomIdx, gid, vec4(v, 0.0));
+  writeVec4(pc.gridMomIdx, gid, vec4(v, 0.0));
 }

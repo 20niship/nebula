@@ -106,8 +106,10 @@ void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool d
   }
 
   // ── 解析コライダー SSBO: 最大64個のプリミティブを事前確保 (colliderCount == 0 で無効) ──
-  pc_.colliderIdx   = attrBuf_.addAttribute("colliders", sizeof(ColliderPrimitive), 64);
-  pc_.colliderCount = 0;
+  pc_.colliderIdx       = attrBuf_.addAttribute("colliders", sizeof(ColliderPrimitive), 64);
+  pc_.colliderCount     = 0;
+  pc_.colliderForceIdx  = attrBuf_.addAttribute("colliderForce", sizeof(glm::vec4), 64);
+  pc_.colliderTorqueIdx = attrBuf_.addAttribute("colliderTorque", sizeof(glm::vec4), 64);
 
   // ── 初期パーティクルデータをアップロード (ドメイン中央付近にgridRes解像度のブロックをシード) ──
   {
@@ -179,6 +181,8 @@ void MPMEngine::cleanup() {
 
 VkBuffer MPMEngine::getPositionBuffer() const { return attrBuf_.getBuffer("P"); }
 VkBuffer MPMEngine::getVelocityBuffer() const { return attrBuf_.getBuffer("v"); }
+VkBuffer MPMEngine::getColliderForceBuffer() const { return attrBuf_.getBuffer("colliderForce"); }
+VkBuffer MPMEngine::getColliderTorqueBuffer() const { return attrBuf_.getBuffer("colliderTorque"); }
 
 // ── メッシュSDFコライダー ────────────────────────────────────────────────
 
@@ -367,6 +371,10 @@ MPMSimPC MPMEngine::buildPC(float subDt) const {
   pc.restitution   = restitution;
   pc.wall_friction = wall_friction;
   pc.plasticModel  = plasticModel;
+  if(!enableColliderForceFeedback) {
+    pc.colliderForceIdx  = 0;
+    pc.colliderTorqueIdx = 0;
+  }
   return pc;
 }
 
@@ -389,6 +397,19 @@ void MPMEngine::step(VkCommandBuffer cmd, float dt) {
   const uint32_t N  = nParticles_; // ライブパーティクル数
   const uint32_t NC = pc_.hashCells;
   float subDt       = dt / float(std::max(1, numSubsteps));
+
+  // コライダー反力/反トルクは全サブステップ分を積算してから1回だけ読み戻すため、フレーム先頭で一度だけゼロクリアする(enableColliderForceFeedback=false時はdispatch自体を発行せずGPU負荷を増やさない)
+  if(enableColliderForceFeedback) {
+    ZoneScopedN("ZeroColliderForce");
+    VkDeviceSize forceBytes = VkDeviceSize(64) * sizeof(glm::vec4);
+    vkCmdFillBuffer(cmd, attrBuf_.getBuffer("colliderForce"), 0, forceBytes, 0u);
+    vkCmdFillBuffer(cmd, attrBuf_.getBuffer("colliderTorque"), 0, forceBytes, 0u);
+    VkMemoryBarrier b{};
+    b.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &b, 0, nullptr, 0, nullptr);
+  }
 
   for(int sub = 0; sub < numSubsteps; ++sub) {
     MPMSimPC pc = buildPC(subDt);

@@ -2,9 +2,7 @@
 #include <cstdint>
 #include <glm/glm.hpp>
 
-// MPM 専用 Push Constants — 164
-// bytes。GLSL側push_constantはvec3/uvec3を16byte境界に強制配置するため、各vec3系フィールド直前のスカラー数を4の倍数に揃えてパディングなしで境界を一致させている(フィールド順・スカラー数を変える場合は要再検証)。hashCellsは旧gridRes(スカラー)を改名したもので空間ハッシュ/MPMグリッドバッファの実要素数(=domain::hashCells()、cubeRes^3。nx*ny*nzではない)を表す。ドメイン下限は常に原点固定
-// (worldMinは廃止、ワールド座標=ローカル座標)。
+// MPM 専用 Push Constants — 172 bytes。各vec3系フィールド直前のスカラー数を4の倍数に揃え16byte境界に一致させている(要再検証)。hashCellsは空間ハッシュ/MPMグリッドバッファの実要素数(cubeRes^3)。worldMinは廃止(ワールド座標=ローカル座標)。colliderForceIdx/colliderTorqueIdxは末尾に追加。
 struct MPMSimPC {
   // ── Bindless バッファインデックス (48 bytes、12個のスカラー) ──────────
   uint32_t posIdx;        // 0   vec4×N  (xyz=position, w=initial volume Vp)
@@ -51,5 +49,9 @@ struct MPMSimPC {
   float p0_mcc;           // 152 MCC 予圧密圧力
   float xi_hard;          // 156 軟化パラメータ
   uint32_t forceCount;    // 160 有効なForce数 (issue #30; 旧maxParticlesFrac予約枠)
+
+  // ── コライダー反力/反トルク読み戻し (8 bytes) ─────────────────────────
+  uint32_t colliderForceIdx;  // 164 vec4×64 コライダーが受け取った力積(fixed-point)
+  uint32_t colliderTorqueIdx; // 168 vec4×64 コライダーが受け取った反トルク積(fixed-point)
 };
-static_assert(sizeof(MPMSimPC) == 164, "MPMSimPC must be 164 bytes");
+static_assert(sizeof(MPMSimPC) == 172, "MPMSimPC must be 172 bytes");

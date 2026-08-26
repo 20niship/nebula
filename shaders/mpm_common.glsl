@@ -4,7 +4,7 @@
 // ── Bindless バッファ配列 ──────────────────────────────────────────────────
 layout(set = 0, binding = 0) buffer StorageBuffers { uint data[]; } buffers[];
 
-// ── MPMSimPC Push Constants (164 bytes) ───────────────────────
+// ── MPMSimPC Push Constants (172 bytes) ───────────────────────
 // C++側 src/core/MPMSimPC.h と同一オフセット順であること。vec3系フィールド直前のスカラー数を
 // 4の倍数に揃えてパディングなしで16byte境界に一致させている(順序変更時は要再検証)。
 // ドメイン下限は常に原点固定 (worldMinは廃止、ワールド座標=ローカル座標)。
@@ -51,6 +51,9 @@ layout(push_constant) uniform PC {
     float p0_mcc;         // 152
     float xi_hard;        // 156
     uint  forceCount;     // 160 有効なForce数 (issue #30; 旧maxParticlesFrac予約枠)
+
+    uint  colliderForceIdx;  // 164 vec4×64 コライダーが受け取った力積(fixed-point)
+    uint  colliderTorqueIdx; // 168 vec4×64 コライダーが受け取った反トルク積(fixed-point)
 } pc;
 
 // ── Buffer read/write マクロ ──────────────────────────────────────────────

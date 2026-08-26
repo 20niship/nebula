@@ -225,35 +225,46 @@ void main() {
 
     vec3 x_new = xp + pc.dt * v_new;
 
+    // ── コライダー 粒子レベル境界補正 ────────────────────────────────────
+    // mpm_grid_updateはグリッドノードのみ修正するため静止/低速コライダーでは粒子がsdf<0の内部に取り残される。G2Pで直接補正し弾性エネルギー蓄積(速度爆発の原因)も防ぐ。
     for (uint ci = 0u; ci < pc.colliderCount; ci++) {
         uint cbase = ci * 24u;
-        if (buffers[pc.colliderIdx].data[cbase] != COLL_MESH_SDF) continue;
+        uint ctype = buffers[pc.colliderIdx].data[cbase];
 
-        vec3 cpos = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 1u]),
-                          uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 2u]),
-                          uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 3u]));
-        vec3 localMin = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 4u]),
-                              uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 5u]),
-                              uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 6u]));
-        float cellSizeLocal = uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 7u]);
-        uint  sdfBufIdx      = buffers[pc.colliderIdx].data[cbase + 13u];
-        uint  meshRes         = buffers[pc.colliderIdx].data[cbase + 14u];
-        vec4  cq              = vec4(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 16u]),
-                                      uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 17u]),
-                                      uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 18u]),
-                                      uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 19u]));
-
-        vec3 localP = quatRotate(quatConj(cq), x_new - cpos);
         float psdf;
-        vec3 nLocal;
-        MESH_SDF_SAMPLE(sdfBufIdx, localP, localMin, cellSizeLocal, meshRes, psdf, nLocal)
+        vec3 n;
+        if (ctype == COLL_MESH_SDF) {
+            vec3 cpos = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 1u]),
+                              uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 2u]),
+                              uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 3u]));
+            vec3 localMin = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 4u]),
+                                  uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 5u]),
+                                  uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 6u]));
+            float cellSizeLocal = uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 7u]);
+            uint  sdfBufIdx      = buffers[pc.colliderIdx].data[cbase + 13u];
+            uint  meshRes         = buffers[pc.colliderIdx].data[cbase + 14u];
+            vec4  cq              = vec4(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 16u]),
+                                          uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 17u]),
+                                          uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 18u]),
+                                          uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 19u]));
+            vec3 localP = quatRotate(quatConj(cq), x_new - cpos);
+            vec3 nLocal;
+            MESH_SDF_SAMPLE(sdfBufIdx, localP, localMin, cellSizeLocal, meshRes, psdf, nLocal)
+            n = quatRotate(cq, nLocal);
+        } else if (ctype == COLL_SPHERE) {
+            vec3 cpos = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 1u]),
+                              uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 2u]),
+                              uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 3u]));
+            float cr = uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 7u]);
+            psdf = sphereSDF(x_new, cpos, cr, n);
+        } else {
+            continue;
+        }
 
         if (psdf < 0.0) {
-            vec3 n = quatRotate(cq, nLocal);
             x_new -= psdf * n;              // 固体外に押し出す (psdf<0 → +|psdf|*n)
             float vn = dot(v_new, n);
             if (vn < 0.0) v_new -= vn * n;  // 法線方向の固体向き速度を除去
-            // 弾性エネルギー蓄積をリセット (これが速度爆発の根本原因)
             F_new   = mat3(1.0);
             tau_new = mat3(0.0);
         }

@@ -44,7 +44,8 @@ struct Emitter {
   glm::vec3 vel{0.0f};        // 放出粒子の初速(既定0)。emitAlongNormal=true時は速さ(|vel|)としても使う
   glm::vec3 center_vel{0.0f}; // エミッタ自体の移動速度 [m/s]
   int particles_per_step = 1024;
-  uint32_t particleType  = 1u; // MPM: material id / Fluid: 1=流体,4=煙,5=粉体
+  uint32_t particleType  = 1u;   // MPM: material id / Fluid: 1=流体,4=煙,5=粉体
+  float particleVolume   = 0.0f; // MPM放出粒子1個の体積(<=0ならcellSize^3にフォールバック、旧挙動)。放出形状体積/総放出数を指定しないと密度粒子数を増減しても質量が変わらず応力が異常化する(凝集挙動の原因)
 
   bool emitAlongNormal     = false; // trueで形状表面の外向き法線方向へ|vel|の速さで放出(sample_velocity)
   float velocityRandomness = 0.0f;  // >0で各粒子速度へ[-r,r]^3のランダム摂動を加える[m/s](既定0=無効)

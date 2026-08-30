@@ -1,4 +1,4 @@
-#include "SimulationEngine.h"
+#include "XPBDEngine.h"
 #include "../core/DefineShaderCompiler.h"
 #include "../core/Profiling.h"
 
@@ -12,7 +12,7 @@
 
 // ─── 初期化 ────────────────────────────────────────────────────────────────
 
-void SimulationEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const ClothConfig& cfg) {
+void XPBDEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const ClothConfig& cfg) {
   cfg_           = cfg;
   particleRadius = cfg_.cellSize * 0.5f;
   initEngineBase(device, allocator, descriptorPool, cmdPool, queue);
@@ -60,7 +60,7 @@ void SimulationEngine::init(VkDevice device, VmaAllocator allocator, VkDescripto
   std::cout << "[Sim] Phase3: " << cfg_.clothVertCount() << " particles (" << cfg_.clothVertCount() << " cloth), " << clothMesh_.edgeCount() << " edges, " << clothMesh_.nColors << " colors" << std::endl;
 }
 
-void SimulationEngine::initParticleBuffers(VkCommandPool cmdPool, VkQueue queue) {
+void XPBDEngine::initParticleBuffers(VkCommandPool cmdPool, VkQueue queue) {
   // 共通粒子属性 (布 + 砂 共有)
   posIdx       = attrBuf_.addAttribute("P", sizeof(glm::vec4), cfg_.clothVertCount());
   velIdx       = attrBuf_.addAttribute("v", sizeof(glm::vec4), cfg_.clothVertCount());
@@ -78,7 +78,7 @@ void SimulationEngine::initParticleBuffers(VkCommandPool cmdPool, VkQueue queue)
   attrBuf_.upload("v", zeros.data(), sizeof(glm::vec4) * cfg_.clothVertCount(), cmdPool, queue);
 }
 
-void SimulationEngine::initClothBuffers(VkCommandPool cmdPool, VkQueue queue) {
+void XPBDEngine::initClothBuffers(VkCommandPool cmdPool, VkQueue queue) {
   // ClothMesh 生成
   float clothZ = cfg_.domainSize.z * 0.85f; // 箱上部付近 (Z-up)
   clothMesh_.build(cfg_.cloth_grid_n, 0.065f, cfg_.domainSize.x * 0.5f, cfg_.domainSize.y * 0.5f, clothZ);
@@ -109,11 +109,11 @@ void SimulationEngine::initClothBuffers(VkCommandPool cmdPool, VkQueue queue) {
   // lambdas はゼロ初期化 (毎フレーム FillBuffer でリセット)
 }
 
-VkBuffer SimulationEngine::getPositionBuffer() const { return attrBuf_.getBuffer("P"); }
+VkBuffer XPBDEngine::getPositionBuffer() const { return attrBuf_.getBuffer("P"); }
 
 // ─── デバッグ: 代表頂点の位置・速度を stdout に出力 ─────────────────────────
 
-void SimulationEngine::debugPrintVertices(VkCommandPool cmdPool, VkQueue queue) const {
+void XPBDEngine::debugPrintVertices(VkCommandPool cmdPool, VkQueue queue) const {
   const uint32_t N = cfg_.cloth_grid_n;
 
   struct DebugVert {
@@ -203,7 +203,7 @@ void SimulationEngine::debugPrintVertices(VkCommandPool cmdPool, VkQueue queue) 
 
 // ─── クリーンアップ ─────────────────────────────────────────────────────────
 
-void SimulationEngine::cleanup() {
+void XPBDEngine::cleanup() {
   kPredict_.cleanup();
   kSdfCollision_.cleanup();
   kHashCount_.cleanup();
@@ -221,7 +221,7 @@ void SimulationEngine::cleanup() {
 
 // ─── バリア ────────────────────────────────────────────────────────────────
 
-void SimulationEngine::computeBarrier(VkCommandBuffer cmd) {
+void XPBDEngine::computeBarrier(VkCommandBuffer cmd) {
   VkMemoryBarrier b{};
   b.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
   b.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
@@ -231,7 +231,7 @@ void SimulationEngine::computeBarrier(VkCommandBuffer cmd) {
 
 // ─── 1フレームのシミュレーション ──────────────────────────────────────────
 
-void SimulationEngine::step(VkCommandBuffer cmd, float dt) {
+void XPBDEngine::step(VkCommandBuffer cmd, float dt) {
   ZoneScoped;
   FrameMark;
   auto ds = attrBuf_.descriptorSet;

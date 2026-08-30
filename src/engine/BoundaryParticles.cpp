@@ -6,42 +6,6 @@
 #include <cmath>
 #include <stdexcept>
 
-std::vector<glm::vec4> BoundaryParticles::loadOBJ(const std::string& path, float spacing) {
-  tinyobj::ObjReaderConfig cfg;
-  cfg.triangulate = true;
-
-  tinyobj::ObjReader reader;
-  if(!reader.ParseFromFile(path, cfg)) {
-    throw std::runtime_error("BoundaryParticles: " + reader.Error());
-  }
-
-  std::vector<glm::vec4> out;
-  out.reserve(MAX_PARTICLES);
-
-  const auto& attrib = reader.GetAttrib();
-  const auto& verts  = attrib.vertices;
-
-  for(const auto& shape : reader.GetShapes()) {
-    size_t idxOff = 0;
-    for(size_t f = 0; f < shape.mesh.num_face_vertices.size(); ++f) {
-      auto iv0 = shape.mesh.indices[idxOff + 0];
-      auto iv1 = shape.mesh.indices[idxOff + 1];
-      auto iv2 = shape.mesh.indices[idxOff + 2];
-      idxOff += 3;
-
-      glm::vec3 v0(verts[3 * iv0.vertex_index], verts[3 * iv0.vertex_index + 1], verts[3 * iv0.vertex_index + 2]);
-      glm::vec3 v1(verts[3 * iv1.vertex_index], verts[3 * iv1.vertex_index + 1], verts[3 * iv1.vertex_index + 2]);
-      glm::vec3 v2(verts[3 * iv2.vertex_index], verts[3 * iv2.vertex_index + 1], verts[3 * iv2.vertex_index + 2]);
-
-      sampleTriangle(v0, v1, v2, spacing, out);
-      if(out.size() >= MAX_PARTICLES) break;
-    }
-    if(out.size() >= MAX_PARTICLES) break;
-  }
-
-  return out;
-}
-
 BoundaryMesh BoundaryParticles::loadOBJ(const std::string& path, float spacing, float scale, glm::vec3 offset, bool yup_to_zup) {
   tinyobj::ObjReaderConfig cfg;
   cfg.triangulate = true;
@@ -106,4 +70,9 @@ void BoundaryParticles::sampleTriangle(const glm::vec3& a, const glm::vec3& b, c
       if(out.size() >= MAX_PARTICLES) return;
     }
   }
+}
+
+BoundaryMesh generate_particles_from_mesh_surface(const std::string& obj, float spacing, float scale, glm::vec3 offset, bool yup_to_zup) {
+  BoundaryParticles bp;
+  return bp.loadOBJ(obj, spacing, scale, offset, yup_to_zup);
 }

@@ -27,7 +27,7 @@ struct ClothConfig {
 
 // 重力・風は addForce() で GravityForce/ConstantWindForce を登録すること
 // (issue #30 レビュー対応: gravity/windX/windZ の public メンバは廃止)。
-class SimulationEngine : public EngineBase {
+class XPBDEngine : public EngineBase {
 public:
   void init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir, const ClothConfig& cfg = {});
   void cleanup();

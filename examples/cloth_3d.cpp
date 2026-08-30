@@ -1,5 +1,5 @@
 #include "App.h"
-#include "engine/XPBDEngine.h"
+#include "engine/ClothSceneEngine.h"
 #include "graphics/ClothRenderer.h"
 #include "graphics/GraphicsPipeline.h"
 
@@ -33,37 +33,47 @@ public:
     dt_                 = args.dt;
     base_.screenshotDir = args.screenshot_dir;
 
-    ClothConfig cfg;
-    cfg.cloth_grid_n = (uint32_t)args.cloth_n;
-    cfg.domainSize   = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
-    cfg.cellSize     = args.cell_size;
+    gridN_      = (uint32_t)args.cloth_n;
+    domainSize_ = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
+    cellSize_   = args.cell_size;
 
     base_.initWindow("Vulkan Sim – Cloth 3D");
-    initVulkan(cfg);
+    initVulkan();
     mainLoop(args.n_shots);
     cleanup();
   }
 
 private:
   BaseApp base_;
-  XPBDEngine sim_;
+  ClothSceneEngine sim_;
   GraphicsPipeline graphicsPipe_;
   ClothRenderer clothRenderer_;
 
-  float dt_            = 1.0f / 60.0f;
-  float simTime_       = 0.0f;
-  int debugFrameCount_ = 0;
+  uint32_t gridN_ = 128;
+  glm::vec3 domainSize_{10.0f, 10.0f, 10.0f};
+  float cellSize_      = 10.0f / 64.0f;
+  float dt_      = 1.0f / 60.0f;
+  float simTime_ = 0.0f;
 
   // issue #30 レビュー対応: gravity/windX/windZ の public メンバは廃止されたため
   // ここで Force を作って addForce() する (Engineには自動登録しない)。
   std::shared_ptr<GravityForce> gravity_;
   std::shared_ptr<ConstantWindForce> wind_;
 
-  void initVulkan(const ClothConfig& cfg) {
+  void initVulkan() {
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
-    sim_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
+    // 単一クロスをaddCloth()し、上端行をPin制約で固定する(issue #98: XPBDEngineはClothSceneEngineの機能サブセットのため統合)。
+    ClothMesh mesh;
+    mesh.build((int)gridN_, 0.065f, domainSize_.x * 0.5f, domainSize_.y * 0.5f, domainSize_.z * 0.85f); // Z-up、箱上部付近
+    uint32_t offset = sim_.addCloth(mesh);
+    for(uint32_t j = 0; j < gridN_; ++j) {
+      uint32_t vi = offset + (uint32_t)mesh.idx(0, j);
+      sim_.addConstraint({ClothConstraint::Type::Pin, vi, glm::vec3(mesh.positions[mesh.idx(0, j)])});
+    }
+
+    sim_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, domainSize_, cellSize_);
 
     gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f); // Z-up
     wind_    = ConstantWindForce::FromDirection({0.0f, 0.0f, 0.0f}, 1.0f);
@@ -74,7 +84,7 @@ private:
     graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, sim_.descriptorSetLayout, SHADER_DIR_STR + "/particle.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");
 
     clothRenderer_.init(base_.ctx.device, base_.ctx.allocator, base_.ctx.renderPass, sim_.descriptorSetLayout, SHADER_DIR_STR);
-    clothRenderer_.uploadIndices(sim_.getClothMesh().triIndices, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue);
+    clothRenderer_.uploadIndices(sim_.getMesh(0).triIndices, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue);
 
     base_.createFrameData();
   }
@@ -128,13 +138,13 @@ private:
     sc.extent = base_.ctx.swapchainExtent;
     vkCmdSetScissor(cmd, 0, 1, &sc);
 
-    const uint32_t clothN = sim_.config().clothVertCount();
+    const uint32_t clothN = sim_.totalParticleCount();
     SimPC pc{};
     pc.posIdx           = sim_.posIdx;
     pc.velIdx           = sim_.velIdx;
     pc.particleCount    = clothN;
     pc.worldMin         = glm::vec3(0.0f);
-    pc.worldMax         = sim_.config().domainSize;
+    pc.worldMax         = domainSize_;
     pc.couplingForceIdx = 0;
     pc.clothVertexCount = clothN;
 
@@ -148,8 +158,6 @@ private:
   void drawFrame(int nShots) {
     auto& f = base_.frames[base_.currentFrame];
     vkWaitForFences(base_.ctx.device, 1, &f.inFlightFence, VK_TRUE, UINT64_MAX);
-
-    if(++debugFrameCount_ % 60 == 0) sim_.debugPrintVertices(base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue);
 
     uint32_t imageIdx;
     VkResult result = vkAcquireNextImageKHR(base_.ctx.device, base_.ctx.swapchain, UINT64_MAX, f.imageAvailable, VK_NULL_HANDLE, &imageIdx);

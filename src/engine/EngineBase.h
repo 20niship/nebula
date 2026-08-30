@@ -10,7 +10,7 @@
 #include "AttributeBuffer.h"
 #include "ComputePipeline.h"
 
-// 6つの物理エンジン (XPBDEngine/ClothSceneEngine/
+// 5つの物理エンジン (ClothSceneEngine/
 // FluidEngine/SoftBodyEngine/MPMEngine/PyroEngine) に共通するVulkanリソース
 // 保持パターンとForce管理を統合する基底クラス (issue #30 レビュー対応)。
 //

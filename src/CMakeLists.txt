@@ -10,7 +10,6 @@ add_library(nebula STATIC
     graphics/ClothRenderer.cpp
     engine/EngineBase.cpp
     engine/ClothMesh.cpp
-    engine/XPBDEngine.cpp
     engine/ClothSceneEngine.cpp
     engine/FluidEngine.cpp
     engine/BoundaryParticles.cpp

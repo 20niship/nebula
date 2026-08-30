@@ -1,5 +1,5 @@
 #include "App.h"
-#include "engine/SimulationEngine.h"
+#include "engine/XPBDEngine.h"
 #include "graphics/ClothRenderer.h"
 #include "graphics/GraphicsPipeline.h"
 
@@ -46,7 +46,7 @@ public:
 
 private:
   BaseApp base_;
-  SimulationEngine sim_;
+  XPBDEngine sim_;
   GraphicsPipeline graphicsPipe_;
   ClothRenderer clothRenderer_;
 

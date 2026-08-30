@@ -319,7 +319,7 @@ void MPMEngine::emitFromEmitters(float dt) {
     float matIdF;
     std::memcpy(&matIdF, &matId, sizeof(float));
 
-    const float Vp = cellSize * cellSize * cellSize;
+    const float Vp = emitter.particleVolume > 0.0f ? emitter.particleVolume : cellSize * cellSize * cellSize;
     std::vector<glm::vec4> pos(nNew), vel(nNew);
     std::vector<glm::vec4> F0v(nNew), F1v(nNew), F2v(nNew);
     std::vector<glm::vec4> B0v(nNew), B1v(nNew), B2v(nNew);

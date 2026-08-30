@@ -111,7 +111,7 @@ protected:
 };
 
 // ── AABBEmitter ──────────────────────────────────────────────────────────
-struct AABBEmitter : public Emitter {
+struct AABBEmitter final : public Emitter {
   // sample(): 直方体の全辺長 (旧 AABBSource::size と同一単位)。
   // pack(): GPU 側は半辺長規約 (旧 PyroSourceShape::AABB) のため、pack() 内で
   // 0.5倍して書き出す (単位変換のみ、挙動は変えない)。
@@ -159,7 +159,7 @@ struct AABBEmitter : public Emitter {
 };
 
 // ── SphereEmitter ────────────────────────────────────────────────────────
-struct SphereEmitter : public Emitter {
+struct SphereEmitter final : public Emitter {
   float radius = 1.0f;
 
   glm::vec3 sample(std::mt19937& rng) const override {
@@ -207,7 +207,7 @@ struct SphereEmitter : public Emitter {
 //   - pack()   (Pyro  用): semiA=X半径, semiB=Z半径, halfHeightY=Y半高さ。
 // 将来どちらの意味も同時に必要になった場合はこの共有をやめ、専用フィールドに
 // 分離すること。
-struct EllipseEmitter : public Emitter {
+struct EllipseEmitter final : public Emitter {
   float semiA       = 1.0f; // X 方向の半径 [m]
   float semiB       = 1.0f; // sample(): Y半径 / pack(): Z半径 ← 文脈依存 (上記コメント参照)
   float halfHeightY = 0.0f; // pack() 専用: Y 方向の半高さ [m] (sample() では無視)

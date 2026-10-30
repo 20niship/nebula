@@ -212,27 +212,17 @@ uint32_t MPMEngine::uploadColliderMeshSDF(const LocalMeshSDF& grid) {
   return idx;
 }
 
+// 新規粒子を nParticles_ 以降へ書き込む (F=I, B=0 で初期化)。submit/WaitIdle は1回。
+void MPMEngine::uploadNewParticles_(const glm::vec4* pos, const glm::vec4* vel, uint32_t nNew) {
+  const std::vector<glm::vec4> F0(nNew, glm::vec4(1, 0, 0, 0)), F1(nNew, glm::vec4(0, 1, 0, 0)), F2(nNew, glm::vec4(0, 0, 1, 0)), Z(nNew, glm::vec4(0));
+  attrBuf_.uploadAtBatch({{"P", pos}, {"v", vel}, {"F0", F0.data()}, {"F1", F1.data()}, {"F2", F2.data()}, {"B0", Z.data()}, {"B1", Z.data()}, {"B2", Z.data()}}, VkDeviceSize(nNew) * sizeof(glm::vec4), VkDeviceSize(nParticles_) * sizeof(glm::vec4), cmdPool_, queue_);
+}
+
 void MPMEngine::appendParticles(const std::vector<glm::vec4>& pos, const std::vector<glm::vec4>& vel) {
   const uint32_t nNew = std::min(uint32_t(pos.size()), maxParticles_ - nParticles_);
   if(nNew == 0) return;
 
-  std::vector<glm::vec4> F0(nNew, glm::vec4(1, 0, 0, 0));
-  std::vector<glm::vec4> F1(nNew, glm::vec4(0, 1, 0, 0));
-  std::vector<glm::vec4> F2(nNew, glm::vec4(0, 0, 1, 0));
-  std::vector<glm::vec4> B0(nNew, glm::vec4(0));
-  std::vector<glm::vec4> B1(nNew, glm::vec4(0));
-  std::vector<glm::vec4> B2(nNew, glm::vec4(0));
-
-  VkDeviceSize byteOff = VkDeviceSize(nParticles_) * sizeof(glm::vec4);
-  auto up              = [&](const std::string& name, const void* data) { attrBuf_.uploadAt(name, data, VkDeviceSize(nNew) * sizeof(glm::vec4), byteOff, cmdPool_, queue_); };
-  up("P", pos.data());
-  up("v", vel.data());
-  up("F0", F0.data());
-  up("F1", F1.data());
-  up("F2", F2.data());
-  up("B0", B0.data());
-  up("B1", B1.data());
-  up("B2", B2.data());
+  uploadNewParticles_(pos.data(), vel.data(), nNew);
 
   nParticles_ += nNew;
 }
@@ -263,9 +253,8 @@ void MPMEngine::setParticleMaterialIds(const std::vector<uint32_t>& matIds) {
 void MPMEngine::setColliders(const ColliderSet& cols) {
   ZoneScoped;
   pc_.colliderCount = cols.count();
-  if(pc_.colliderCount > 0) {
-    attrBuf_.upload("colliders", cols.data().data(), cols.count() * sizeof(ColliderPrimitive), cmdPool_, queue_);
-  }
+  // 転送は次の step() の cmd 内で行う (毎フレーム動くコライダーで queue を止めない)
+  pendingColliders_.assign(cols.data().begin(), cols.data().begin() + cols.count());
 }
 
 void MPMEngine::clearAnalyticColliders() { pc_.colliderCount = 0; }
@@ -321,8 +310,6 @@ void MPMEngine::emitFromEmitters(float dt) {
 
     const float Vp = emitter.particleVolume > 0.0f ? emitter.particleVolume : cellSize * cellSize * cellSize;
     std::vector<glm::vec4> pos(nNew), vel(nNew);
-    std::vector<glm::vec4> F0v(nNew), F1v(nNew), F2v(nNew);
-    std::vector<glm::vec4> B0v(nNew), B1v(nNew), B2v(nNew);
 
     // 位置生成 (形状ごとの分岐は Emitter::sample() に委譲)
     for(int j = 0; j < nNew; j++) pos[j] = glm::vec4(emitter.sample(emitterRng_), Vp);
@@ -330,24 +317,9 @@ void MPMEngine::emitFromEmitters(float dt) {
     // 速度 (vel.w = material id)、F = I、B = 0、stress = 0
     for(int j = 0; j < nNew; j++) {
       vel[j] = glm::vec4(emitter.sample_velocity(glm::vec3(pos[j]), emitterRng_), matIdF);
-      F0v[j] = glm::vec4(1, 0, 0, 0);
-      F1v[j] = glm::vec4(0, 1, 0, 0);
-      F2v[j] = glm::vec4(0, 0, 1, 0);
-      B0v[j] = glm::vec4(0);
-      B1v[j] = glm::vec4(0);
-      B2v[j] = glm::vec4(0);
     }
 
-    VkDeviceSize byteOff = VkDeviceSize(nParticles_) * sizeof(glm::vec4);
-    auto up              = [&](const std::string& name, const void* data) { attrBuf_.uploadAt(name, data, VkDeviceSize(nNew) * sizeof(glm::vec4), byteOff, cmdPool_, queue_); };
-    up("P", pos.data());
-    up("v", vel.data());
-    up("F0", F0v.data());
-    up("F1", F1v.data());
-    up("F2", F2v.data());
-    up("B0", B0v.data());
-    up("B1", B1v.data());
-    up("B2", B2v.data());
+    uploadNewParticles_(pos.data(), vel.data(), uint32_t(nNew));
 
     nParticles_ += uint32_t(nNew);
     done++;
@@ -391,7 +363,12 @@ void MPMEngine::step(VkCommandBuffer cmd, float dt) {
 
   {
     ZoneScopedN("UploadForces");
-    uploadForces(dt);
+    uploadForces(dt, cmd);
+  }
+
+  if(!pendingColliders_.empty()) {
+    attrBuf_.recordUpdate(cmd, "colliders", pendingColliders_.data(), pendingColliders_.size() * sizeof(ColliderPrimitive));
+    pendingColliders_.clear();
   }
 
   const uint32_t N  = nParticles_; // ライブパーティクル数

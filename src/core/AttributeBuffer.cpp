@@ -187,6 +187,78 @@ void AttributeBuffer::uploadAt(const std::string& name, const void* data, VkDevi
   vmaDestroyBuffer(allocator_, stageBuf, stageAlloc);
 }
 
+void AttributeBuffer::uploadAtBatch(const std::vector<std::pair<std::string, const void*>>& items, VkDeviceSize byteSize, VkDeviceSize dstOffset, VkCommandPool cmdPool, VkQueue queue) {
+  if(items.empty() || byteSize == 0) return;
+
+  VkCommandBufferAllocateInfo ai{};
+  ai.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  ai.commandPool        = cmdPool;
+  ai.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  ai.commandBufferCount = 1;
+  VkCommandBuffer cmd;
+  vkAllocateCommandBuffers(device_, &ai, &cmd);
+
+  VkCommandBufferBeginInfo bi{};
+  bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+  bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+  vkBeginCommandBuffer(cmd, &bi);
+
+  std::vector<std::pair<VkBuffer, VmaAllocation>> stages;
+  for(const auto& [name, data] : items) {
+    auto it = attributes_.find(name);
+    if(it == attributes_.end()) throw std::runtime_error("Attribute not found: " + name);
+
+    VkBufferCreateInfo stageBufInfo{};
+    stageBufInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    stageBufInfo.size  = byteSize;
+    stageBufInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    VmaAllocationCreateInfo stageAllocInfo{};
+    stageAllocInfo.usage = VMA_MEMORY_USAGE_CPU_ONLY;
+    VkBuffer stageBuf;
+    VmaAllocation stageAlloc;
+    vmaCreateBuffer(allocator_, &stageBufInfo, &stageAllocInfo, &stageBuf, &stageAlloc, nullptr);
+    void* mapped;
+    vmaMapMemory(allocator_, stageAlloc, &mapped);
+    memcpy(mapped, data, byteSize);
+    vmaUnmapMemory(allocator_, stageAlloc);
+    stages.emplace_back(stageBuf, stageAlloc);
+
+    VkBufferCopy region{};
+    region.dstOffset = dstOffset;
+    region.size      = byteSize;
+    vkCmdCopyBuffer(cmd, stageBuf, it->second.buffer, 1, &region);
+  }
+  vkEndCommandBuffer(cmd);
+
+  VkSubmitInfo si{};
+  si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+  si.commandBufferCount = 1;
+  si.pCommandBuffers    = &cmd;
+  vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE);
+  vkQueueWaitIdle(queue);
+  vkFreeCommandBuffers(device_, cmdPool, 1, &cmd);
+  for(auto& [b, a] : stages) vmaDestroyBuffer(allocator_, b, a);
+}
+
+void AttributeBuffer::recordUpdate(VkCommandBuffer cmd, const std::string& name, const void* data, VkDeviceSize byteSize) {
+  auto it = attributes_.find(name);
+  if(it == attributes_.end()) throw std::runtime_error("Attribute not found: " + name);
+  // vkCmdUpdateBuffer は 1回 65536B まで
+  constexpr VkDeviceSize kChunk = 65536;
+  // 直前に投入済みの compute が旧データを読み終えてから上書きする (WAR)
+  VkMemoryBarrier pre{};
+  pre.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+  pre.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+  pre.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &pre, 0, nullptr, 0, nullptr);
+  for(VkDeviceSize off = 0; off < byteSize; off += kChunk) vkCmdUpdateBuffer(cmd, it->second.buffer, off, std::min(kChunk, byteSize - off), static_cast<const char*>(data) + off);
+  VkMemoryBarrier b{};
+  b.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+  b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &b, 0, nullptr, 0, nullptr);
+}
+
 void AttributeBuffer::uploadScattered(const std::string& name, const void* packedData, VkDeviceSize elemSize, const std::vector<uint32_t>& dstIndices, VkCommandPool cmdPool, VkQueue queue) {
   auto it = attributes_.find(name);
   if(it == attributes_.end()) throw std::runtime_error("Attribute not found: " + name);

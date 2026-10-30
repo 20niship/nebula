@@ -41,7 +41,8 @@ protected:
   void initForces(std::vector<std::shared_ptr<Force>> defaultForces = {});
   void cleanupEngineBase();
   // forces_ の各要素に advanceTime(dt) を適用してから pack() し SSBO へアップロードする。
-  void uploadForces(float dt);
+  // cmd 指定時は WaitIdle せず cmd 内へ vkCmdUpdateBuffer で書き込む(compute dispatch より前に呼ぶこと)。
+  void uploadForces(float dt, VkCommandBuffer cmd = VK_NULL_HANDLE);
 
   // Force対象のComputePipelineへの参照 (Engineごとに kPredict_/kPredictSdf_/
   // kGridUpdate_/kForces_ 等、既存メンバをそのまま返す)。

@@ -3,6 +3,7 @@
 #include <glm/glm.hpp>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.h>
@@ -24,6 +25,10 @@ public:
   void upload(const std::string& name, const void* data, VkDeviceSize byteSize, VkCommandPool cmdPool, VkQueue queue);
 
   // dstOffset バイト目から転送（境界粒子の追記用）
+  // 同一範囲(dstOffset, byteSize)に複数属性を書き込む。submit/WaitIdleは1回だけ。
+  void uploadAtBatch(const std::vector<std::pair<std::string, const void*>>& items, VkDeviceSize byteSize, VkDeviceSize dstOffset, VkCommandPool cmdPool, VkQueue queue);
+  // vkCmdUpdateBufferで cmd 内に書き込む(WaitIdle無し)。byteSize は4の倍数、dstOffsetも4の倍数。末尾にtransfer→computeのバリアを入れる。
+  void recordUpdate(VkCommandBuffer cmd, const std::string& name, const void* data, VkDeviceSize byteSize);
   void uploadAt(const std::string& name, const void* data, VkDeviceSize byteSize, VkDeviceSize dstOffset, VkCommandPool cmdPool, VkQueue queue);
 
   // packed な count 要素を dstIndices[j] の要素位置へ1 submitのmulti-region copyで散布転送する(スロット再利用の穴埋め用; 単位は要素index)。

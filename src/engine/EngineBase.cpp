@@ -46,12 +46,16 @@ void EngineBase::rebuildForceShader() {
   k.initFromSpirv(device_, attrBuf_.descriptorSetLayout, spirv);
 }
 
-void EngineBase::uploadForces(float dt) {
+void EngineBase::uploadForces(float dt, VkCommandBuffer cmd) {
   std::vector<ForceGPU> packed;
   packed.reserve(forces_.size());
   for(const auto& f : forces_) {
     f->advanceTime(dt);
     packed.push_back(f->pack());
   }
-  if(!packed.empty()) attrBuf_.upload("forces", packed.data(), sizeof(ForceGPU) * packed.size(), cmdPool_, queue_);
+  if(packed.empty()) return;
+  if(cmd != VK_NULL_HANDLE)
+    attrBuf_.recordUpdate(cmd, "forces", packed.data(), sizeof(ForceGPU) * packed.size());
+  else
+    attrBuf_.upload("forces", packed.data(), sizeof(ForceGPU) * packed.size(), cmdPool_, queue_);
 }

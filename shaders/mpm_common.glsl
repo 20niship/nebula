@@ -213,7 +213,9 @@ float bspline2g(float d) {
     return 0.0;
 }
 
+#ifndef FIXED_POINT_SCALE
 #define FIXED_POINT_SCALE 65536.0
+#endif
 #define encodeFixed(v) uint(int((v) * FIXED_POINT_SCALE))
 #define decodeFixed(u) (float(int(u)) / FIXED_POINT_SCALE)
 

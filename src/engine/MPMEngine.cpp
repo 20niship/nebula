@@ -224,28 +224,31 @@ uint32_t MPMEngine::uploadColliderMeshSDF(const LocalMeshSDF& grid) {
   return idx;
 }
 
-void MPMEngine::appendParticles(const std::vector<glm::vec4>& pos, const std::vector<glm::vec4>& vel) {
-  const uint32_t nNew = std::min(uint32_t(pos.size()), maxParticles_ - nParticles_);
-  if(nNew == 0) return;
-
-  std::vector<glm::vec4> F0(nNew, glm::vec4(1, 0, 0, 0));
-  std::vector<glm::vec4> F1(nNew, glm::vec4(0, 1, 0, 0));
-  std::vector<glm::vec4> F2(nNew, glm::vec4(0, 0, 1, 0));
-  std::vector<glm::vec4> B0(nNew, glm::vec4(0));
-  std::vector<glm::vec4> B1(nNew, glm::vec4(0));
-  std::vector<glm::vec4> B2(nNew, glm::vec4(0));
-
-  VkDeviceSize byteOff = VkDeviceSize(nParticles_) * sizeof(glm::vec4);
-  auto up              = [&](const std::string& name, const void* data) { attrBuf_.uploadAt(name, data, VkDeviceSize(nNew) * sizeof(glm::vec4), byteOff, cmdPool_, queue_); };
-  up("P", pos.data());
-  up("v", vel.data());
+void MPMEngine::uploadNewParticles_(const glm::vec4* pos, const glm::vec4* vel, uint32_t count, uint32_t first) {
+  VkDeviceSize byteOff = VkDeviceSize(first) * sizeof(glm::vec4);
+  auto up = [&](const std::string& name, const void* data) {
+    attrBuf_.uploadAt(name, data, VkDeviceSize(count) * sizeof(glm::vec4), byteOff, cmdPool_, queue_);
+  };
+  up("P", pos);
+  up("v", vel);
+  std::vector<glm::vec4> F0(count, glm::vec4(1, 0, 0, 0));
+  std::vector<glm::vec4> F1(count, glm::vec4(0, 1, 0, 0));
+  std::vector<glm::vec4> F2(count, glm::vec4(0, 0, 1, 0));
+  std::vector<glm::vec4> B0(count, glm::vec4(0));
+  std::vector<glm::vec4> B1(count, glm::vec4(0));
+  std::vector<glm::vec4> B2(count, glm::vec4(0));
   up("F0", F0.data());
   up("F1", F1.data());
   up("F2", F2.data());
   up("B0", B0.data());
   up("B1", B1.data());
   up("B2", B2.data());
+}
 
+void MPMEngine::appendParticles(const std::vector<glm::vec4>& pos, const std::vector<glm::vec4>& vel) {
+  const uint32_t nNew = std::min(uint32_t(pos.size()), maxParticles_ - nParticles_);
+  if(nNew == 0) return;
+  uploadNewParticles_(pos.data(), vel.data(), nNew, nParticles_);
   nParticles_ += nNew;
 }
 
@@ -333,34 +336,16 @@ void MPMEngine::emitFromEmitters(float dt) {
 
     const float Vp = emitter.particleVolume > 0.0f ? emitter.particleVolume : cellSize * cellSize * cellSize;
     std::vector<glm::vec4> pos(nNew), vel(nNew);
-    std::vector<glm::vec4> F0v(nNew), F1v(nNew), F2v(nNew);
-    std::vector<glm::vec4> B0v(nNew), B1v(nNew), B2v(nNew);
 
     // 位置生成 (形状ごとの分岐は Emitter::sample() に委譲)
     for(int j = 0; j < nNew; j++) pos[j] = glm::vec4(emitter.sample(emitterRng_), Vp);
 
-    // 速度 (vel.w = material id)、F = I、B = 0、stress = 0
+    // 速度 (vel.w = material id)。F と B は uploadNewParticles_ で初期化する。
     for(int j = 0; j < nNew; j++) {
       vel[j] = glm::vec4(emitter.sample_velocity(glm::vec3(pos[j]), emitterRng_), matIdF);
-      F0v[j] = glm::vec4(1, 0, 0, 0);
-      F1v[j] = glm::vec4(0, 1, 0, 0);
-      F2v[j] = glm::vec4(0, 0, 1, 0);
-      B0v[j] = glm::vec4(0);
-      B1v[j] = glm::vec4(0);
-      B2v[j] = glm::vec4(0);
     }
 
-    VkDeviceSize byteOff = VkDeviceSize(nParticles_) * sizeof(glm::vec4);
-    auto up              = [&](const std::string& name, const void* data) { attrBuf_.uploadAt(name, data, VkDeviceSize(nNew) * sizeof(glm::vec4), byteOff, cmdPool_, queue_); };
-    up("P", pos.data());
-    up("v", vel.data());
-    up("F0", F0v.data());
-    up("F1", F1v.data());
-    up("F2", F2v.data());
-    up("B0", B0v.data());
-    up("B1", B1v.data());
-    up("B2", B2v.data());
-
+    uploadNewParticles_(pos.data(), vel.data(), uint32_t(nNew), nParticles_);
     nParticles_ += uint32_t(nNew);
     done++;
     emitter.center += emitter.center_vel * dt;

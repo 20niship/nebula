@@ -114,6 +114,7 @@ private:
   std::vector<int> emitterStepsDone_;
   std::mt19937 emitterRng_{12345};
   void emitFromEmitters(float dt);
+  void uploadNewParticles_(const glm::vec4* pos, const glm::vec4* vel, uint32_t count, uint32_t first);
 
   // コンピュートパイプライン (MLS-MPM scatter化により空間ハッシュ系パイプラインは廃止)
   ComputePipeline kZeroGrid_;

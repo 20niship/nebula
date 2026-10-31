@@ -340,6 +340,22 @@ void MPMEngine::emitFromEmitters(float dt) {
     // 位置生成 (形状ごとの分岐は Emitter::sample() に委譲)
     for(int j = 0; j < nNew; j++) pos[j] = glm::vec4(emitter.sample(emitterRng_), Vp);
 
+    // 同じ格子セルの粒子を近くに配置し、P2G のアクセスを局所化する。
+    if(nNew > 1024) {
+      struct KeyedPosition { uint32_t key; glm::vec4 position; };
+      const glm::uvec3 res = domain::gridRes(domainSize, cellSize);
+      std::vector<KeyedPosition> keyed;
+      keyed.reserve(nNew);
+      for(const auto& p : pos) {
+        const uint32_t x = uint32_t(std::clamp(int(p.x / cellSize), 0, int(res.x) - 1));
+        const uint32_t y = uint32_t(std::clamp(int(p.y / cellSize), 0, int(res.y) - 1));
+        const uint32_t z = uint32_t(std::clamp(int(p.z / cellSize), 0, int(res.z) - 1));
+        keyed.push_back({(z * res.y + y) * res.x + x, p});
+      }
+      std::sort(keyed.begin(), keyed.end(), [](const auto& a, const auto& b) { return a.key < b.key; });
+      for(int j = 0; j < nNew; ++j) pos[j] = keyed[j].position;
+    }
+
     // 速度 (vel.w = material id)。F と B は uploadNewParticles_ で初期化する。
     for(int j = 0; j < nNew; j++) {
       vel[j] = glm::vec4(emitter.sample_velocity(glm::vec3(pos[j]), emitterRng_), matIdF);

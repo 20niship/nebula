@@ -1,5 +1,6 @@
 #include "MPMEngine.h"
 #include "../core/Profiling.h"
+#include "../core/DefineShaderCompiler.h"
 #include "BoundaryParticles.h"
 
 #include <algorithm>
@@ -7,6 +8,7 @@
 #include <cstring>
 #include <glm/glm.hpp>
 #include <random>
+#include <stdexcept>
 #include <vector>
 
 // ── バリア ────────────────────────────────────────────────────────────────
@@ -47,6 +49,14 @@ void MPMEngine::dispatchMPM(VkCommandBuffer cmd, ComputePipeline& k, const MPMSi
   vkCmdPushConstants(cmd, k.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(MPMSimPC), &pc);
   uint32_t groups = (count + 255u) / 256u;
   vkCmdDispatch(cmd, groups, 1, 1);
+}
+
+void MPMEngine::setFixedPointScale(float scale) {
+  if(!std::isfinite(scale) || scale <= 0.0f)
+    throw std::invalid_argument("MPM fixed-point scale must be finite and positive");
+  if(kP2G_.pipeline != VK_NULL_HANDLE)
+    throw std::runtime_error("MPM fixed-point scale must be set before init()");
+  extraForceDefines_ = {{"FIXED_POINT_SCALE", std::to_string(scale)}};
 }
 
 // ── 初期化 ────────────────────────────────────────────────────────────────
@@ -165,8 +175,10 @@ void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool d
   // ── シェーダーパイプライン ─────────────────────────────────────────────
   auto load = [&](ComputePipeline& k, const char* name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
   load(kZeroGrid_, "mpm_zero_grid.comp");
-  load(kP2G_, "mpm_p2g.comp");
-  load(kG2P_, "mpm_g2p.comp");
+  kP2G_.initFromSpirv(device_, attrBuf_.descriptorSetLayout,
+                       DefineShaderCompiler::compile("mpm_p2g.comp", extraForceDefines_));
+  kG2P_.initFromSpirv(device_, attrBuf_.descriptorSetLayout,
+                       DefineShaderCompiler::compile("mpm_g2p.comp", extraForceDefines_));
 
   descriptorSetLayout = attrBuf_.descriptorSetLayout;
   descriptorSet       = attrBuf_.descriptorSet;

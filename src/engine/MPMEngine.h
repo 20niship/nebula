@@ -36,6 +36,7 @@ public:
   void cleanup();
 
   void step(VkCommandBuffer cmd, float dt);
+  void setFixedPointScale(float scale);
 
   uint32_t liveParticleCount() const { return nParticles_; }
   VkBuffer getPositionBuffer() const;

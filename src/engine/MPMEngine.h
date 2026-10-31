@@ -36,6 +36,7 @@ public:
   void cleanup();
 
   void step(VkCommandBuffer cmd, float dt);
+  void setFixedPointScale(float scale);
 
   uint32_t liveParticleCount() const { return nParticles_; }
   VkBuffer getPositionBuffer() const;
@@ -100,6 +101,7 @@ protected:
 private:
   // GPU 側状態の唯一の格納先 (旧cfg_ + 個別indexメンバとの二重管理を廃止)。
   MPMSimPC pc_{};
+  std::vector<ColliderPrimitive> pendingColliders_;
 
   // ライブパーティクル数（dispatch ルーピング用）
   uint32_t nParticles_   = 0;
@@ -113,6 +115,7 @@ private:
   std::vector<int> emitterStepsDone_;
   std::mt19937 emitterRng_{12345};
   void emitFromEmitters(float dt);
+  void uploadNewParticles_(const glm::vec4* pos, const glm::vec4* vel, uint32_t count, uint32_t first);
 
   // コンピュートパイプライン (MLS-MPM scatter化により空間ハッシュ系パイプラインは廃止)
   ComputePipeline kZeroGrid_;

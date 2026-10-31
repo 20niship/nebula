@@ -1,5 +1,6 @@
 #include "MPMEngine.h"
 #include "../core/Profiling.h"
+#include "../core/DefineShaderCompiler.h"
 #include "BoundaryParticles.h"
 
 #include <algorithm>
@@ -7,6 +8,7 @@
 #include <cstring>
 #include <glm/glm.hpp>
 #include <random>
+#include <stdexcept>
 #include <vector>
 
 // ── バリア ────────────────────────────────────────────────────────────────
@@ -47,6 +49,14 @@ void MPMEngine::dispatchMPM(VkCommandBuffer cmd, ComputePipeline& k, const MPMSi
   vkCmdPushConstants(cmd, k.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(MPMSimPC), &pc);
   uint32_t groups = (count + 255u) / 256u;
   vkCmdDispatch(cmd, groups, 1, 1);
+}
+
+void MPMEngine::setFixedPointScale(float scale) {
+  if(!std::isfinite(scale) || scale <= 0.0f)
+    throw std::invalid_argument("MPM fixed-point scale must be finite and positive");
+  if(kP2G_.pipeline != VK_NULL_HANDLE)
+    throw std::runtime_error("MPM fixed-point scale must be set before init()");
+  extraForceDefines_ = {{"FIXED_POINT_SCALE", std::to_string(scale)}};
 }
 
 // ── 初期化 ────────────────────────────────────────────────────────────────
@@ -165,8 +175,10 @@ void MPMEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool d
   // ── シェーダーパイプライン ─────────────────────────────────────────────
   auto load = [&](ComputePipeline& k, const char* name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
   load(kZeroGrid_, "mpm_zero_grid.comp");
-  load(kP2G_, "mpm_p2g.comp");
-  load(kG2P_, "mpm_g2p.comp");
+  kP2G_.initFromSpirv(device_, attrBuf_.descriptorSetLayout,
+                       DefineShaderCompiler::compile("mpm_p2g.comp", extraForceDefines_));
+  kG2P_.initFromSpirv(device_, attrBuf_.descriptorSetLayout,
+                       DefineShaderCompiler::compile("mpm_g2p.comp", extraForceDefines_));
 
   descriptorSetLayout = attrBuf_.descriptorSetLayout;
   descriptorSet       = attrBuf_.descriptorSet;
@@ -212,28 +224,31 @@ uint32_t MPMEngine::uploadColliderMeshSDF(const LocalMeshSDF& grid) {
   return idx;
 }
 
-void MPMEngine::appendParticles(const std::vector<glm::vec4>& pos, const std::vector<glm::vec4>& vel) {
-  const uint32_t nNew = std::min(uint32_t(pos.size()), maxParticles_ - nParticles_);
-  if(nNew == 0) return;
-
-  std::vector<glm::vec4> F0(nNew, glm::vec4(1, 0, 0, 0));
-  std::vector<glm::vec4> F1(nNew, glm::vec4(0, 1, 0, 0));
-  std::vector<glm::vec4> F2(nNew, glm::vec4(0, 0, 1, 0));
-  std::vector<glm::vec4> B0(nNew, glm::vec4(0));
-  std::vector<glm::vec4> B1(nNew, glm::vec4(0));
-  std::vector<glm::vec4> B2(nNew, glm::vec4(0));
-
-  VkDeviceSize byteOff = VkDeviceSize(nParticles_) * sizeof(glm::vec4);
-  auto up              = [&](const std::string& name, const void* data) { attrBuf_.uploadAt(name, data, VkDeviceSize(nNew) * sizeof(glm::vec4), byteOff, cmdPool_, queue_); };
-  up("P", pos.data());
-  up("v", vel.data());
+void MPMEngine::uploadNewParticles_(const glm::vec4* pos, const glm::vec4* vel, uint32_t count, uint32_t first) {
+  VkDeviceSize byteOff = VkDeviceSize(first) * sizeof(glm::vec4);
+  auto up = [&](const std::string& name, const void* data) {
+    attrBuf_.uploadAt(name, data, VkDeviceSize(count) * sizeof(glm::vec4), byteOff, cmdPool_, queue_);
+  };
+  up("P", pos);
+  up("v", vel);
+  std::vector<glm::vec4> F0(count, glm::vec4(1, 0, 0, 0));
+  std::vector<glm::vec4> F1(count, glm::vec4(0, 1, 0, 0));
+  std::vector<glm::vec4> F2(count, glm::vec4(0, 0, 1, 0));
+  std::vector<glm::vec4> B0(count, glm::vec4(0));
+  std::vector<glm::vec4> B1(count, glm::vec4(0));
+  std::vector<glm::vec4> B2(count, glm::vec4(0));
   up("F0", F0.data());
   up("F1", F1.data());
   up("F2", F2.data());
   up("B0", B0.data());
   up("B1", B1.data());
   up("B2", B2.data());
+}
 
+void MPMEngine::appendParticles(const std::vector<glm::vec4>& pos, const std::vector<glm::vec4>& vel) {
+  const uint32_t nNew = std::min(uint32_t(pos.size()), maxParticles_ - nParticles_);
+  if(nNew == 0) return;
+  uploadNewParticles_(pos.data(), vel.data(), nNew, nParticles_);
   nParticles_ += nNew;
 }
 
@@ -263,12 +278,13 @@ void MPMEngine::setParticleMaterialIds(const std::vector<uint32_t>& matIds) {
 void MPMEngine::setColliders(const ColliderSet& cols) {
   ZoneScoped;
   pc_.colliderCount = cols.count();
-  if(pc_.colliderCount > 0) {
-    attrBuf_.upload("colliders", cols.data().data(), cols.count() * sizeof(ColliderPrimitive), cmdPool_, queue_);
-  }
+  pendingColliders_ = cols.data();
 }
 
-void MPMEngine::clearAnalyticColliders() { pc_.colliderCount = 0; }
+void MPMEngine::clearAnalyticColliders() {
+  pc_.colliderCount = 0;
+  pendingColliders_.clear();
+}
 
 // ── Emitter ───────────────────────────────────────────────────────────────
 
@@ -321,34 +337,32 @@ void MPMEngine::emitFromEmitters(float dt) {
 
     const float Vp = emitter.particleVolume > 0.0f ? emitter.particleVolume : cellSize * cellSize * cellSize;
     std::vector<glm::vec4> pos(nNew), vel(nNew);
-    std::vector<glm::vec4> F0v(nNew), F1v(nNew), F2v(nNew);
-    std::vector<glm::vec4> B0v(nNew), B1v(nNew), B2v(nNew);
 
     // 位置生成 (形状ごとの分岐は Emitter::sample() に委譲)
     for(int j = 0; j < nNew; j++) pos[j] = glm::vec4(emitter.sample(emitterRng_), Vp);
 
-    // 速度 (vel.w = material id)、F = I、B = 0、stress = 0
-    for(int j = 0; j < nNew; j++) {
-      vel[j] = glm::vec4(emitter.sample_velocity(glm::vec3(pos[j]), emitterRng_), matIdF);
-      F0v[j] = glm::vec4(1, 0, 0, 0);
-      F1v[j] = glm::vec4(0, 1, 0, 0);
-      F2v[j] = glm::vec4(0, 0, 1, 0);
-      B0v[j] = glm::vec4(0);
-      B1v[j] = glm::vec4(0);
-      B2v[j] = glm::vec4(0);
+    // 同じ格子セルの粒子を近くに配置し、P2G のアクセスを局所化する。
+    if(nNew > 1024) {
+      struct KeyedPosition { uint32_t key; glm::vec4 position; };
+      const glm::uvec3 res = domain::gridRes(domainSize, cellSize);
+      std::vector<KeyedPosition> keyed;
+      keyed.reserve(nNew);
+      for(const auto& p : pos) {
+        const uint32_t x = uint32_t(std::clamp(int(p.x / cellSize), 0, int(res.x) - 1));
+        const uint32_t y = uint32_t(std::clamp(int(p.y / cellSize), 0, int(res.y) - 1));
+        const uint32_t z = uint32_t(std::clamp(int(p.z / cellSize), 0, int(res.z) - 1));
+        keyed.push_back({(z * res.y + y) * res.x + x, p});
+      }
+      std::sort(keyed.begin(), keyed.end(), [](const auto& a, const auto& b) { return a.key < b.key; });
+      for(int j = 0; j < nNew; ++j) pos[j] = keyed[j].position;
     }
 
-    VkDeviceSize byteOff = VkDeviceSize(nParticles_) * sizeof(glm::vec4);
-    auto up              = [&](const std::string& name, const void* data) { attrBuf_.uploadAt(name, data, VkDeviceSize(nNew) * sizeof(glm::vec4), byteOff, cmdPool_, queue_); };
-    up("P", pos.data());
-    up("v", vel.data());
-    up("F0", F0v.data());
-    up("F1", F1v.data());
-    up("F2", F2v.data());
-    up("B0", B0v.data());
-    up("B1", B1v.data());
-    up("B2", B2v.data());
+    // 速度 (vel.w = material id)。F と B は uploadNewParticles_ で初期化する。
+    for(int j = 0; j < nNew; j++) {
+      vel[j] = glm::vec4(emitter.sample_velocity(glm::vec3(pos[j]), emitterRng_), matIdF);
+    }
 
+    uploadNewParticles_(pos.data(), vel.data(), uint32_t(nNew), nParticles_);
     nParticles_ += uint32_t(nNew);
     done++;
     emitter.center += emitter.center_vel * dt;
@@ -389,9 +403,39 @@ void MPMEngine::step(VkCommandBuffer cmd, float dt) {
     emitFromEmitters(dt);
   }
 
+  // 前ステップの計算が終わってから転送と次の計算を始める。
+  VkMemoryBarrier stepBarrier{};
+  stepBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+  stepBarrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+  stepBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                       0, 1, &stepBarrier, 0, nullptr, 0, nullptr);
+
   {
     ZoneScopedN("UploadForces");
-    uploadForces(dt);
+    std::vector<ForceGPU> packed;
+    packed.reserve(forces_.size());
+    for(const auto& force : forces_) {
+      force->advanceTime(dt);
+      packed.push_back(force->pack());
+    }
+    const bool uploaded = !packed.empty() || !pendingColliders_.empty();
+    if(!packed.empty())
+      vkCmdUpdateBuffer(cmd, attrBuf_.getBuffer("forces"), 0, sizeof(ForceGPU) * packed.size(), packed.data());
+    if(!pendingColliders_.empty()) {
+      vkCmdUpdateBuffer(cmd, attrBuf_.getBuffer("colliders"), 0,
+                        sizeof(ColliderPrimitive) * pendingColliders_.size(), pendingColliders_.data());
+      pendingColliders_.clear();
+    }
+    if(uploaded) {
+      VkMemoryBarrier b{};
+      b.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+      b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                           0, 1, &b, 0, nullptr, 0, nullptr);
+    }
   }
 
   const uint32_t N  = nParticles_; // ライブパーティクル数

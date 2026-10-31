@@ -278,12 +278,13 @@ void MPMEngine::setParticleMaterialIds(const std::vector<uint32_t>& matIds) {
 void MPMEngine::setColliders(const ColliderSet& cols) {
   ZoneScoped;
   pc_.colliderCount = cols.count();
-  if(pc_.colliderCount > 0) {
-    attrBuf_.upload("colliders", cols.data().data(), cols.count() * sizeof(ColliderPrimitive), cmdPool_, queue_);
-  }
+  pendingColliders_ = cols.data();
 }
 
-void MPMEngine::clearAnalyticColliders() { pc_.colliderCount = 0; }
+void MPMEngine::clearAnalyticColliders() {
+  pc_.colliderCount = 0;
+  pendingColliders_.clear();
+}
 
 // ── Emitter ───────────────────────────────────────────────────────────────
 
@@ -404,7 +405,28 @@ void MPMEngine::step(VkCommandBuffer cmd, float dt) {
 
   {
     ZoneScopedN("UploadForces");
-    uploadForces(dt);
+    std::vector<ForceGPU> packed;
+    packed.reserve(forces_.size());
+    for(const auto& force : forces_) {
+      force->advanceTime(dt);
+      packed.push_back(force->pack());
+    }
+    const bool uploaded = !packed.empty() || !pendingColliders_.empty();
+    if(!packed.empty())
+      vkCmdUpdateBuffer(cmd, attrBuf_.getBuffer("forces"), 0, sizeof(ForceGPU) * packed.size(), packed.data());
+    if(!pendingColliders_.empty()) {
+      vkCmdUpdateBuffer(cmd, attrBuf_.getBuffer("colliders"), 0,
+                        sizeof(ColliderPrimitive) * pendingColliders_.size(), pendingColliders_.data());
+      pendingColliders_.clear();
+    }
+    if(uploaded) {
+      VkMemoryBarrier b{};
+      b.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+      b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                           0, 1, &b, 0, nullptr, 0, nullptr);
+    }
   }
 
   const uint32_t N  = nParticles_; // ライブパーティクル数

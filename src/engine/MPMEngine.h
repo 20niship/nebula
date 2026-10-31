@@ -101,6 +101,7 @@ protected:
 private:
   // GPU 側状態の唯一の格納先 (旧cfg_ + 個別indexメンバとの二重管理を廃止)。
   MPMSimPC pc_{};
+  std::vector<ColliderPrimitive> pendingColliders_;
 
   // ライブパーティクル数（dispatch ルーピング用）
   uint32_t nParticles_   = 0;

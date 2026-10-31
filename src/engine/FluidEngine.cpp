@@ -163,32 +163,8 @@ VkBuffer FluidEngine::getEmitterIndexBuffer() const { return attrBuf_.getBuffer(
 
 // ── 境界粒子ロード ────────────────────────────────────────────────────────────
 
-void FluidEngine::loadBoundary(const std::string& objPath, float spacing) {
-  BoundaryParticles bp;
-  auto pts = bp.loadOBJ(objPath, spacing);
-
-  if(pts.empty()) return;
-
-  uint32_t n = static_cast<uint32_t>(std::min(pts.size(), size_t(cfg_.max_boundary)));
-
-  std::vector<glm::vec4> ptsFixed(pts.begin(), pts.begin() + n);
-  for(auto& p : ptsFixed) p.w = 0.0f; // P.w=invMass=0 (固定境界)
-  attrBuf_.uploadVec4("P", ptsFixed.data(), n, cmdPool_, queue_, cfg_.halfVec4);
-  attrBuf_.uploadVec4("predP", ptsFixed.data(), n, cmdPool_, queue_, cfg_.halfVec4);
-
-  std::vector<glm::vec4> zeroVel(n, glm::vec4(0.0f, 0.0f, 0.0f, -1.0f));
-  attrBuf_.uploadVec4("v", zeroVel.data(), n, cmdPool_, queue_, cfg_.halfVec4 || cfg_.halfVec4Vel);
-
-  std::vector<uint32_t> flags(n, 3u);
-  attrBuf_.upload("typeFlag", flags.data(), sizeof(uint32_t) * n, cmdPool_, queue_);
-
-  nBoundary = n;
-  boundaryTriVerts_.clear();
-}
-
 void FluidEngine::loadBoundary(const std::string& objPath, float spacing, float scale, glm::vec3 offset, bool yup_to_zup) {
-  BoundaryParticles bp;
-  BoundaryMesh mesh = bp.loadOBJ(objPath, spacing, scale, offset, yup_to_zup);
+  BoundaryMesh mesh = generate_particles_from_mesh_surface(objPath, spacing, scale, offset, yup_to_zup);
 
   if(mesh.particles.empty()) return;
 

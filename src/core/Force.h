@@ -119,7 +119,7 @@ protected:
 };
 
 // ── GravityForce: 任意方向・強さの重力 ──────────────────────────────────────
-struct GravityForce : public Force {
+struct GravityForce final : public Force {
   glm::vec3 direction{0.0f, 0.0f, -1.0f};
   float strength = 9.8f;
 
@@ -150,7 +150,7 @@ void forceApplyVelocity_gravity(inout vec3 v, vec3 forcePos, uint forceTypeFlag,
 };
 
 // ── ConstantWindForce: 任意方向・強さの定常風 ────────────────────────────────
-struct ConstantWindForce : public Force {
+struct ConstantWindForce final : public Force {
   glm::vec3 direction{1.0f, 0.0f, 0.0f};
   float strength = 1.0f;
 
@@ -181,7 +181,7 @@ void forceApplyVelocity_wind(inout vec3 v, vec3 forcePos, uint forceTypeFlag, fl
 };
 
 // ── TurbulenceForce: curl-noise による非圧縮的な乱流風 ──────────────────────
-struct TurbulenceForce : public Force {
+struct TurbulenceForce final : public Force {
   float strength  = 1.0f; // 加速度スケール [m/s^2]
   float frequency = 0.5f; // 空間周波数 [1/m]
   uint32_t octaves = 3u;
@@ -217,7 +217,7 @@ void forceApplyVelocity_turbulence(inout vec3 v, vec3 forcePos, uint forceTypeFl
 };
 
 // ── NoiseForce: fBm スカラーノイズによる一方向の揺らぎ ───────────────────────
-struct NoiseForce : public Force {
+struct NoiseForce final : public Force {
   glm::vec3 direction{0.0f, 1.0f, 0.0f}; // ノイズを乗せる方向 (正規化推奨)
   float strength  = 1.0f;
   float frequency = 1.0f;
@@ -260,7 +260,7 @@ void forceApplyVelocity_noise(inout vec3 v, vec3 forcePos, uint forceTypeFlag, f
 // のみで predP.z を上書きする。速度への力(加速度加算)ではなく位置制約が
 // Force継承で実現できることの実証例。predP/p の概念を持つ predict.comp /
 // predict_sdf.comp を使うEngineでのみ使用可能。
-struct ZClampForce : public Force {
+struct ZClampForce final : public Force {
   float zValue = 0.0f;
 
   ForceType type() const override { return ForceType::Z_CLAMP; }

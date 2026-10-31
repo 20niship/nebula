@@ -1,4 +1,4 @@
-#include "RigidMeshCollider.h"
+#include "Collider.h"
 
 #include <algorithm>
 #include <cmath>

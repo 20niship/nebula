@@ -80,8 +80,7 @@ public:
   // growFluidCapacity() で増加するため呼び出し側は毎フレーム参照すること。
   uint32_t totalParticleCapacity() const { return totalBufferCapacity(); }
 
-  void loadBoundary(const std::string& objPath, float spacing);
-  void loadBoundary(const std::string& objPath, float spacing, float scale, glm::vec3 offset, bool yup_to_zup);
+  void loadBoundary(const std::string& objPath, float spacing, float scale = 1.0f, glm::vec3 offset = glm::vec3(0.0f), bool yup_to_zup = false);
   // OBJ を経由せず位置ベクタから直接境界粒子を登録する (TC8 スクリュー用)
   void loadBoundaryParticles(const std::vector<glm::vec4>& pts);
   void clearBoundary();

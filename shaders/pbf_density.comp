@@ -10,6 +10,16 @@
 layout(local_size_x = 256) in;
 
 void main() {
+#ifdef NBR_SORTED_BUFFERS
+    // ソート済みスロット順にスレッドを割り当て、隣接スレッドが同じ近傍セルを読んでキャッシュを共有する(pc.edgeCount=有効スロット総数)
+    uint kSelf = gl_GlobalInvocationID.x;
+    if (kSelf >= pc.edgeCount) return;
+    vec4 pk   = readVec4(pc.predPSortedIdx, kSelf);
+    uint fi   = uint(pk.w + 0.5);
+    if (fi != 1u && fi != 5u) return;  // 流体・粉体のみ処理
+    uint idx  = readUint(pc.sortedIdxIdx, kSelf);
+    vec4 pi4  = vec4(pk.xyz, readVec4(pc.predPIdx, idx).w);
+#else
     uint i = gl_GlobalInvocationID.x;
     if (i >= pc.particleCount) return;
     uint idx = i + pc.fluidStart;
@@ -18,6 +28,7 @@ void main() {
     if (fi != 1u && fi != 5u) return;  // 流体・粉体のみ処理
 
     vec4 pi4  = readVec4(pc.predPIdx, idx);
+#endif
     vec3 pi   = pi4.xyz;
     float h   = pc.cellSize;
     float h2  = h * h;
@@ -26,9 +37,6 @@ void main() {
 
     float poly6_coeff = 315.0 / (64.0 * 3.14159265 * h9);
     float spiky_coeff = 45.0  / (3.14159265 * h2 * h2 * h2); // 正値; 方向は手動で調整
-#ifdef NBR_SORTED_BUFFERS
-    uint kSelf = readUint(pc.invSortedIdxIdx, idx) & 0xFFFFFFu; // issue #87 perf実験: 自分自身のソート後位置(下位24bit; 上位8bitはnbrCount)
-#endif
 
     float rho = 0.0;
     vec3  grad_ci = vec3(0.0); // ∇_{p_i} C_i = (1/ρ_0) Σ_j ∇W_{ij}

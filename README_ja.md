@@ -121,7 +121,9 @@ RTX 3060 での計測結果（Warp 1.17.0 / Newton 1.7.0、warmup 30 + 計測 10
 
 粒子数・グリッド解像度を変えたときのスケーリング（小さいほど速い）:
 
-https://github.com/user-attachments/assets/fd63cdcb-4850-4952-9232-1e2106b8a4e6
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/fd63cdcb-4850-4952-9232-1e2106b8a4e6" alt="nebula vs NVIDIA Warp (Newton): scaling with particle count and grid resolution" width="900">
+</p>
 
 MPM の 2 シーンでは nebula の方が速く、グリッドを細かくしても nebula の時間はほぼ横ばいだが Newton は増える。Softbody では nebula は粒子間衝突パスが O(N²) のため粒子数とともに急に遅くなり、Newton の方が速い。これは同じシーンを各エンジンの標準的なソルバで解いた時間の比較であり、同一アルゴリズムの比較ではない。注意点は [`benchmarks/warp/README.md`](benchmarks/warp/README.md) を参照。
 

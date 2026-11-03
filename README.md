@@ -121,7 +121,9 @@ Measured on an RTX 3060 (Warp 1.17.0 / Newton 1.7.0, warmup 30 + 100 frames, med
 
 Scaling with particle count and grid resolution (lower is faster):
 
-https://github.com/user-attachments/assets/fd63cdcb-4850-4952-9232-1e2106b8a4e6
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/fd63cdcb-4850-4952-9232-1e2106b8a4e6" alt="nebula vs NVIDIA Warp (Newton): scaling with particle count and grid resolution" width="900">
+</p>
 
 nebula is faster on both MPM scenes and its time stays almost flat as the grid is refined, while Newton's grows. On the soft body, nebula's time grows quickly with particle count because of its O(N²) particle-collision pass, and Newton is faster. These are timings of each engine's standard solver on the same scene, not of an identical algorithm — see [`benchmarks/warp/README.md`](benchmarks/warp/README.md) for the caveats.
 

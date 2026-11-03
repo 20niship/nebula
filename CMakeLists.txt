@@ -23,6 +23,7 @@ find_program(GLSLC glslc HINTS "${VULKAN_SDK}/bin" REQUIRED)
 
 option(NEBULA_GPU_PROFILING "Enable Vulkan timestamp-query GPU profiling" OFF)
 option(NEBULA_TRACY "Enable Tracy profiler" OFF)
+option(NEBULA_BUILD_BENCH_WARP "Build benchmarks/warp (NVIDIA Warp comparison, headless)" OFF)
 
 # ── shaderc (実行時 GLSL→SPIR-V 動的コンパイル ──
 find_path(SHADERC_INCLUDE_DIR shaderc/shaderc.hpp
@@ -249,6 +250,11 @@ endfunction()
 add_pyro_example(pyro_basic       examples/pyro_basic.cpp)
 add_pyro_example(pyro_cow_blast   examples/pyro_cow_blast.cpp)
 add_pyro_example(pyro_explosion   examples/pyro_explosion.cpp)
+
+# ── benchmarks/warp: NVIDIA Warp との比較ベンチ (既定 OFF, CI 非対象) ────────
+if(NEBULA_BUILD_BENCH_WARP)
+    add_subdirectory(benchmarks/warp)
+endif()
 
 # ── capture_all: capture_sim.py が使う実行ファイルを一括ビルドするための集約ターゲット ──
 add_custom_target(capture_all DEPENDS

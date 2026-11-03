@@ -10,6 +10,17 @@
 layout(local_size_x = 256) in;
 
 void main() {
+#ifdef NBR_SORTED_BUFFERS
+    // ソート済みスロット順にスレッドを割り当て、隣接スレッドが同じ近傍を読んでキャッシュを共有する(pc.edgeCount=有効スロット総数)。
+    // posSortedは sdf_collision_velocity が最終位置を書いている。
+    uint kSelf = gl_GlobalInvocationID.x;
+    if (kSelf >= pc.edgeCount) return;
+    vec4 pi4 = readVec4(pc.posSortedIdx, kSelf);
+    uint fi  = uint(pi4.w + 0.5);
+    if (fi != 1u) return;
+    uint idx = readUint(pc.sortedIdxIdx, kSelf);
+    vec3 pi  = pi4.xyz;
+#else
     uint i = gl_GlobalInvocationID.x;
     if (i >= pc.particleCount) return;
     uint idx = i + pc.fluidStart;
@@ -20,6 +31,7 @@ void main() {
     // update_velocity 後: posIdx = 最終位置、velIdx = 更新済み速度
     vec4 pi4 = readVec4(pc.posIdx, idx);
     vec3 pi  = pi4.xyz;
+#endif
     vec4 vi4 = readVec4Vel(pc.velIdx, idx);
     vec3 vi  = vi4.xyz;
 
@@ -27,12 +39,29 @@ void main() {
     float h2 = h * h;
     float c  = pc.bendCompliance; // XSPH 粘性係数
     float poly6_coeff = 315.0 / (64.0 * 3.14159265 * h2 * h2 * h2 * h2 * h);
-#ifdef NBR_SORTED_BUFFERS
-    uint kSelf = readUint(pc.invSortedIdxIdx, idx) & 0xFFFFFFu; // issue #87 perf実験 続き: 自分自身のソート後位置
-#endif
 
     vec3 vel_corr = vec3(0.0);
 
+#ifdef NBR_SORTED_BUFFERS
+    // 27セル走査をせず、pbf_density が書いた nbrList(sorted位置k) を再利用する(Verlet list; 近傍集合は substep 開始時の位置で固定)
+    uint nbrN    = readUint(pc.invSortedIdxIdx, idx) >> 24;
+    uint nbrBase = idx * MAX_NBR;
+    for (uint kk = 0u; kk < nbrN; ++kk) {
+        uint k   = readUint(pc.nbrListIdx, nbrBase + kk);
+        vec4 pjv = readVec4(pc.posSortedIdx, k);
+        uint fj  = uint(pjv.w + 0.5);
+        if (fj != 1u && fj != 3u) continue; // 流体 + 運動学的境界 (TC8)
+
+        vec3 r   = pi - pjv.xyz;
+        float r2 = dot(r, r);
+        if (r2 >= h2) continue;
+
+        float hr2 = h2 - r2;
+        float w   = poly6_coeff * hr2 * hr2 * hr2;
+        vec3 vj   = readVec4Vel(pc.velSortedIdx, k).xyz;
+        vel_corr += (vj - vi) * w;
+    }
+#else
     ivec3 gi = ivec3(clamp((pi - pc.worldMin) / pc.cellSize,
                            vec3(0.0), vec3(pc.gridRes) - vec3(1.0)));
 
@@ -52,37 +81,23 @@ void main() {
         uint start = readUint(pc.cellOffsetIdx, cid) - cnt;
 
         for (uint k = start; k < start + cnt; ++k) {
-#ifdef NBR_SORTED_BUFFERS
-            // sortedIdx経由のgatherをやめ、sdf_collision_velocityが書いたソート済みコピーをkで直接コアレス読み
-            if (k == kSelf) continue;
-            vec4 pjv = readVec4(pc.posSortedIdx, k);
-            uint fj  = uint(pjv.w + 0.5);
-#else
             uint j  = readUint(pc.sortedIdxIdx, k);
             if (j == idx) continue;
             uint fj = readUint(pc.typeFlagIdx, j);
-#endif
             if (fj != 1u && fj != 3u) continue; // 流体 + 運動学的境界 (TC8)
 
-#ifdef NBR_SORTED_BUFFERS
-            vec3 pj = pjv.xyz;
-#else
             vec3 pj = readVec4(pc.posIdx, j).xyz;
-#endif
             vec3 r  = pi - pj;
             float r2 = dot(r, r);
             if (r2 >= h2) continue;
 
             float hr2 = h2 - r2;
             float w   = poly6_coeff * hr2 * hr2 * hr2;
-#ifdef NBR_SORTED_BUFFERS
-            vec3 vj   = readVec4Vel(pc.velSortedIdx, k).xyz;
-#else
             vec3 vj   = readVec4Vel(pc.velIdx, j).xyz;
-#endif
             vel_corr += (vj - vi) * w;
         }
     }
+#endif
 
     // ρ₀ で割って正規化: Σ W_ij ≈ ρ₀ のため、c の意味が正しい XSPH 係数になる
     vi4.xyz = vi + c * vel_corr / pc.stretchCompliance;

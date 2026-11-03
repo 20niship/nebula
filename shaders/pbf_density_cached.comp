@@ -1,0 +1,65 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "common.glsl"
+
+// PBF 密度+λ (反復2回目以降): 27セル走査をせず、初回 pbf_density が書いた nbrList を再利用する。
+// 近傍集合は substep 開始時の位置で固定 (Verlet list)。距離は最新の predPSorted で再評価する。
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint kSelf = gl_GlobalInvocationID.x;
+    if (kSelf >= pc.edgeCount) return; // ソート済みスロット順dispatch(edgeCount=有効スロット総数)
+    vec4 pk   = readVec4(pc.predPSortedIdx, kSelf);
+    uint fi   = uint(pk.w + 0.5);
+    if (fi != 1u && fi != 5u) return;
+    uint idx  = readUint(pc.sortedIdxIdx, kSelf);
+    vec3 pi   = pk.xyz;
+    float h   = pc.cellSize;
+    float h2  = h * h;
+    float h9  = h2 * h2 * h2 * h2 * h;
+    float rho0 = pc.stretchCompliance;
+
+    float poly6_coeff = 315.0 / (64.0 * 3.14159265 * h9);
+    float spiky_coeff = 45.0  / (3.14159265 * h2 * h2 * h2);
+
+    uint nbrN  = readUint(pc.invSortedIdxIdx, idx) >> 24;
+
+    // 自分自身(r=0)の寄与: nbrListは自分を含まないためここで加算する
+    float rho = poly6_coeff * h2 * h2 * h2;
+    vec3  grad_ci = vec3(0.0);
+    float sum_grad_sq = 0.0;
+
+    uint nbrBase = idx * MAX_NBR;
+    for (uint kk = 0u; kk < nbrN; ++kk) {
+        uint k   = readUint(pc.nbrListIdx, nbrBase + kk);
+        vec4 pjv = readVec4(pc.predPSortedIdx, k);
+        uint fj  = uint(pjv.w + 0.5);
+
+        vec3 r   = pi - pjv.xyz;
+        float r2 = dot(r, r);
+        if (r2 >= h2) continue;
+
+        float hr2 = h2 - r2;
+        rho += poly6_coeff * hr2 * hr2 * hr2;
+
+        if (fj != 1u && fj != 5u) continue; // 境界はグラジエント和に含めない
+
+        float rlen = sqrt(r2);
+        if (rlen < 1e-6) continue;
+        float hr = h - rlen;
+        vec3 grad_w = (spiky_coeff * hr * hr / rlen) * r;
+
+        grad_ci     += grad_w;
+        sum_grad_sq += dot(grad_w, grad_w) / (rho0 * rho0);
+    }
+
+    float C = rho / rho0 - 1.0;
+    float denom = dot(grad_ci, grad_ci) / (rho0 * rho0) + sum_grad_sq + pc.cfmEpsilon;
+    float lambda = -C / denom;
+
+    writeFloat(pc.densityIdx,   idx, rho);
+    writeFloat(pc.lambdaPbfIdx, idx, lambda);
+    writeFloat(pc.densitySortedIdx,   kSelf, rho);
+    writeFloat(pc.lambdaPbfSortedIdx, kSelf, lambda);
+}

@@ -197,6 +197,7 @@ private:
   ComputePipeline kHashScanGlobal_;
   ComputePipeline kHashSort_;
   ComputePipeline kPbfDensity_;
+  ComputePipeline kPbfDensityCached_; // 反復2回目以降: 初回densityが書いたnbrListを再利用する密度pass
   ComputePipeline kPbfDeltaP_;
   ComputePipeline kPbfViscosity_;
   ComputePipeline kZeroCells_;

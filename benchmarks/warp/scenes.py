@@ -7,6 +7,7 @@ nebula 側へは nebula_args() で CLI 引数として渡し、Warp 側 (NVIDIA 
 substeps や材料モデルのパラメータはソルバごとに適切な値を持つ ("newton" キー)。
 """
 
+import copy
 import math
 from pathlib import Path
 
@@ -21,18 +22,21 @@ FRAMES = 100  # 計測フレーム数
 WALL_MARGIN = 1.5 * CELL
 
 # MLS-MPM の粒子間隔 = セルの半分 (セルあたり 8 粒子)
-SPACING = CELL / 2.0
+SPACING = DOMAIN / 128.0  # セルを変えても粒子間隔は固定 (グリッドスイープで粒子数を一定に保つため)
 
 # XPBD softbody 用 .sb メッシュ (tools/gen_softbody.py --cube で生成する。リポジトリには含めない)
 SB_GRID = 16  # 16^3 = 4096 頂点
 SB_SIZE = 3.0  # 立方体の一辺 [m]
 SB_FILENAME = f"cube_{SB_GRID}.sb"
 
+PARTICLE_SCALE = 1.0  # MPM 粒子数の倍率 (configure() で変更)
+
 SCENES = {
     # 流体: 角に置いた水柱 (dam break)。MPM + FLIP(0.95)、弱圧縮 EOS: τ = K (J - 1) I
     "fluid": dict(
         kind="mpm",
         title="流体 (MPM FLIP, water)",
+        title_en="Fluid (MPM, water dam break)",
         substeps=20,
         flip_ratio=0.95,
         # presetWater の K=5e3 は 3 m の水柱の静水圧 (~29 kPa) より小さく、水柱が崩れず縦に潰れるため大きくする
@@ -46,6 +50,7 @@ SCENES = {
     "sand": dict(
         kind="mpm",
         title="粉体 (MPM APIC, sand)",
+        title_en="Granular (MPM, sand column)",
         substeps=20,
         flip_ratio=-1.0,
         material=dict(model="dp", rho0=1600.0, E=1e5, nu=0.3, M=0.577, qc=0.0),
@@ -58,6 +63,7 @@ SCENES = {
     "softbody": dict(
         kind="xpbd",
         title="Softbody (XPBD tet cube)",
+        title_en="Soft body (XPBD, tet cube)",
         substeps=15,
         iters=5,
         offset=(3.5, 5.0, 3.5),
@@ -95,3 +101,33 @@ def nebula_args(name, sb_dir, warmup=WARMUP, frames=FRAMES):
         a += ["--sb", str(Path(sb_dir) / SB_FILENAME), "--sb-offset", _v3(s["offset"]),
               "--iters", str(s["iters"])]
     return a
+
+
+_BASE = copy.deepcopy(SCENES)
+
+
+def configure(cell=None, particle_scale=None, sb_grid=None):
+    """スイープ用にモジュール定数を書き換える (呼び出し元プロセスのみ有効)。
+
+    cell: グリッドセル [m] (粒子間隔は固定なので粒子数は変わらない)
+    particle_scale: MPM 粒子数の倍率 (各軸 scale^(1/3) 倍)
+    sb_grid: softbody 立方体の一辺の頂点数
+    """
+    global CELL, WALL_MARGIN, SB_GRID, SB_FILENAME, PARTICLE_SCALE
+    if cell is not None:
+        CELL = cell
+        WALL_MARGIN = 1.5 * CELL
+    if particle_scale is not None:
+        PARTICLE_SCALE = particle_scale
+        f = particle_scale ** (1.0 / 3.0)
+        for name, s in SCENES.items():
+            if s["kind"] == "mpm":
+                s["block_n"] = tuple(max(1, round(n * f)) for n in _BASE[name]["block_n"])
+    if sb_grid is not None:
+        SB_GRID = sb_grid
+        SB_FILENAME = f"cube_{SB_GRID}.sb"
+
+
+def particle_count(name):
+    s = SCENES[name]
+    return math.prod(s["block_n"]) if s["kind"] == "mpm" else SB_GRID ** 3

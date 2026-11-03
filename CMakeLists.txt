@@ -219,6 +219,9 @@ add_sim_example(mpm_snow_impact examples/mpm_snow_impact.cpp)
 # ── mpm_tire_sand: 転がるタイヤ(円柱MESH_SDF)による砂の巻き上げ ───────────────
 add_sim_example(mpm_tire_sand examples/mpm_tire_sand.cpp)
 
+# ── flip_spume: spume README の FLIP 液体シーン集 (geyser/outfall/culvert/slab/dual) ──
+add_sim_example(flip_spume examples/flip_spume.cpp)
+
 # ── Pyro (グリッドベース煙・火炎) ヘッドレス実行例 ───────────────────────────
 if(APPLE)
     set(PYRO_PLATFORM_WRAPPERS tests/helpers/VkWrapper.mm)

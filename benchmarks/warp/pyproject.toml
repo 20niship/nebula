@@ -1,0 +1,16 @@
+[project]
+name = "nebula-warp-bench"
+version = "0.0.0"
+description = "nebula と NVIDIA Warp (Newton) の比較ベンチマーク用 Python 環境"
+requires-python = ">=3.10"
+dependencies = [
+    "newton>=1.7.0", # Warp ベースの物理エンジン (XPBD / implicit MPM)。warp-lang>=1.17 を引く
+    # warp-lang 1.18 以降の PyPI wheel は CUDA 13 ドライバ必須。CUDA 12.x ドライバでも動く最後の 1.17 に固定する。
+    # CUDA 13 ドライバの環境ではこの pin を外してよい。
+    "warp-lang>=1.17.0,<1.18",
+    "numpy",
+]
+
+# 配布物ではなくベンチ用スクリプト置き場なので、パッケージ化はしない
+[tool.uv]
+package = false

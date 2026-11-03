@@ -1,2 +1,4 @@
 out/
 __pycache__/
+uv.lock
+.venv/

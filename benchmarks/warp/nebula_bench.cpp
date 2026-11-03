@@ -36,6 +36,7 @@ struct BenchArgs : public argparse::Args {
   std::string& block_n     = kwarg("block-n", "MPM particle lattice counts 'nx,ny,nz'").set_default(std::string("10,10,10"));
   float& spacing           = kwarg("spacing", "MPM particle lattice spacing [m]").set_default(0.078125f);
   float& flip_ratio        = kwarg("flip-ratio", "MPM transfer: 0=PIC, -1=APIC, (0,1]=FLIP blend").set_default(0.0f);
+  float& bulk_k            = kwarg("bulk-k", "fluid bulk modulus K [Pa] (fluid scene)").set_default(5e3f);
   std::string& sb          = kwarg("sb", "softbody .sb file").set_default(std::string(""));
   std::string& sb_offset   = kwarg("sb-offset", "softbody offset 'x,y,z'").set_default(std::string("0,0,0"));
   int& iters               = kwarg("iters", "XPBD solver iterations").set_default(5);
@@ -136,7 +137,7 @@ int main(int argc, char* argv[]) {
 
     Result r;
     if(args.scene == "fluid") {
-      r = runMPM(ctx, args, presetWater());
+      r = runMPM(ctx, args, presetWater(1000.0f, args.bulk_k));
     } else if(args.scene == "sand") {
       r = runMPM(ctx, args, presetSand());
     } else if(args.scene == "softbody") {

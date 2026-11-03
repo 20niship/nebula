@@ -1,7 +1,10 @@
 """比較シーン定義 (nebula / Warp 共通の単一ソース)。
 
-両実装とも同じ初期粒子配置・dt・substeps・材料パラメータ・重力 (-Y) で動かす。
-nebula 側へは nebula_args() で CLI 引数として渡し、Warp 側は warp_bench.py が直接参照する。
+両実装とも同じ初期粒子配置・フレーム dt・粒子数・グリッドセル・重力で動かす。
+nebula 側へは nebula_args() で CLI 引数として渡し、Warp 側 (NVIDIA Newton) は warp_bench.py が直接参照する。
+
+ソルバの種類が違う (nebula: 陽的 MLS-MPM / XPBD、Newton: implicit MPM / XPBD) ため、
+substeps や材料モデルのパラメータはソルバごとに適切な値を持つ ("newton" キー)。
 """
 
 import math
@@ -13,6 +16,9 @@ DT = 1.0 / 60.0  # フレーム dt [s]
 GRAVITY = 9.8  # -Y 方向 [m/s^2]
 WARMUP = 30  # 計測しないウォームアップフレーム数 (GPU クロック上昇待ちも兼ねる)
 FRAMES = 100  # 計測フレーム数
+
+# nebula の MPM は粒子を壁から 1.5 セル内側に閉じ込める (mpm_g2p.comp の margin)。Newton 側の壁もこの位置に置く
+WALL_MARGIN = 1.5 * CELL
 
 # MLS-MPM の粒子間隔 = セルの半分 (セルあたり 8 粒子)
 SPACING = CELL / 2.0
@@ -29,9 +35,12 @@ SCENES = {
         title="流体 (MPM FLIP, water)",
         substeps=20,
         flip_ratio=0.95,
-        material=dict(model="fluid", rho0=1000.0, bulk_k=5e3),
+        # presetWater の K=5e3 は 3 m の水柱の静水圧 (~29 kPa) より小さく、水柱が崩れず縦に潰れるため大きくする
+        material=dict(model="fluid", rho0=1000.0, bulk_k=2e5),
         block_min=(0.5, 0.5, 0.5),
         block_n=(38, 38, 38),
+        newton=dict(substeps=2, density=1000.0, friction=0.0, tensile_yield_ratio=1.0, viscosity=0.0,
+                    max_iterations=50, tolerance=1e-3),
     ),
     # 粉体: 砂柱の崩壊。MPM + APIC、Drucker-Prager (Hencky 弾性 + SVD 射影)
     "sand": dict(
@@ -42,6 +51,8 @@ SCENES = {
         material=dict(model="dp", rho0=1600.0, E=1e5, nu=0.3, M=0.577, qc=0.0),
         block_min=(3.8, 0.5, 3.8),
         block_n=(30, 50, 30),
+        # 砂は Newton の granular example 既定 (剛に近い弾性 + Drucker-Prager 降伏) に摩擦係数 tan(30°) だけ合わせる
+        newton=dict(substeps=2, density=1600.0, friction=0.577, max_iterations=250, tolerance=1e-4),
     ),
     # Softbody: 四面体ジェリーキューブの落下。XPBD (edge 距離 + tet 体積拘束、グラフ彩色 Gauss-Seidel)
     "softbody": dict(
@@ -54,6 +65,9 @@ SCENES = {
         vol_compliance=5e-4,
         linear_damping=0.03,
         particle_radius=0.02,
+        # 同じ 16^3 頂点の立方体を add_soft_grid で作る (tet 分割は nebula と一致しない)。
+        # 密度は nebula の 1 頂点 = 1 kg (4096 kg / 27 m^3 ≒ 150) に合わせる
+        newton=dict(substeps=15, iters=5, density=150.0, k_mu=1e5, k_lambda=1e5, k_damp=0.0),
     ),
 }
 
@@ -75,6 +89,8 @@ def nebula_args(name, sb_dir, warmup=WARMUP, frames=FRAMES):
     if s["kind"] == "mpm":
         a += ["--block-min", _v3(s["block_min"]), "--block-n", _v3(s["block_n"]),
               "--spacing", repr(SPACING), "--flip-ratio", repr(s["flip_ratio"])]
+        if s["material"]["model"] == "fluid":
+            a += ["--bulk-k", repr(s["material"]["bulk_k"])]
     else:
         a += ["--sb", str(Path(sb_dir) / SB_FILENAME), "--sb-offset", _v3(s["offset"]),
               "--iters", str(s["iters"])]

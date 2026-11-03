@@ -1,14 +1,14 @@
-# nebula vs NVIDIA Warp ベンチマーク
+# nebula vs NVIDIA Warp (Newton) ベンチマーク
 
-同一条件のシミュレーションを nebula (Vulkan compute) と NVIDIA Warp (CUDA) で走らせ、1 フレームあたりの時間を表にまとめる。
+同じ条件のシーンを nebula (Vulkan compute) と NVIDIA Warp 製の物理エンジン [Newton](https://github.com/newton-physics/newton) で走らせ、1 フレームあたりの時間を表にまとめる。
 
-| シーン | 内容 |
-|---|---|
-| 流体 | 水柱 (dam break)。MPM + FLIP(0.95)、弱圧縮 EOS、約 55k 粒子 |
-| 粉体 | 砂柱の崩壊。MPM + APIC、Drucker-Prager、45k 粒子 |
-| Softbody | 四面体ジェリーキューブ落下。XPBD (edge + tet 体積拘束)、4096 頂点 / 16875 tet |
+| シーン | nebula | Warp (Newton) |
+|---|---|---|
+| 流体 (水柱の崩壊, 約 55k 粒子) | 陽的 MLS-MPM, FLIP(0.95), 弱圧縮 EOS | `SolverImplicitMPM` (implicit MPM) |
+| 粉体 (砂柱の崩壊, 45k 粒子) | 陽的 MLS-MPM, APIC, Drucker-Prager | `SolverImplicitMPM` (摩擦係数 tan 30°) |
+| Softbody (四面体キューブ落下, 4096 頂点) | XPBD (辺 + 体積拘束) | `SolverXPBD` + `add_soft_grid` |
 
-シーン定義は [`scenes.py`](scenes.py) が唯一のソース (dt / substeps / 材料 / 初期配置 / 重力)。nebula へは CLI 引数で渡し、Warp は直接参照する。
+シーン定義 (フレーム dt / ドメイン / グリッドセル / 初期粒子配置 / 重力 / 粒子数) は [`scenes.py`](scenes.py) が唯一のソース。nebula へは CLI 引数で渡し、Warp 側 ([`warp_bench.py`](warp_bench.py)) は直接参照する。
 
 ## 実行
 
@@ -17,25 +17,25 @@
 cmake -S . -B build-bench -G Ninja -DCMAKE_BUILD_TYPE=Release -DNEBULA_BUILD_BENCH_WARP=ON
 cmake --build build-bench --target nebula_bench
 
-# Warp 側
-pip install -r benchmarks/warp/requirements.txt
-
-python3 benchmarks/warp/run_benchmark.py          # 結果: benchmarks/warp/out/results.{md,json}
-python3 benchmarks/warp/run_benchmark.py --scenes sand --repeats 1   # 一部だけ
+# Warp 側の環境は pyproject.toml (uv)。uv.lock と .venv は gitignore
+cd benchmarks/warp
+uv sync
+uv run python run_benchmark.py                              # 結果: out/results.{md,json}
+uv run python run_benchmark.py --scenes sand --repeats 1    # 一部だけ
 ```
 
-`.sb` メッシュは初回に `tools/gen_softbody.py --cube` で `out/` に生成される。Vulkan デバイスが複数ある環境 (例: llvmpipe) では `VK_ICD_FILENAMES` 等で GPU を選ぶこと。選ばれたデバイス名は結果表の `GPU:` に出る。
+nebula の softbody 用 `.sb` メッシュは初回に `tools/gen_softbody.py --cube` で `out/` に生成される。Vulkan デバイスが複数ある環境 (例: llvmpipe) では `VK_ICD_FILENAMES` 等で GPU を選ぶこと。選ばれたデバイス名は結果表の `GPU:` に出る。
 
 ## 計測方法
 
-- 計測は warmup (既定 30 フレーム、GPU クロック上昇待ちも兼ねる) の後、100 フレームの wall-clock。毎フレーム GPU 完了まで同期する。
+- warmup (既定 30 フレーム、GPU クロック上昇待ちも兼ねる) の後、100 フレームの wall-clock。毎フレーム GPU 完了まで同期する。
 - プロセス単位で 3 回繰り返して中央値を採用する。
-- Warp は 2 通り計測する: 通常の `wp.launch` と、1 フレームを CUDA graph にキャプチャして再生する場合。nebula は 1 フレームを 1 つの command buffer に記録して submit するので、後者が起動オーバーヘッド面では近い。
-- 「重心差」は終了時の粒子重心の差で、同じ物理を解いているかの目安。
+- Warp は通常実行と、1 フレームを CUDA graph にキャプチャして再生する場合の 2 通りを測る。Newton の implicit MPM は sparse グリッド (既定) だとキャプチャできないため、流体・粉体では通常実行のみ (表では「—」)。
 
 ## 注意
 
-- Warp 側は `warp.sim` / `warp.fem` を使わず、nebula のシェーダ (`mpm_p2g/grid_update/g2p.comp`, `predict/solve_stretch/sb_solve_volume/sdf_collision_velocity.comp`) を Warp カーネルへ移植している。同一アルゴリズムの実装比較であり、Warp の既製ソルバの性能ではない。
-- 粒子-格子の atomic は nebula が固定小数点 int、Warp が float。演算順も異なるため結果は bit 一致しない。粉体の崩壊は特にカオス的で、フレームが進むと重心差が広がる。
-- Softbody は粒子間衝突半径を 0 にしてあり補正は発生しないが、nebula と同じ O(N²) ループは両者とも回している。
-- Warp 1.19 以降は CUDA 13 ドライバ必須。ドライバが 12.x の環境では `pip install "warp-lang<1.11"` を使う。
+- **ソルバが違う。** nebula は陽的 MPM / XPBD、Newton は implicit MPM / XPBD で、Newton の MPM は非圧縮寄り・大きい時間刻みで解く。そのため substeps はソルバごとに適切な値 (nebula 20 / Newton 2 など) にしてあり、結果の動きも一致しない (表の「終了時重心」は崩壊・落下していることの確認用)。同じ「シーン」を各エンジンの標準的な解き方で解いた時間の比較であり、同一アルゴリズムの比較ではない。
+- Softbody の終了時重心は nebula (反発して跳ねている) と Newton (床で潰れている) で大きく異なる。剛性・減衰の対応づけは概算 (nebula は compliance、Newton は k_mu/k_lambda) で、時間比較が目的なので挙動の一致までは追っていない。
+- 流体の体積弾性率は 2e5 Pa にしてある (`presetWater` の 5e3 では 3 m の水柱が崩れず縦に潰れる)。
+- Softbody は `add_soft_grid` の四面体分割が nebula の `.sb` と一致しない (頂点数は同じ 4096)。nebula 側は粒子間衝突半径を 0 にしてあるが、同じ O(N²) ループは回る。
+- **Warp のバージョン:** warp-lang 1.18 以降の PyPI wheel は CUDA 13 ドライバ必須。CUDA 12.x ドライバでも動くよう `pyproject.toml` で 1.17 に固定している。CUDA 13 ドライバなら pin を外してよい。

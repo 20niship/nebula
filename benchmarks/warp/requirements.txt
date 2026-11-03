@@ -1,2 +1,0 @@
-warp-lang
-numpy

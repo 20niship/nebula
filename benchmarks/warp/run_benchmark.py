@@ -4,8 +4,7 @@
 使い方:
   cmake -S . -B build-bench -G Ninja -DCMAKE_BUILD_TYPE=Release -DNEBULA_BUILD_BENCH_WARP=ON
   cmake --build build-bench --target nebula_bench
-  pip install -r benchmarks/warp/requirements.txt
-  python3 benchmarks/warp/run_benchmark.py
+  (cd benchmarks/warp && uv sync && uv run python run_benchmark.py)
 """
 
 import argparse
@@ -39,19 +38,20 @@ def ensure_mesh(out_dir):
 
 
 def fmt_table(results, meta):
-    rows = ["| シーン | 粒子数 | nebula [ms/frame] | Warp [ms/frame] | Warp CUDA graph [ms/frame] | vs Warp | vs Warp graph | 重心差 [m] |",
-            "|---|---:|---:|---:|---:|---:|---:|---:|"]
+    rows = ["| シーン | 粒子数 | nebula [ms/frame] | Warp (Newton) [ms/frame] | Warp CUDA graph [ms/frame] | vs Warp | vs Warp graph | substeps (nebula / Warp) | 終了時重心 y [m] (nebula / Warp) |",
+            "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for name, r in results.items():
-        n, w, g = r["nebula"], r["warp"], r["warp_graph"]
-        diff = max(abs(a - b) for a, b in zip(n["centroid"], g["centroid"]))
+        n, w, g = r["nebula"], r["warp"], r.get("warp_graph")
+        gms = f"{g['ms_per_frame']:.2f}" if g else "—"
+        gratio = f"{g['ms_per_frame'] / n['ms_per_frame']:.2f}x" if g else "—"
         rows.append(f"| {S.SCENES[name]['title']} | {n['n']:,} | {n['ms_per_frame']:.2f} | {w['ms_per_frame']:.2f} | "
-                    f"{g['ms_per_frame']:.2f} | {w['ms_per_frame'] / n['ms_per_frame']:.2f}x | "
-                    f"{g['ms_per_frame'] / n['ms_per_frame']:.2f}x | {diff:.3f} |")
-    head = [f"- GPU: {meta['gpu']}", f"- Warp: {meta['warp']}",
-            f"- 条件: dt=1/60 s, ドメイン {S.DOMAIN:g} m, セル {S.CELL:.4f} m, 重力 {S.GRAVITY} m/s², "
-            f"warmup {meta['warmup']} + 計測 {meta['frames']} フレーム, {meta['repeats']} 回の中央値",
-            "- vs Warp / vs Warp graph: Warp の時間 ÷ nebula の時間 (1 より大きいと nebula が速い)",
-            "- 重心差: 全フレーム終了時の粒子重心の nebula と Warp の最大軸差 (同じ物理を解けているかの確認)", ""]
+                    f"{gms} | {w['ms_per_frame'] / n['ms_per_frame']:.2f}x | {gratio} | "
+                    f"{S.SCENES[name]['substeps']} / {w['substeps']} | {n['centroid'][1]:.2f} / {w['centroid'][1]:.2f} |")
+    head = [f"- GPU: {meta['gpu']}", f"- Warp: {meta['warp']}, Newton: {meta['newton']}",
+            f"- 共通条件: フレーム dt=1/60 s, ドメイン {S.DOMAIN:g} m, グリッドセル {S.CELL:.4f} m, 重力 {S.GRAVITY} m/s², 同一の粒子数・初期配置",
+            f"- 計測: warmup {meta['warmup']} + 計測 {meta['frames']} フレーム, {meta['repeats']} 回の中央値",
+            "- vs Warp / vs Warp graph: Warp の時間 ÷ nebula の時間 (1 より大きいと nebula が速い)。graph は CUDA graph にキャプチャできたシーンのみ",
+            "- 終了時重心 y: ソルバが違う (nebula 陽的 MLS-MPM / Newton implicit MPM) ため値は一致しない。両者とも崩壊・落下していることの確認用", ""]
     return "\n".join(head + rows) + "\n"
 
 
@@ -71,9 +71,10 @@ def main():
         import warp as wp
         wp.config.quiet = True
         wp.init()
-        warp_ver = wp.__version__
+        import newton
+        warp_ver, newton_ver = wp.__version__, newton.__version__
     except ImportError:
-        sys.exit("warp が無い: pip install -r benchmarks/warp/requirements.txt")
+        sys.exit("warp が無い: uv sync (benchmarks/warp)")
 
     out = Path(a.out_dir)
     ensure_mesh(out)
@@ -85,15 +86,16 @@ def main():
             for r in run_json([a.nebula_bench] + S.nebula_args(name, out, a.warmup, a.frames), ROOT):
                 gpu = r.get("device", gpu)
                 runs["nebula"].append(r)
-            for r in run_json([sys.executable, "warp_bench.py", "--scene", name, "--sb-dir", str(out),
-                               "--warmup", str(a.warmup), "--frames", str(a.frames)], HERE):
+            for r in run_json([sys.executable, "warp_bench.py", "--scene", name, "--warmup", str(a.warmup), "--frames", str(a.frames)], HERE):
                 runs[r["engine"]].append(r)
         # 中央値の run を代表として採用
-        results[name] = {k: sorted(v, key=lambda r: r["ms_per_frame"])[len(v) // 2] for k, v in runs.items()}
+        results[name] = {}
         for k, v in runs.items():
-            results[name][k] = dict(results[name][k], all_ms=[r["ms_per_frame"] for r in v])
+            if v:  # CUDA graph にできないシーンでは warp_graph が空
+                med = sorted(v, key=lambda r: r["ms_per_frame"])[len(v) // 2]
+                results[name][k] = dict(med, all_ms=[r["ms_per_frame"] for r in v])
 
-    meta = dict(gpu=gpu or "unknown", warp=warp_ver, warmup=a.warmup, frames=a.frames, repeats=a.repeats)
+    meta = dict(gpu=gpu or "unknown", warp=warp_ver, newton=newton_ver, warmup=a.warmup, frames=a.frames, repeats=a.repeats)
     (out / "results.json").write_text(json.dumps(dict(meta=meta, results=results), indent=2, ensure_ascii=False))
     md = fmt_table(results, meta)
     (out / "results.md").write_text(md)

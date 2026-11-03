@@ -107,6 +107,65 @@ Cloth・Fluid・MPM・String2Dのすべてで共有される近傍探索アル�
 
 ---
 
+## パフォーマンス: nebula vs NVIDIA Warp
+
+[`benchmarks/warp/`](benchmarks/warp) は、同じシーンを nebula（Vulkan compute）と、Warp 上に作られた NVIDIA の物理エンジン [Newton](https://github.com/newton-physics/newton) で動かし、1 フレームあたりの時間を比較する。フレーム dt・粒子数・グリッドセル・初期配置・重力は `scenes.py` で共有しているが、ソルバ自体は異なる（nebula: 陽的 MLS-MPM / XPBD、Newton: implicit MPM / XPBD）。
+
+RTX 3060 での計測結果（Warp 1.17.0 / Newton 1.7.0、warmup 30 + 計測 100 フレーム、3 回の中央値）:
+
+| シーン | 粒子数 | nebula [ms/frame] | Warp (Newton) [ms/frame] | Warp CUDA graph [ms/frame] |
+|---|---:|---:|---:|---:|
+| 流体（水柱の崩壊, MPM FLIP） | 54,872 | 11.34 | 26.71 | — |
+| 粉体（砂柱の崩壊, MPM APIC） | 45,000 | 10.87 | 61.31 | — |
+| Softbody（XPBD 四面体キューブ） | 4,096 | 84.35 | 17.31 | 5.92 |
+
+粒子数・グリッド解像度を変えたときのスケーリング（小さいほど速い）:
+
+https://github.com/user-attachments/assets/fd63cdcb-4850-4952-9232-1e2106b8a4e6
+
+MPM の 2 シーンでは nebula の方が速く、グリッドを細かくしても nebula の時間はほぼ横ばいだが Newton は増える。Softbody では nebula は粒子間衝突パスが O(N²) のため粒子数とともに急に遅くなり、Newton の方が速い。これは同じシーンを各エンジンの標準的なソルバで解いた時間の比較であり、同一アルゴリズムの比較ではない。注意点は [`benchmarks/warp/README.md`](benchmarks/warp/README.md) を参照。
+
+### 再現方法
+
+```sh
+# nebula 側（headless 実行ファイル。既定 OFF、CI ではビルドしない）
+cmake -S . -B build-bench -G Ninja -DCMAKE_BUILD_TYPE=Release -DNEBULA_BUILD_BENCH_WARP=ON
+cmake --build build-bench --target nebula_bench
+
+# Warp 側（uv で pyproject.toml から環境を構築）
+cd benchmarks/warp && uv sync
+uv run python run_benchmark.py   # 比較表 -> out/results.md
+uv run python run_sweep.py       # 粒子数/グリッドのスイープ -> out/sweep_log.csv, out/sweep_overview.png
+```
+
+### 実装例: エンジンを headless で駆動する
+
+`benchmarks/warp/nebula_bench.cpp` は、ウィンドウなしで `MPMEngine` を動かして 1 フレームごとに計測している:
+
+```cpp
+HeadlessCtx ctx;
+ctx.init();
+
+MPMEngine e;
+e.domainSize   = glm::vec3(10.0f);
+e.cellSize     = 10.0f / 64.0f;
+e.maxParticles = pos.size();            // 0 以外にすると自動シードを行わない
+e.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADER_DIR);
+e.numSubsteps = 20;
+e.flip_ratio  = 0.95f;                  // FLIP。-1 = APIC, 0 = PIC
+e.addForce(GravityForce::FromDirection({0, -1, 0}, 9.8f));
+e.setMaterials({presetWater(1000.0f, 2e5f)});
+e.appendParticles(pos, vel);            // pos.w = 粒子体積
+
+VkCommandBuffer cmd = ctx.beginCmd();
+e.step(cmd, 1.0f / 60.0f);
+ctx.submitCmd(cmd);                     // GPU 完了まで待つ
+```
+
+Warp 側（`benchmarks/warp/warp_bench.py`）は、同じシーンを `newton.ModelBuilder` で組み、`SolverImplicitMPM` / `SolverXPBD` を回している。
+
+---
+
 ## アーキテクチャ
 
 ```

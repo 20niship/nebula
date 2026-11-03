@@ -107,6 +107,65 @@ A neighbor-search algorithm shared by cloth, fluid, MPM, and the 2D string demo.
 
 ---
 
+## Performance: nebula vs NVIDIA Warp
+
+[`benchmarks/warp/`](benchmarks/warp) runs the same scenes on nebula (Vulkan compute) and on [Newton](https://github.com/newton-physics/newton), NVIDIA's physics engine built on Warp, and reports the time per frame. Frame dt, particle count, grid cell, initial layout and gravity are shared via `scenes.py`; the solvers themselves differ (nebula: explicit MLS-MPM / XPBD, Newton: implicit MPM / XPBD).
+
+Measured on an RTX 3060 (Warp 1.17.0 / Newton 1.7.0, warmup 30 + 100 frames, median of 3):
+
+| Scene | Particles | nebula [ms/frame] | Warp (Newton) [ms/frame] | Warp CUDA graph [ms/frame] |
+|---|---:|---:|---:|---:|
+| Fluid (dam break, MPM FLIP) | 54,872 | 11.34 | 26.71 | — |
+| Granular (sand column, MPM APIC) | 45,000 | 10.87 | 61.31 | — |
+| Soft body (XPBD tet cube) | 4,096 | 84.35 | 17.31 | 5.92 |
+
+Scaling with particle count and grid resolution (lower is faster):
+
+https://github.com/user-attachments/assets/fd63cdcb-4850-4952-9232-1e2106b8a4e6
+
+nebula is faster on both MPM scenes and its time stays almost flat as the grid is refined, while Newton's grows. On the soft body, nebula's time grows quickly with particle count because of its O(N²) particle-collision pass, and Newton is faster. These are timings of each engine's standard solver on the same scene, not of an identical algorithm — see [`benchmarks/warp/README.md`](benchmarks/warp/README.md) for the caveats.
+
+### Reproduce
+
+```sh
+# nebula side (headless executable; OFF by default, not built in CI)
+cmake -S . -B build-bench -G Ninja -DCMAKE_BUILD_TYPE=Release -DNEBULA_BUILD_BENCH_WARP=ON
+cmake --build build-bench --target nebula_bench
+
+# Warp side (environment from pyproject.toml via uv)
+cd benchmarks/warp && uv sync
+uv run python run_benchmark.py   # comparison table -> out/results.md
+uv run python run_sweep.py       # particle/grid sweeps -> out/sweep_log.csv, out/sweep_overview.png
+```
+
+### Example: driving an engine headlessly
+
+`benchmarks/warp/nebula_bench.cpp` steps `MPMEngine` without a window and times each frame:
+
+```cpp
+HeadlessCtx ctx;
+ctx.init();
+
+MPMEngine e;
+e.domainSize   = glm::vec3(10.0f);
+e.cellSize     = 10.0f / 64.0f;
+e.maxParticles = pos.size();            // non-zero disables the automatic seed block
+e.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADER_DIR);
+e.numSubsteps = 20;
+e.flip_ratio  = 0.95f;                  // FLIP; -1 = APIC, 0 = PIC
+e.addForce(GravityForce::FromDirection({0, -1, 0}, 9.8f));
+e.setMaterials({presetWater(1000.0f, 2e5f)});
+e.appendParticles(pos, vel);            // pos.w = particle volume
+
+VkCommandBuffer cmd = ctx.beginCmd();
+e.step(cmd, 1.0f / 60.0f);
+ctx.submitCmd(cmd);                     // blocks until the GPU finishes
+```
+
+The Warp side (`benchmarks/warp/warp_bench.py`) builds the matching scene with `newton.ModelBuilder` and steps `SolverImplicitMPM` / `SolverXPBD`.
+
+---
+
 ## Architecture
 
 ```

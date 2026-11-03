@@ -136,6 +136,7 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   loadAdaptive(kHashCount_, "hash_count.comp");
   loadAdaptive(kHashSort_, "hash_sort.comp");
   loadAdaptive(kPbfDensity_, "pbf_density.comp");
+  loadAdaptive(kPbfDensityCached_, "pbf_density_cached.comp");
   loadAdaptive(kPbfDeltaP_, "pbf_delta_p.comp");
   loadAdaptive(kPbfViscosity_, "pbf_viscosity.comp");
   loadAdaptive(kVorticityOmega_, "pbf_vorticity_omega.comp");
@@ -386,6 +387,7 @@ void FluidEngine::cleanup() {
   kHashAddBase_.cleanup();
   kHashSort_.cleanup();
   kPbfDensity_.cleanup();
+  kPbfDensityCached_.cleanup();
   kPbfDeltaP_.cleanup();
   kPbfViscosity_.cleanup();
   kZeroCells_.cleanup();
@@ -499,7 +501,7 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     pc.forceBufIdx       = forcesIdx_;
     pc.couplingForceIdx  = 0;
     pc.clothVertexCount  = 0; // 流体では未使用（布頂点数ではない）
-    pc.edgeCount         = 0;
+    pc.edgeCount         = nBoundary + nFluid_; // ソート順dispatch(density/deltaP/viscosity)用: ハッシュ後の有効スロット総数(境界+流体)
     pc.batchEdgeStart    = 0;
     pc.batchEdgeEnd      = 0;
     pc.stretchCompliance = rho0;
@@ -559,12 +561,13 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     for(int iter = 0; iter < pbfIterations; ++iter) {
       {
         ZoneScopedN("PbfDensity");
-        kPbfDensity_.dispatch(cmd, ds, pc, nFluid_);
+        // 初回のみ27セル走査してnbrListを作り、2回目以降はそのリストを再利用する。dispatchはソート済みスロット順(有効スロット総数)
+        (iter == 0 ? kPbfDensity_ : kPbfDensityCached_).dispatch(cmd, ds, pc, nBoundary + nFluid_);
       }
       computeBarrier(cmd);
       {
         ZoneScopedN("PbfDeltaP");
-        kPbfDeltaP_.dispatch(cmd, ds, pc, nFluid_);
+        kPbfDeltaP_.dispatch(cmd, ds, pc, nBoundary + nFluid_);
       }
       computeBarrier(cmd);
     }
@@ -593,7 +596,7 @@ void FluidEngine::step(VkCommandBuffer cmd, float dt) {
     // ⑧ XSPH 粘性 (1 回のみ; 境界粒子は typeFlag チェックで除外)
     {
       ZoneScopedN("PbfViscosity");
-      kPbfViscosity_.dispatch(cmd, ds, pc, nFluid_);
+      if(viscosityC > 0.0f) kPbfViscosity_.dispatch(cmd, ds, pc, nBoundary + nFluid_); // viscosityC==0は無変化なのでパスごと省略
     }
 
     // ⑨ 吸収パス（pc.absorberCount==0 のとき完全スキップ）

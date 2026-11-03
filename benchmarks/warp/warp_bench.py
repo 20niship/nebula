@@ -178,7 +178,14 @@ def main():
     ap.add_argument("--warmup", type=int, default=S.WARMUP)
     ap.add_argument("--frames", type=int, default=S.FRAMES)
     ap.add_argument("--device", default="cuda:0")
+    ap.add_argument("--cell-size", type=float, help="グリッドセル [m] (スイープ用)")
+    ap.add_argument("--particle-scale", type=float, help="MPM 粒子数の倍率 (スイープ用)")
+    ap.add_argument("--sb-grid", type=int, help="softbody 立方体の一辺の頂点数 (スイープ用)")
     a = ap.parse_args()
+    global M, L
+    S.configure(a.cell_size, a.particle_scale, a.sb_grid)
+    M = S.WALL_MARGIN
+    L = S.DOMAIN - 2.0 * M
     for graph in (False, True):
         r = run(a.scene, a.device, a.warmup, a.frames, graph)
         if r:

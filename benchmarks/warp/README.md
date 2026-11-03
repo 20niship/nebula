@@ -26,6 +26,17 @@ uv run python run_benchmark.py --scenes sand --repeats 1    # 一部だけ
 
 nebula の softbody 用 `.sb` メッシュは初回に `tools/gen_softbody.py --cube` で `out/` に生成される。Vulkan デバイスが複数ある環境 (例: llvmpipe) では `VK_ICD_FILENAMES` 等で GPU を選ぶこと。選ばれたデバイス名は結果表の `GPU:` に出る。
 
+## スイープ (粒子数・グリッド解像度)
+
+```sh
+uv run python run_sweep.py        # out/sweep_log.csv, out/sweep_results.json, out/sweep_overview.png
+```
+
+- 粒子数スイープ: MPM 粒子数を 1/8〜4 倍 (グリッドセルは固定)、softbody は一辺の頂点数を 8〜24。
+- グリッドスイープ: 解像度を 32〜128 cells/軸 (粒子数は固定。MPM のみ)。
+- 各点 40 フレーム (warmup 10) の 1 回計測なので、小さい粒子数ではノイズが乗る。
+- ログ・グラフは `out/` (gitignore) に出力する。グラフはリポジトリに commit しない。
+
 ## 計測方法
 
 - warmup (既定 30 フレーム、GPU クロック上昇待ちも兼ねる) の後、100 フレームの wall-clock。毎フレーム GPU 完了まで同期する。

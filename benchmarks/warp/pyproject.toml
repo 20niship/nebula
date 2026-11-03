@@ -9,6 +9,7 @@ dependencies = [
     # CUDA 13 ドライバの環境ではこの pin を外してよい。
     "warp-lang>=1.17.0,<1.18",
     "numpy",
+    "matplotlib", # run_sweep.py のグラフ描画
 ]
 
 # 配布物ではなくベンチ用スクリプト置き場なので、パッケージ化はしない

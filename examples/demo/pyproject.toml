@@ -1,0 +1,14 @@
+[project]
+name = "nebula-demo-render"
+version = "0.0.0"
+description = "Blender (bpy) renderers for the nebula examples/demo simulations"
+requires-python = ">=3.11,<3.12" # bpy wheels are built per Python minor version
+dependencies = [
+    "bpy>=4.2",
+    "numpy",
+    "scikit-image",
+    "scipy>=1.17.1",
+]
+
+[tool.uv]
+package = false

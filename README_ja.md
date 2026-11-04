@@ -1,40 +1,161 @@
 # Nebula — GPU 物理シミュレータ
 
-**Vulkan コンピュートシェーダー** で実装した、リアルタイム GPU 物理シミュレータです。XPBD 布・XPBD ソフトボディ・Position Based Fluids（PBF）・Material Point Method（MPM）・グリッドベース煙火炎（Pyro）・布↔流体の双方向連成まで、すべて GPU 上で動作します。
+[![CI](https://github.com/20niship/nebula/actions/workflows/ci.yml/badge.svg)](https://github.com/20niship/nebula/actions/workflows/ci.yml)
+[![Perf](https://github.com/20niship/nebula/actions/workflows/perf.yml/badge.svg)](https://github.com/20niship/nebula/actions/workflows/perf.yml)
+[![Pages](https://github.com/20niship/nebula/actions/workflows/pages.yml/badge.svg)](https://github.com/20niship/nebula/actions/workflows/pages.yml)
+[![License: MIT](https://img.shields.io/github/license/20niship/nebula)](LICENSE)
+![C++20](https://img.shields.io/badge/C%2B%2B-20-blue)
+![Vulkan 1.2](https://img.shields.io/badge/Vulkan-1.2-red)
+![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey)
+
+**Vulkan コンピュートシェーダー** だけで実装した、リアルタイム GPU 物理シミュレータ。布・ソフトボディ・流体・砂・雪・煙を、小さな C++20 ライブラリで扱えます。
+
+[プロジェクトページ](https://20niship.github.io/nebula/) · [Examples](#サンプル) · [English](README.md)
 
 https://github.com/user-attachments/assets/fc7bfe51-39a6-4694-a515-f3288ba808cb
 
 ---
 
-## シーン一覧
+## nebula の特長
 
-| 実行ファイル | エンジン | 内容 |
-|---|---|---|
-| `cloth_3d` | SimulationEngine | ストレッチ・ベンド拘束と自己衝突を持つ 3D 布（自由落下） |
-| `cloth_scene` | ClothSceneEngine | 複数布シーン（`--scene 5`=布2枚重ね / `--scene 7`=4隅を軸周りに回転させて絞る） |
-| `string_2d` | （専用実装） | 自己衝突検証用の 2D 糸（XPBD 距離拘束、3秒で自動終了するハーネス） |
-| `xpbd_softbody` | SoftBodyEngine | XPBD 四面体ソフトボディ（Stanford Bunny + ジェリーキューブ9個の落下・衝突） |
-| `fluid_pbf` | FluidEngine | Position Based Fluids（渦度保存・XSPH粘性・CFM緩和）。dam-break シナリオ（固定ダム＋移動ソースの2エミッタ）、任意OBJ境界の動的ロード対応 |
-| `fluid_sphere` | FluidEngine | 球体OBJを境界として読み込み、内部にPBF流体を閉じ込める |
-| `fluid_absorb` | FluidEngine | 楕円形の水たまりを、X方向に移動する円柱型「吸収ポート」が通過して吸収していくデモ |
-| `fluid_milk_crown` | FluidEngine | 表面張力 (Akinci cohesion) デモ。水たまりエミッタ + 落下水滴エミッタで、水滴が塊のまま落下・着水することを確認する |
-| `screw_fluid` | FluidEngine | 手続き生成した4枚羽根プロペラを回転させ、PBF流体を撹拌するスクリューデモ |
-| `smoke` | FluidEngine（流用） | 浮力＋渦度閉じ込めによる粒子ベースの煙（非圧縮拘束なし） |
-| `multi_physics` | MultiPhysicsEngine | 布とPBF流体を同一ワールドに配置し、双方向連成をON/OFF可能 |
-| `mpm_elastic` | MPMEngine | 弾性/塑性ブロック落下。PIC/FLIP/APIC転写モードと弾性/Von Mises/Drucker-Prager塑性モデルを切替可能 |
-| `mpm_multimaterial` | MPMEngine | 弾性体（ゼリー）+ Drucker-Prager砂の混在シミュレーション |
-| `mpm_geolayer` | MPMEngine | 地層崩壊（硬岩=弾性 / 弱粘土=Von Mises / 緩い土=Drucker-Prager の3層＋球コライダーで崩す） |
-| `mpm_avalanche` | MPMEngine | 山岳地形（尾根・クーロワール）上のDrucker-Prager雪崩（8万粒子、速度急増検知UI付き） |
-| `mpm_snow_impact` | MPMEngine | Von Mises塑性の雪ブロックに、水平移動する箱コライダーを衝突させる |
-| `pyro_basic` | PyroEngine | 複数の炎・煙ソース＋移動球体障害物によるグリッドベース燃焼・煙の基本デモ（ヘッドレス） |
-| `pyro_explosion` | PyroEngine | 地表付近での爆発燃焼から「キノコ雲」形状の形成を狙うデモ（ヘッドレス） |
-| `pyro_cow_blast` | PyroEngine | 牛モデルSTLに超高密度・高速の煙バースト（爆風）を浴びせるデモ（ヘッドレス） |
-
-全ウィンドウ表示シーンで **ImGuiパネルによるリアルタイムパラメータ調整**（重力・コンプライアンス・風・ソルバー反復数など）が可能です。`pyro_*` はウィンドウ/ImGuiを持たないヘッドレス実行で、`.pvox` ボクセルファイルにダンプし `tools/pyro_raymarch.py`（Python）側でレイマーチ可視化します。
+- **クロスプラットフォーム** — ベンダー固有拡張を使わない素の Vulkan 1.2 なので、NVIDIA や Ubuntu に縛られません。NVIDIA (Linux)・Apple GPU (macOS / MoltenVK)・CI の Mesa lavapipe (CPU の Vulkan ドライバ) で動作を確認しています。
+- **高速** — 物理計算・近傍探索・描画のすべてを GPU 上で完結。同一シーンで流体・砂は NVIDIA Warp (Newton) の約 2〜6 倍高速です ([数値は下記](#パフォーマンス-nebula-vs-nvidia-warp))。
+- **複数のソルバー** — XPBD 布、XPBD 四面体ソフトボディ、Position Based Fluids、MPM (PIC/FLIP/APIC、弾性・Von Mises・Drucker-Prager・流体)、グリッド型 Pyro (煙・炎)、布↔流体の連成。
+- **依存が少ない** — CUDA も Python 実行環境も重量級フレームワークも不要。パッケージマネージャの Vulkan・GLFW・GLM だけで、VMA・argparse・doctest・tinyobjloader は CMake / git submodule が取得します。
 
 ---
 
-## 実装されているアルゴリズム
+## クイックスタート
+
+Ubuntu / macOS で、clone から実行まで:
+
+```bash
+# 1. 依存パッケージ
+sudo apt install shaderc vulkan-headers vulkan-loader glfw3 libglm-dev   # Ubuntu
+brew install shaderc vulkan-headers vulkan-loader molten-vk glfw glm     # macOS
+
+# 2. clone + ビルド
+git clone --recursive https://github.com/20niship/nebula && cd nebula
+cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
+
+# 3. 好きなサンプルを実行 (すべて --help 対応)
+./build/mpm_avalanche
+```
+
+Taskfile・手動ビルド・ツール類の詳細は [ビルド詳細](#ビルド詳細) を参照。
+
+---
+
+## パフォーマンス: nebula vs NVIDIA Warp
+
+[`benchmarks/warp/`](benchmarks/warp) は、同じシーンを nebula（Vulkan compute）と、Warp 上に作られた NVIDIA の物理エンジン [Newton](https://github.com/newton-physics/newton) で動かし、1 フレームあたりの時間を比較する。フレーム dt・粒子数・グリッドセル・初期配置・重力は `scenes.py` で共有しているが、ソルバ自体は異なる（nebula: 陽的 MLS-MPM / XPBD、Newton: implicit MPM / XPBD）。
+
+RTX 3060 での計測結果（Warp 1.17.0 / Newton 1.7.0、warmup 30 + 計測 100 フレーム、3 回の中央値）:
+
+| シーン | 粒子数 | nebula [ms/frame] | Warp (Newton) [ms/frame] | Warp CUDA graph [ms/frame] |
+|---|---:|---:|---:|---:|
+| 流体（水柱の崩壊, MPM FLIP） | 54,872 | 11.34 | 26.71 | — |
+| 粉体（砂柱の崩壊, MPM APIC） | 45,000 | 10.87 | 61.31 | — |
+| Softbody（XPBD 四面体キューブ） | 4,096 | 84.35 | 17.31 | 5.92 |
+
+粒子数・グリッド解像度を変えたときのスケーリング（小さいほど速い）:
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/fd63cdcb-4850-4952-9232-1e2106b8a4e6" alt="nebula vs NVIDIA Warp (Newton): scaling with particle count and grid resolution" width="900">
+</p>
+
+MPM の 2 シーンでは nebula の方が速く、グリッドを細かくしても nebula の時間はほぼ横ばいだが Newton は増える。Softbody では nebula は粒子間衝突パスが O(N²) のため粒子数とともに急に遅くなり、Newton の方が速い。これは同じシーンを各エンジンの標準的なソルバで解いた時間の比較であり、同一アルゴリズムの比較ではない。注意点は [`benchmarks/warp/README.md`](benchmarks/warp/README.md) を参照。
+
+### 再現方法
+
+```sh
+# nebula 側（headless 実行ファイル。既定 OFF、CI ではビルドしない）
+cmake -S . -B build-bench -G Ninja -DCMAKE_BUILD_TYPE=Release -DNEBULA_BUILD_BENCH_WARP=ON
+cmake --build build-bench --target nebula_bench
+
+# Warp 側（uv で pyproject.toml から環境を構築）
+cd benchmarks/warp && uv sync
+uv run python run_benchmark.py   # 比較表 -> out/results.md
+uv run python run_sweep.py       # 粒子数/グリッドのスイープ -> out/sweep_log.csv, out/sweep_overview.png
+```
+
+### 実装例: エンジンを headless で駆動する
+
+`benchmarks/warp/nebula_bench.cpp` は、ウィンドウなしで `MPMEngine` を動かして 1 フレームごとに計測している:
+
+```cpp
+HeadlessCtx ctx;
+ctx.init();
+
+MPMEngine e;
+e.domainSize   = glm::vec3(10.0f);
+e.cellSize     = 10.0f / 64.0f;
+e.maxParticles = pos.size();            // 0 以外にすると自動シードを行わない
+e.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADER_DIR);
+e.numSubsteps = 20;
+e.flip_ratio  = 0.95f;                  // FLIP。-1 = APIC, 0 = PIC
+e.addForce(GravityForce::FromDirection({0, -1, 0}, 9.8f));
+e.setMaterials({presetWater(1000.0f, 2e5f)});
+e.appendParticles(pos, vel);            // pos.w = 粒子体積
+
+VkCommandBuffer cmd = ctx.beginCmd();
+e.step(cmd, 1.0f / 60.0f);
+ctx.submitCmd(cmd);                     // GPU 完了まで待つ
+```
+
+Warp 側（`benchmarks/warp/warp_bench.py`）は、同じシーンを `newton.ModelBuilder` で組み、`SolverImplicitMPM` / `SolverXPBD` を回している。
+
+---
+
+---
+
+## サンプル
+
+`examples/` の 1 サンプルにつき 1 つの GIF を載せています。各サンプルは重力・解像度・反復回数などをコマンドライン引数 (`--help`) で指定できます。`pyro_*` は headless 実行で `.pvox` を書き出し、`tools/pyro_raymarch.py` でレンダリングします。
+
+### 布 (XPBD)
+
+<table>
+<tr><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/981c832f-1f84-4dd2-8450-532a23a7d1cf" alt="cloth_3d" width="360"></p><p align="center"><b><code>cloth_3d</code></b><br>伸び・曲げ拘束と自己衝突を持つ 3D 布</p></td><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/12299196-82ec-4357-b23f-ed5fa5ddb349" alt="cloth_scene" width="360"></p><p align="center"><b><code>cloth_scene</code></b><br>複数布シーン。2 枚重ね、または 4 隅を回転させて絞る (<code>--scene 5</code> / <code>--scene 7</code>)</p></td></tr>
+</table>
+
+### ソフトボディ (XPBD)
+
+<table>
+<tr><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/b5477e95-d4f6-4aac-946e-9afbbf6f8741" alt="xpbd_softbody" width="360"></p><p align="center"><b><code>xpbd_softbody</code></b><br>XPBD 四面体ソフトボディ。Bunny とゼリー立方体の落下・衝突</p></td><td></td></tr>
+</table>
+
+### 流体・煙 (PBF)
+
+<table>
+<tr><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/7bdf1dd9-9d68-469e-9db3-44f7a2f4613d" alt="fluid_pbf" width="360"></p><p align="center"><b><code>fluid_pbf</code></b><br>PBF のダムブレイク。移動ソースと任意 OBJ 境界</p></td><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/6714e4e6-9a08-48cd-ae86-66376b896fbb" alt="fluid_sphere" width="360"></p><p align="center"><b><code>fluid_sphere</code></b><br>球状 OBJ 境界の中に閉じ込めた PBF 流体</p></td></tr>
+<tr><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/b0911aab-ed9f-4a47-8a79-653f943a5c64" alt="fluid_absorb" width="360"></p><p align="center"><b><code>fluid_absorb</code></b><br>楕円の水たまりを、横切る円柱ポートが吸収</p></td><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/50753770-ae62-4557-a9f7-0d67d871a14f" alt="fluid_milk_crown" width="360"></p><p align="center"><b><code>fluid_milk_crown</code></b><br>表面張力 (Akinci 凝集)。水たまりへ落ちる液滴</p></td></tr>
+<tr><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/2bb095f7-2001-4895-8135-d4006f1894bb" alt="fluid_wave_foam" width="360"></p><p align="center"><b><code>fluid_wave_foam</code></b><br>波パドルが Bunny 障害物に当たり泡を生成</p></td><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/9c3b2a7d-7b3b-422b-aed3-f940774d2738" alt="screw_fluid" width="360"></p><p align="center"><b><code>screw_fluid</code></b><br>4 枚羽根プロペラが PBF 流体をかき混ぜる (キネマティック境界)</p></td></tr>
+<tr><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/7e3b28b0-562b-41c6-bb54-93abea75f008" alt="smoke" width="360"></p><p align="center"><b><code>smoke</code></b><br>浮力と渦度閉じ込めによるパーティクル煙</p></td><td></td></tr>
+</table>
+
+### MPM (流体・砂・雪・弾性体)
+
+<table>
+<tr><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/4b78ac16-f645-4733-9ebe-a2adde83fc75" alt="mpm_elastic" width="360"></p><p align="center"><b><code>mpm_elastic</code></b><br>弾塑性ブロック。PIC/FLIP/APIC と Elastic/Von Mises/Drucker-Prager を切替</p></td><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/9e831969-e84e-448f-b36d-8f8c86600a4a" alt="mpm_multimaterial" width="360"></p><p align="center"><b><code>mpm_multimaterial</code></b><br>弾性ゼリーと Drucker-Prager 砂の混在</p></td></tr>
+<tr><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/35baada6-4d39-4d27-9f46-7c04404f3f56" alt="mpm_geolayer" width="360"></p><p align="center"><b><code>mpm_geolayer</code></b><br>3 層の地層 (岩・粘土・土) が球コライダで崩壊</p></td><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/21fe2dc3-7e4b-445e-9ef9-dce6337c7704" alt="mpm_avalanche" width="360"></p><p align="center"><b><code>mpm_avalanche</code></b><br>山岳地形を流れる Drucker-Prager 雪崩 (8 万粒子)</p></td></tr>
+<tr><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/1fa2ff6d-faf7-4cf6-8dc1-c22d3d14156d" alt="mpm_snow_impact" width="360"></p><p align="center"><b><code>mpm_snow_impact</code></b><br>移動する箱コライダに打たれる Von Mises 塑性の雪ブロック</p></td><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/8c071b55-3006-4914-83a7-8ce8e7cd01f5" alt="mpm_tire_sand" width="360"></p><p align="center"><b><code>mpm_tire_sand</code></b><br>転がるタイヤが砂を巻き上げる</p></td></tr>
+<tr><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/385d6789-6010-4984-8c14-a40eb6e80aa7" alt="flip_spume" width="360"></p><p align="center"><b><code>flip_spume</code></b><br>MPMEngine 上の FLIP 液体シーン (geyser / outfall / culvert / slab / dual)</p></td><td></td></tr>
+</table>
+
+### Pyro (グリッド煙・炎)
+
+<table>
+<tr><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/db93238e-eb6c-4ba9-acc8-c6b87a1ebe09" alt="pyro_basic" width="360"></p><p align="center"><b><code>pyro_basic</code></b><br>複数ソースと移動球障害物のグリッド燃焼・煙 (headless)</p></td><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/3d188b26-538c-43a5-8e09-027f5435a696" alt="pyro_explosion" width="360"></p><p align="center"><b><code>pyro_explosion</code></b><br>地表爆発のキノコ雲 (headless)</p></td></tr>
+<tr><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/bb22bbb4-3361-4610-bfad-76d2e88b60a9" alt="pyro_cow_blast" width="360"></p><p align="center"><b><code>pyro_cow_blast</code></b><br>牛形 STL 障害物に当たる高密度爆風 (headless)</p></td><td></td></tr>
+</table>
+
+---
+
+## リファレンス
+
+<details>
+<summary>実装されているアルゴリズム</summary>
 
 ### 1. XPBD 布シミュレーション（`SimulationEngine` / `ClothSceneEngine`）
 
@@ -107,64 +228,7 @@ Cloth・Fluid・MPM・String2Dのすべてで共有される近傍探索アル�
 
 ---
 
-## パフォーマンス: nebula vs NVIDIA Warp
-
-[`benchmarks/warp/`](benchmarks/warp) は、同じシーンを nebula（Vulkan compute）と、Warp 上に作られた NVIDIA の物理エンジン [Newton](https://github.com/newton-physics/newton) で動かし、1 フレームあたりの時間を比較する。フレーム dt・粒子数・グリッドセル・初期配置・重力は `scenes.py` で共有しているが、ソルバ自体は異なる（nebula: 陽的 MLS-MPM / XPBD、Newton: implicit MPM / XPBD）。
-
-RTX 3060 での計測結果（Warp 1.17.0 / Newton 1.7.0、warmup 30 + 計測 100 フレーム、3 回の中央値）:
-
-| シーン | 粒子数 | nebula [ms/frame] | Warp (Newton) [ms/frame] | Warp CUDA graph [ms/frame] |
-|---|---:|---:|---:|---:|
-| 流体（水柱の崩壊, MPM FLIP） | 54,872 | 11.34 | 26.71 | — |
-| 粉体（砂柱の崩壊, MPM APIC） | 45,000 | 10.87 | 61.31 | — |
-| Softbody（XPBD 四面体キューブ） | 4,096 | 84.35 | 17.31 | 5.92 |
-
-粒子数・グリッド解像度を変えたときのスケーリング（小さいほど速い）:
-
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/fd63cdcb-4850-4952-9232-1e2106b8a4e6" alt="nebula vs NVIDIA Warp (Newton): scaling with particle count and grid resolution" width="900">
-</p>
-
-MPM の 2 シーンでは nebula の方が速く、グリッドを細かくしても nebula の時間はほぼ横ばいだが Newton は増える。Softbody では nebula は粒子間衝突パスが O(N²) のため粒子数とともに急に遅くなり、Newton の方が速い。これは同じシーンを各エンジンの標準的なソルバで解いた時間の比較であり、同一アルゴリズムの比較ではない。注意点は [`benchmarks/warp/README.md`](benchmarks/warp/README.md) を参照。
-
-### 再現方法
-
-```sh
-# nebula 側（headless 実行ファイル。既定 OFF、CI ではビルドしない）
-cmake -S . -B build-bench -G Ninja -DCMAKE_BUILD_TYPE=Release -DNEBULA_BUILD_BENCH_WARP=ON
-cmake --build build-bench --target nebula_bench
-
-# Warp 側（uv で pyproject.toml から環境を構築）
-cd benchmarks/warp && uv sync
-uv run python run_benchmark.py   # 比較表 -> out/results.md
-uv run python run_sweep.py       # 粒子数/グリッドのスイープ -> out/sweep_log.csv, out/sweep_overview.png
-```
-
-### 実装例: エンジンを headless で駆動する
-
-`benchmarks/warp/nebula_bench.cpp` は、ウィンドウなしで `MPMEngine` を動かして 1 フレームごとに計測している:
-
-```cpp
-HeadlessCtx ctx;
-ctx.init();
-
-MPMEngine e;
-e.domainSize   = glm::vec3(10.0f);
-e.cellSize     = 10.0f / 64.0f;
-e.maxParticles = pos.size();            // 0 以外にすると自動シードを行わない
-e.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADER_DIR);
-e.numSubsteps = 20;
-e.flip_ratio  = 0.95f;                  // FLIP。-1 = APIC, 0 = PIC
-e.addForce(GravityForce::FromDirection({0, -1, 0}, 9.8f));
-e.setMaterials({presetWater(1000.0f, 2e5f)});
-e.appendParticles(pos, vel);            // pos.w = 粒子体積
-
-VkCommandBuffer cmd = ctx.beginCmd();
-e.step(cmd, 1.0f / 60.0f);
-ctx.submitCmd(cmd);                     // GPU 完了まで待つ
-```
-
-Warp 側（`benchmarks/warp/warp_bench.py`）は、同じシーンを `newton.ModelBuilder` で組み、`SolverImplicitMPM` / `SolverXPBD` を回している。
+</details>
 
 ---
 
@@ -188,7 +252,7 @@ assets/          bunny.obj, cow_obstacle.stl, sphere_obstacle.stl 等のアセ�
 - Vulkan 1.2（macOS では MoltenVK 経由）
 - `glslc` でコンパイルする GLSL コンピュートシェーダー
 - GPU メモリ管理: VulkanMemoryAllocator（VMA）
-- UI / ウィンドウ: ImGui + GLFW
+- ウィンドウ: GLFW
 - 数学ライブラリ: GLM
 - 境界メッシュ読み込み: tinyobjloader
 
@@ -207,9 +271,11 @@ assets/          bunny.obj, cow_obstacle.stl, sphere_obstacle.stl 等のアセ�
 
 **現状 macOS のみ対応**（MoltenVK / Metal 使用）。Linux 対応は可能ですが未検証です。
 
+macOS (MoltenVK) と Linux (Ubuntu 24.04。CI は Mesa lavapipe、ベンチは NVIDIA GPU) で開発。Windows は未検証。
+
 ---
 
-## セットアップ
+## ビルド詳細
 
 ### 1. 依存パッケージのインストール
 

@@ -85,3 +85,6 @@ _skipped.node
 __pycache__/
 *.py[cod]
 *.pyc
+
+# README 用 GIF (git に上げず gh --attach で配布)
+gif_out/

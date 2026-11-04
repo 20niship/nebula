@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nebula — GPU Physics Simulator</title>
+<meta name="description" content="Real-time GPU physics on Vulkan compute: cloth, soft bodies, fluids, MPM sand/snow and smoke.">
+<style>
+:root{--bg:#0d1117;--fg:#e6edf3;--mut:#8b949e;--card:#161b22;--line:#30363d;--acc:#58a6ff}
+*{box-sizing:border-box}body{margin:0;font:16px/1.6 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+a{color:var(--acc)}main{max-width:1040px;margin:auto;padding:0 20px 60px}
+header{text-align:center;padding:56px 0 24px}h1{font-size:2.6rem;margin:0}header p{color:var(--mut);max-width:680px;margin:12px auto}
+.badges img{margin:2px}.cta a{display:inline-block;margin:6px;padding:8px 18px;border:1px solid var(--line);border-radius:8px;text-decoration:none}
+.cta a:first-child{background:var(--acc);color:#0d1117;border-color:var(--acc)}
+video,.hero img{width:100%;border-radius:12px;border:1px solid var(--line)}
+h2{margin-top:48px;border-bottom:1px solid var(--line);padding-bottom:6px}
+ul.feat{list-style:none;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+ul.feat li{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:4px 16px}ul.feat h3{margin:12px 0 4px}ul.feat p{color:var(--mut);margin:0 0 12px;font-size:.92rem}
+pre{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;overflow:auto}code{font-family:ui-monospace,monospace;font-size:.9em}
+table{border-collapse:collapse;width:100%}th,td{border:1px solid var(--line);padding:6px 12px;text-align:right}th:first-child,td:first-child{text-align:left}th{background:var(--card)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+figure{margin:0;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}figure img{width:100%;display:block}figcaption{padding:10px 14px;font-size:.9rem;color:var(--mut)}figcaption b{color:var(--fg)}
+footer{margin-top:48px;color:var(--mut);text-align:center;font-size:.9rem}
+</style></head><body><main>
+<header><h1>Nebula</h1>
+<p>A real-time GPU physics simulator built entirely on <b>Vulkan compute shaders</b> — cloth, soft bodies, fluids, sand, snow and smoke in one small C++20 library.</p>
+<div class="badges">
+<a href="https://github.com/20niship/nebula/actions/workflows/ci.yml"><img src="https://github.com/20niship/nebula/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+<a href="https://github.com/20niship/nebula/actions/workflows/perf.yml"><img src="https://github.com/20niship/nebula/actions/workflows/perf.yml/badge.svg" alt="Perf"></a>
+<img src="https://img.shields.io/github/license/20niship/nebula" alt="License">
+<img src="https://img.shields.io/badge/C%2B%2B-20-blue" alt="C++20"><img src="https://img.shields.io/badge/Vulkan-1.2-red" alt="Vulkan 1.2"></div>
+<div class="cta"><a href="https://github.com/20niship/nebula">GitHub</a><a href="#quickstart">Quick start</a><a href="#examples">Examples</a></div></header>
+<div class="hero"><video src="https://github.com/user-attachments/assets/fc7bfe51-39a6-4694-a515-f3288ba808cb" controls muted loop playsinline></video></div>
+<h2>Why nebula</h2><ul class="feat"><li><h3>Cross-platform</h3><p>Plain Vulkan 1.2 with no vendor-specific extensions, so it is not tied to NVIDIA or to Ubuntu. Exercised on NVIDIA (Linux), Apple GPUs (macOS via MoltenVK) and Mesa lavapipe, a CPU Vulkan driver used by CI.</p></li>
+<li><h3>Fast</h3><p>Everything — physics, neighbor search, rendering — stays on the GPU. On the same scenes nebula is about 2–6x faster than NVIDIA Warp (Newton) for fluid and sand ([numbers below](#performance)).</p></li>
+<li><h3>Many solvers</h3><p>XPBD cloth, XPBD tetrahedral soft bodies, Position Based Fluids, MPM (PIC/FLIP/APIC; elastic, Von Mises, Drucker-Prager, fluid), grid-based Pyro (smoke & fire), and cloth↔fluid coupling.</p></li>
+<li><h3>Simple dependencies</h3><p>No CUDA, no Python runtime, no heavyweight frameworks. Just Vulkan, GLFW and GLM from your package manager; VMA, argparse, doctest and tinyobjloader are fetched by CMake / git submodules.</p></li></ul>
+<h2 id="quickstart">Quick start</h2>
+<pre><code>sudo apt install shaderc vulkan-headers vulkan-loader glfw3 libglm-dev   # Ubuntu
+brew install shaderc vulkan-headers vulkan-loader molten-vk glfw glm     # macOS
+
+git clone --recursive https://github.com/20niship/nebula.git &amp;&amp; cd nebula
+cmake -B build -DCMAKE_BUILD_TYPE=Release &amp;&amp; cmake --build build -j
+./build/mpm_avalanche</code></pre>
+<h2>Performance</h2>
+<p>nebula vs NVIDIA Warp (Newton 1.7.0), ms/frame, lower is faster. RTX 3060, same scene conditions; solvers differ (explicit MLS-MPM vs implicit MPM), see the <a href="https://github.com/20niship/nebula/blob/main/benchmarks/warp/README.md">benchmark notes</a>.</p>
+<table><tr><th>Scene</th><th>Particles</th><th>nebula</th><th>Warp (Newton)</th><th>Warp CUDA graph</th></tr>
+<tr><td>Fluid (MPM, FLIP)</td><td>54,872</td><td>11.34</td><td>26.71</td><td>—</td></tr>
+<tr><td>Sand (MPM, Drucker-Prager)</td><td>45,000</td><td>10.87</td><td>61.31</td><td>—</td></tr>
+<tr><td>Soft body (XPBD tet cube)</td><td>4,096</td><td>84.35</td><td>17.31</td><td>5.92</td></tr></table>
+<p class="hero"><img src="https://github.com/user-attachments/assets/fd63cdcb-4850-4952-9232-1e2106b8a4e6" alt="nebula vs NVIDIA Warp scaling with particle count and grid resolution"></p>
+<h2 id="examples">Examples</h2><div class="grid">
+<figure><img loading="lazy" src="https://github.com/user-attachments/assets/981c832f-1f84-4dd2-8450-532a23a7d1cf" alt="cloth_3d"><figcaption><b>cloth_3d</b><br>3D cloth with stretch/bend constraints and self-collision</figcaption></figure>
+<figure><img loading="lazy" src="https://github.com/user-attachments/assets/12299196-82ec-4357-b23f-ed5fa5ddb349" alt="cloth_scene"><figcaption><b>cloth_scene</b><br>Multi-cloth scenes: stacked cloths, or one cloth wrung by rotating its corners (<code>--scene 5</code> / <code>--scene 7</code>)</figcaption></figure>
+<figure><img loading="lazy" src="https://github.com/user-attachments/assets/b5477e95-d4f6-4aac-946e-9afbbf6f8741" alt="xpbd_softbody"><figcaption><b>xpbd_softbody</b><br>XPBD tetrahedral soft bodies: a Stanford Bunny and jelly cubes dropping and colliding</figcaption></figure>
+<figure><img loading="lazy" src="https://github.com/user-attachments/assets/7bdf1dd9-9d68-469e-9db3-44f7a2f4613d" alt="fluid_pbf"><figcaption><b>fluid_pbf</b><br>Position Based Fluids dam break with moving emitters and OBJ boundaries</figcaption></figure>
+<figure><img loading="lazy" src="https://github.com/user-attachments/assets/6714e4e6-9a08-48cd-ae86-66376b896fbb" alt="fluid_sphere"><figcaption><b>fluid_sphere</b><br>PBF fluid confined in a sphere-shaped OBJ boundary</figcaption></figure>
+<figure><img loading="lazy" src="https://github.com/user-attachments/assets/b0911aab-ed9f-4a47-8a79-653f943a5c64" alt="fluid_absorb"><figcaption><b>fluid_absorb</b><br>An elliptical puddle absorbed by a sweeping cylindrical port</figcaption></figure>
+<figure><img loading="lazy" src="https://github.com/user-attachments/assets/50753770-ae62-4557-a9f7-0d67d871a14f" alt="fluid_milk_crown"><figcaption><b>fluid_milk_crown</b><br>Surface tension (Akinci cohesion): a droplet falling into a puddle</figcaption></figure>
+<figure><img loading="lazy" src="https://github.com/user-attachments/assets/2bb095f7-2001-4895-8135-d4006f1894bb" alt="fluid_wave_foam"><figcaption><b>fluid_wave_foam</b><br>A wave paddle hits bunny obstacles and generates foam</figcaption></figure>
+<figure><img loading="lazy" src="https://github.com/user-attachments/assets/9c3b2a7d-7b3b-422b-aed3-f940774d2738" alt="screw_fluid"><figcaption><b>screw_fluid</b><br>A 4-blade propeller stirring PBF fluid (kinematic boundary)</figcaption></figure>
+<figure><img loading="lazy" src="https://github.com/user-attachments/assets/7e3b28b0-562b-41c6-bb54-93abea75f008" alt="smoke"><figcaption><b>smoke</b><br>Particle smoke from buoyancy + vorticity confinement</figcaption></figure>
+<figure><img loading="lazy" src="https://github.com/user-attachments/assets/4b78ac16-f645-4733-9ebe-a2adde83fc75" alt="mpm_elastic"><figcaption><b>mpm_elastic</b><br>Elastic/plastic block; switchable PIC/FLIP/APIC and Elastic/Von Mises/Drucker-Prager</figcaption></figure>
+<figure><img loading="lazy" src="https://github.com/user-attachments/assets/9e831969-e84e-448f-b36d-8f8c86600a4a" alt="mpm_multimaterial"><figcaption><b>mpm_multimaterial</b><br>Elastic jelly mixed with Drucker-Prager sand</figcaption></figure>
+<figure><img loading="lazy" src="https://github.com/user-attachments/assets/35baada6-4d39-4d27-9f46-7c04404f3f56" alt="mpm_geolayer"><figcaption><b>mpm_geolayer</b><br>Three geological layers (rock / clay / soil) collapsing under a sphere</figcaption></figure>
+<figure><img loading="lazy" src="https://github.com/user-attachments/assets/21fe2dc3-7e4b-445e-9ef9-dce6337c7704" alt="mpm_avalanche"><figcaption><b>mpm_avalanche</b><br>Drucker-Prager snow avalanche over mountainous terrain (80k particles)</figcaption></figure>
+<figure><img loading="lazy" src="https://github.com/user-attachments/assets/1fa2ff6d-faf7-4cf6-8dc1-c22d3d14156d" alt="mpm_snow_impact"><figcaption><b>mpm_snow_impact</b><br>Von Mises plastic snow block struck by a moving box collider</figcaption></figure>
+<figure><img loading="lazy" src="https://github.com/user-attachments/assets/8c071b55-3006-4914-83a7-8ce8e7cd01f5" alt="mpm_tire_sand"><figcaption><b>mpm_tire_sand</b><br>A rolling tire kicking up slipping sand</figcaption></figure>
+<figure><img loading="lazy" src="https://github.com/user-attachments/assets/385d6789-6010-4984-8c14-a40eb6e80aa7" alt="flip_spume"><figcaption><b>flip_spume</b><br>FLIP liquid scenes (geyser, outfall, culvert, slab, dual) on MPMEngine</figcaption></figure>
+<figure><img loading="lazy" src="https://github.com/user-attachments/assets/db93238e-eb6c-4ba9-acc8-c6b87a1ebe09" alt="pyro_basic"><figcaption><b>pyro_basic</b><br>Grid-based combustion/smoke with sources and a moving sphere obstacle (headless)</figcaption></figure>
+<figure><img loading="lazy" src="https://github.com/user-attachments/assets/3d188b26-538c-43a5-8e09-027f5435a696" alt="pyro_explosion"><figcaption><b>pyro_explosion</b><br>Ground-level explosion forming a mushroom cloud (headless)</figcaption></figure>
+<figure><img loading="lazy" src="https://github.com/user-attachments/assets/bb22bbb4-3361-4610-bfad-76d2e88b60a9" alt="pyro_cow_blast"><figcaption><b>pyro_cow_blast</b><br>Dense blast wave hitting a cow-shaped STL obstacle (headless)</figcaption></figure>
+</div>
+<footer>MIT License · <a href="https://github.com/20niship/nebula">20niship/nebula</a></footer>
+</main></body></html>

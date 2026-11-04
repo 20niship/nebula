@@ -252,6 +252,11 @@ add_pyro_example(pyro_cow_blast   examples/pyro_cow_blast.cpp)
 add_pyro_example(pyro_explosion   examples/pyro_explosion.cpp)
 
 # ── benchmarks/warp: NVIDIA Warp との比較ベンチ (既定 OFF, CI 非対象) ────────
+option(NEBULA_BUILD_DEMOS "Build examples/demo (headless high-quality demos for Blender rendering)" OFF)
+if(NEBULA_BUILD_DEMOS)
+    add_subdirectory(examples/demo)
+endif()
+
 if(NEBULA_BUILD_BENCH_WARP)
     add_subdirectory(benchmarks/warp)
 endif()

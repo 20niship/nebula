@@ -3,6 +3,7 @@
 [![CI](https://github.com/20niship/nebula/actions/workflows/ci.yml/badge.svg)](https://github.com/20niship/nebula/actions/workflows/ci.yml)
 [![Perf](https://github.com/20niship/nebula/actions/workflows/perf.yml/badge.svg)](https://github.com/20niship/nebula/actions/workflows/perf.yml)
 [![Pages](https://github.com/20niship/nebula/actions/workflows/pages.yml/badge.svg)](https://github.com/20niship/nebula/actions/workflows/pages.yml)
+[![Project page](https://img.shields.io/badge/project%20page-20niship.github.io%2Fnebula-blue?logo=github)](https://20niship.github.io/nebula/)
 [![License: MIT](https://img.shields.io/github/license/20niship/nebula)](LICENSE)
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-blue)
 ![Vulkan 1.2](https://img.shields.io/badge/Vulkan-1.2-red)

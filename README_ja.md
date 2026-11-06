@@ -246,7 +246,7 @@ shaders/         GLSL コンピュート・グラフィクスシェーダー（S
 examples/        シーンごとのエントリーポイント（18シーン）
 tests/           doctest ユニットテスト、ヘッドレス実行ヘルパー (HeadlessCtx)
 tools/           .sb ソフトボディ生成、STL地形/牛/球体生成、Pyroレイマーチ可視化 (Python)
-assets/          bunny.obj, cow_obstacle.stl, sphere_obstacle.stl 等のアセット
+(アセットは tools/gen_assets.py がビルドディレクトリへ生成)
 ```
 
 **主要技術:**

@@ -45,7 +45,7 @@ target_link_libraries(nebula PUBLIC
 target_compile_definitions(nebula PUBLIC
     SHADER_DIR="${SHADER_OUT_DIR}"
     SHADER_SRC_DIR="${SHADER_SRC_DIR}"
-    ASSET_DIR="${CMAKE_SOURCE_DIR}/assets"
+    ASSET_DIR="${CMAKE_BINARY_DIR}/assets"
 )
 
 # VULKAN_VALIDATION は VulkanContext.cpp 内でのみ使用

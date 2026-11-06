@@ -61,24 +61,6 @@ static std::vector<glm::vec4> generatePaddleShell(glm::vec3 center, glm::vec3 ha
   return pts;
 }
 
-// ── Bunny 配置ヘルパー ───────────────────────────────────────────────────────
-// assets/bunny.obj のバウンディングボックス (Y-up, 実測値)。
-static const glm::vec3 kBunnyMinYup(-0.09469f, 0.032987f, -0.061874f);
-static const glm::vec3 kBunnyMaxYup(0.061009f, 0.187321f, 0.058800f);
-
-// floorCenter (X,Y は中心、Z は接地面) にバニーの底面が接地するようオフセットを計算する。
-// yup_to_zup 変換 (x,y,z)->(x,z,y) 後の座標系で計算する。
-static glm::vec3 bunnyOffsetForFloorCenter(glm::vec3 floorCenter, float scale) {
-  glm::vec3 minZup(kBunnyMinYup.x, kBunnyMinYup.z, kBunnyMinYup.y);
-  glm::vec3 maxZup(kBunnyMaxYup.x, kBunnyMaxYup.z, kBunnyMaxYup.y);
-  glm::vec3 centerZup = (minZup + maxZup) * 0.5f;
-  glm::vec3 offset;
-  offset.x = floorCenter.x - centerZup.x * scale;
-  offset.y = floorCenter.y - centerZup.y * scale;
-  offset.z = floorCenter.z - minZup.z * scale; // 底面を floorCenter.z に接地
-  return offset;
-}
-
 // ── KinematicPaddle ──────────────────────────────────────────────────────────
 // 前後2面シェル形状を X 方向へ単振動 (SHM) させる波発生パドル。
 struct KinematicPaddle {

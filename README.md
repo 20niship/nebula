@@ -246,7 +246,7 @@ shaders/         GLSL compute & graphics shaders (compiled to SPIR-V)
 examples/        Per-scene entry points (18 scenes)
 tests/           doctest unit tests, headless-execution helpers (HeadlessCtx)
 tools/           .sb soft-body generation, STL terrain/cow/sphere generation, Pyro ray-march viewer (Python)
-assets/          Assets such as bunny.obj, cow_obstacle.stl, sphere_obstacle.stl
+(assets are generated into the build directory by tools/gen_assets.py)
 ```
 
 **Key technologies:**

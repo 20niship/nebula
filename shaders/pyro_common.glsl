@@ -44,6 +44,7 @@ layout(push_constant) uniform PC {
     uint  curlIdx;            // 152 vec4×CELLS 渦度スクラッチ
     uint  forceBufIdx;        // 156 Force配列(ForceGPU×forceCount)のbindless index (issue #30)
     uint  forceCount;         // 160 有効なForce数
+    uint  openBoundaryMask;   // 164 開境界ビット (bit0..5 = -x,+x,-y,+y,-z,+z)。領域外の圧力を 0 とする
 } pc;
 
 // ── Buffer read/write マクロ (MoltenVK: buffers[] は main() でのみ展開) ────
@@ -114,6 +115,15 @@ ivec3 pyroMortonDecodeI(uint code) {
 // セル (ix,iy,iz) (クランプ後) が障害物内部 (SDF<0) かどうか。SDF 未設定なら常に false。
 #define CELL_IS_SOLID(ix_, iy_, iz_) ( pc.colliderSDFIdx != 0u && \
     readFloat(pc.colliderSDFIdx, pyroMortonEncodeI(CLAMP_CELL((ix_), (iy_), (iz_)))) < 0.0 )
+
+// 圧力ステンシルの隣接セル値。開境界の外側は 0、障害物は自セル圧力 (Neumann)、それ以外はクランプ参照。
+#define PRESSURE_OPEN_OUT(ix_, iy_, iz_, m_) ( \
+    (((ix_) < 0)                    && ((m_) & 1u)  != 0u) || (((ix_) >= int(pc.gridRes.x)) && ((m_) & 2u)  != 0u) || \
+    (((iy_) < 0)                    && ((m_) & 4u)  != 0u) || (((iy_) >= int(pc.gridRes.y)) && ((m_) & 8u)  != 0u) || \
+    (((iz_) < 0)                    && ((m_) & 16u) != 0u) || (((iz_) >= int(pc.gridRes.z)) && ((m_) & 32u) != 0u) )
+#define PRESSURE_NEIGHBOR(ix_, iy_, iz_, pSelf_) \
+    ( PRESSURE_OPEN_OUT((ix_), (iy_), (iz_), pc.openBoundaryMask) ? 0.0 : \
+      ( CELL_IS_SOLID((ix_), (iy_), (iz_)) ? (pSelf_) : SAMPLE_FLOAT_CLAMPED(pc.pressureIdxA, (ix_), (iy_), (iz_)) ) )
 
 // セル中心グリッド座標 (float) へのワールド座標変換
 // セル (ix,iy,iz) の中心はワールド座標 worldMin + (ix+0.5, iy+0.5, iz+0.5)*cellSize

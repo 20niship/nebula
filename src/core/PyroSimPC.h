@@ -73,8 +73,11 @@ struct PyroSimPC {
 
   // ── Force (issue #30; 4 bytes) ─────────────────────────────────────────
   uint32_t forceCount; // 160 有効なForce数
+
+  // 開境界ビットマスク (bit0..5 = -x,+x,-y,+y,-z,+z)。立っている面は領域外の圧力を 0 (大気圧) とみなし、風が出入りできる (0=従来どおり全面閉)
+  uint32_t openBoundaryMask; // 164
 };
-static_assert(sizeof(PyroSimPC) == 164, "PyroSimPC must be 164 bytes");
+static_assert(sizeof(PyroSimPC) == 168, "PyroSimPC must be 168 bytes");
 static_assert(offsetof(PyroSimPC, gridRes) == 64, "vec3 alignment offset");
 static_assert(offsetof(PyroSimPC, worldMin) == 80, "vec3 alignment offset");
 static_assert(offsetof(PyroSimPC, worldMax) == 96, "vec3 alignment offset");

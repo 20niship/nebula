@@ -1,0 +1,5 @@
+.venv/
+uv.lock
+out/
+__pycache__/
+assets_local/

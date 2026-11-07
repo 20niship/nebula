@@ -56,19 +56,7 @@ private:
     float mid  = ws * 0.5f;
     float high = ws * 0.75f;
 
-    // Stanford Bunny (中央から少し右上)
-    std::string bunnyPath = ASSET_DIR_STR + "/bunny_sb.sb";
-    std::string cubePath  = ASSET_DIR_STR + "/cube_sb.sb";
-
-    // Bunny が存在すれば追加 (中央上部)
-    {
-      std::ifstream check(bunnyPath);
-      if(check.good()) {
-        engine_.addInstance({bunnyPath, {mid, mid + 4.0, high + 1.0f}, 1.0f});
-      } else {
-        std::cout << "[SoftBody] bunny_sb.sb not found, skipping bunny\n";
-      }
-    }
+    std::string cubePath = ASSET_DIR_STR + "/cube_sb.sb";
 
     // ジェリーキューブ 9 個 — 3×3 グリッドで高さをずらして落下・衝突させる
     {
@@ -89,15 +77,12 @@ private:
         }
       } else {
         std::cout << "[SoftBody] cube_sb.sb not found. "
-                  << "Run: python tools/gen_softbody.py --cube -o assets/cube_sb.sb\n";
+                  << "Run: python tools/gen_assets.py <build>/assets\n";
       }
     }
 
     if(engine_.totalParticleCount() == 0) {
-      throw std::runtime_error("No .sb files found. Generate them first:\n"
-                               "  python tools/gen_softbody.py --cube -o assets/cube_sb.sb\n"
-                               "  python tools/gen_softbody.py --bunny --input assets/bunny.obj "
-                               "-o assets/bunny_sb.sb");
+      throw std::runtime_error("No .sb files found. Run: python tools/gen_assets.py <build>/assets");
     }
 
     engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z), args.cell_size);

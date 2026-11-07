@@ -147,8 +147,17 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(tinyobjloader)
 
-# assets ディレクトリ
-set(ASSET_DIR ${CMAKE_SOURCE_DIR}/assets)
+# examples 用アセット (球/牛 STL, sphere.obj, cube .sb) はリポジトリに置かず configure 時にビルドディレクトリへ生成する
+set(ASSET_DIR ${CMAKE_BINARY_DIR}/assets)
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_FOUND)
+  execute_process(COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/gen_assets.py ${ASSET_DIR} RESULT_VARIABLE ASSET_RC)
+  if(NOT ASSET_RC EQUAL 0)
+    message(WARNING "tools/gen_assets.py に失敗 (numpy が必要): 一部 example のアセットが無い")
+  endif()
+else()
+  message(WARNING "Python3 が見つからないためアセットを生成しない")
+endif()
 
 add_subdirectory(src)
 

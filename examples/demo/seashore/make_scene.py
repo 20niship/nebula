@@ -20,12 +20,12 @@ import numpy as np
 from scipy.ndimage import binary_fill_holes, distance_transform_edt
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets_local/seashore"
-DOMAIN = np.array([44.0, 12.0, 16.0])
+DOMAIN = np.array([52.0, 12.0, 32.0])
 WATER = 3.0  # 静水面の高さ [m]
 
 
 def beach_height(x, z):
-    """x=12 から岸に向かって上がる斜面 (約 1:5)。水際は x≈26。"""
+    """x=12 から岸 (x=40 で頂上)に向かって上がる斜面 (約 1:5)。水際は x≈26。"""
     t = np.clip((x - 12.0) / 28.0, 0, 1)
     return 6.5 * (0.35 * t + 0.65 * t * t) + 0.12 * np.sin(0.9 * x + 1.3 * z) * np.sin(0.5 * z + 0.4) * t
 
@@ -53,9 +53,9 @@ def rock_sdf(pts, lo_idx, shape, cell):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int, default=3)
-    ap.add_argument("--rocks", type=int, default=12)
+    ap.add_argument("--rocks", type=int, default=40)
     ap.add_argument("--sdf-cell", type=float, default=0.15, help="SDF 解像度 [m] (シミュの格子とは独立)")
-    ap.add_argument("--kinds", default="seashore,granite", help="使う岩種 (名前に含む文字列, カンマ区切り)")
+    ap.add_argument("--kinds", default="seashore,granite,andesite", help="使う岩種 (名前に含む文字列, カンマ区切り)")
     a = ap.parse_args()
     rng = np.random.default_rng(a.seed)
     files = sorted(p for p in (ASSETS / "rocks").glob("*.npz") if any(k in p.name for k in a.kinds.split(",")))
@@ -69,7 +69,7 @@ def main():
         if len(placed) >= a.rocks:
             break
         name = rng.choice(list(meshes))
-        x, z = rng.uniform(22, 38), rng.uniform(1.5, DOMAIN[2] - 1.5)
+        x, z = rng.uniform(20, 46), rng.uniform(1.5, DOMAIN[2] - 1.5)
         s = rng.uniform(0.8, 1.3)
         r = 2.1 * s
         if any(math.hypot(p["pos"][0] - x, p["pos"][2] - z) < p["r"] + r - 0.6 for p in placed):

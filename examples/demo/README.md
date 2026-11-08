@@ -8,7 +8,7 @@ nebula で時間をかけてシミュレーションし、結果を Blender (`bp
 | 1. 1000 万粒子の流体 | `demo_fluid_10m` | `MPMEngine` (FLUID, FLIP/PIC) | 10,007,808 粒子 / 256×128×128 格子 | 粒子の密度場から等値面メッシュを再構成 → 透過 + 吸収ボリュームの水 (Cycles) |
 | 2. 市街地の気流 | `demo_city_wind` | `PyroEngine` (オイラー格子, 開境界) | 256×96×128 格子 / ビル 20 棟 | 速度場から追跡した流線 (風速で色分け) + ビル群 (Cycles) |
 | 3. 雪崩 | `demo_avalanche_mesh` | `MPMEngine` (Drucker-Prager) | 約 1070 万粒子 / 国土地理院 DEM 由来の地形 + 樹木 37 本 + 岩 16 個 | 密度場から数百万三角形の雪面メッシュを再構成 + DEM 地形メッシュ + 黒松メッシュ (Cycles) |
-| 4. 海岸の波 (issue #137) | `demo_seashore` | `FLIPEngine` (非圧縮 FLIP + 泡) | 既定 約 80 万粒子 (`--spacing 0.05` で約 800 万) + 泡 最大 100 万 | 水面等値面 + 泡の小球インスタンス + 岩 usdc (Cycles, 縦動画) |
+| 4. 海岸の波 (issue #137) | `demo_seashore` | `FLIPEngine` (非圧縮 FLIP + 泡) | 既定 約 610 万粒子 (`--spacing 0.055` で約 1000 万) + 泡 最大 400 万 | 水面等値面 + 泡の小球インスタンス + 岩 usdc (Cycles, 横動画) |
 
 ## 使い方
 
@@ -51,12 +51,12 @@ cd examples/demo
 # 1. アセット取得 + シーン生成 (gh のログインが必要 / uv が usd-core, scipy を取得する)
 uv run seashore/fetch_rocks.py          # assets_local/seashore/rocks/*.usdc, *.npz
 uv run seashore/make_scene.py --seed 3  # scene.sdf / scene.json / terrain.npz
-# 2. シミュレーション (既定 約 80 万粒子, 360 フレーム, RTX 3060 で約 3 分)
+# 2. シミュレーション (既定 約 610 万粒子, 600 フレーム (25 秒)。`--spacing 0.1` なら約 130 万粒子で数分)
 ../../build/examples/demo/demo_seashore --out out/seashore
-#    高解像度: --spacing 0.05 (約 800 万粒子, --max-diffuse 3000000 など)
+#    高解像度: --spacing 0.055 (約 1000 万粒子, --max-diffuse 6000000 など)
 # 3. まず点群のままプレビューで確認 (Blender 不要)
-uv run seashore/preview_points.py out/seashore --frames 0 360 --step 12 --out out/seashore_preview
-# 4. 良さそうなら Blender (縦動画 1080x1920)
+uv run seashore/preview_points.py out/seashore --frames 0 600 --step 12 --out out/seashore_preview
+# 4. 良さそうなら Blender (横動画 1920x1080)
 uv run python render/render_seashore.py out/seashore --frames 150 150 --out out/seashore_png --samples 64
 ```
 

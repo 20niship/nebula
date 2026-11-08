@@ -1,4 +1,4 @@
-"""demo_seashore の .nbp/.nbf を Blender (Cycles) でレンダリングする (縦動画 9:16 既定)。
+"""demo_seashore の .nbp/.nbf を Blender (Cycles) でレンダリングする (横動画 16:9 既定)。
 
 水: 粒子密度場の等値面メッシュ (透過 + 吸収)。泡: 点を Geometry Nodes で小球インスタンス化 (白)。
 地形・岩: seashore/make_scene.py の scene.json + terrain.npz、岩は virtual-tokyo の usdc をそのまま取り込む (マテリアル込み)。
@@ -24,13 +24,13 @@ ap.add_argument("src")
 ap.add_argument("--out", default="out/seashore_png")
 ap.add_argument("--frames", type=int, nargs=2, default=[0, 0], metavar=("START", "END"))
 ap.add_argument("--step", type=int, default=1)
-ap.add_argument("--res", type=int, nargs=2, default=[1080, 1920])
+ap.add_argument("--res", type=int, nargs=2, default=[1920, 1080])
 ap.add_argument("--samples", type=int, default=128)
-ap.add_argument("--voxel", type=float, default=0.12, help="水面再構成のボクセル [m] (粒子間隔の 1.2 倍程度)")
+ap.add_argument("--voxel", type=float, default=0.085, help="水面再構成のボクセル [m] (粒子間隔の 1.2 倍程度)")
 ap.add_argument("--foam-radius", type=float, default=0.025, help="泡粒子の半径 [m]")
-ap.add_argument("--cam", type=float, nargs=3, default=[14.0, 7.5, 3.5])
-ap.add_argument("--target", type=float, nargs=3, default=[30.0, 2.2, 8.5])
-ap.add_argument("--lens", type=float, default=22.0)
+ap.add_argument("--cam", type=float, nargs=3, default=[3.0, 9.0, 6.0])
+ap.add_argument("--target", type=float, nargs=3, default=[32.0, 2.0, 17.0])
+ap.add_argument("--lens", type=float, default=24.0)
 a = ap.parse_args()
 os.makedirs(a.out, exist_ok=True)
 scene = json.load(open(f"{ASSETS}/scene.json"))

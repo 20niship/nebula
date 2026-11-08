@@ -48,6 +48,14 @@ public:
   void setColliderSDF(const std::vector<float>& mortonSDF);
   void clearCollider();
 
+  // ── 回転する剛体コライダー (y 軸まわりの一定角速度。車を自転させる風洞など) ──────────
+  // localSDF: 剛体のローカル座標の SDF (節点値, x 最速の線形配置 res.x*res.y*res.z)。節点 (i,j,k) は 回転中心からの相対位置 localMin + (i,j,k)*localCell。
+  // pivotXZ: 回転軸 (鉛直線) の世界座標 (x,z)、y の高さは回転しても変わらない (ローカル y = ワールド y)。
+  // step() は毎サブステップ colliderSDF をこの SDF から焼き直し (GPU)、障害物 BC と発散に壁面速度 ω×r を課す。地面 (最下段セル) も固体になる。
+  void setRotatingCollider(const std::vector<float>& localSDF, glm::uvec3 res, float localCell, glm::vec3 localMin, glm::vec2 pivotXZ, float omega);
+  float rotatingColliderAngle() const { return pc_.solidAngle; }
+  VkBuffer getColliderSDFBuffer() const { return colliderSDFIdx_ ? attrBuf_.getBuffer("colliderSDF") : VK_NULL_HANDLE; }
+
   // ── 複数 Emitter (連続的な density/temperature/fuel/velocity 注入) ──────
   void addEmitter(std::shared_ptr<Emitter> emitter);
   void clearEmitters();
@@ -101,6 +109,7 @@ private:
   ComputePipeline kCombustion_;
   ComputePipeline kForces_;
   ComputePipeline kObstacleBC_;
+  ComputePipeline kRotateSDF_;
   ComputePipeline kAdvect_;
   ComputePipeline kCurl_;
   ComputePipeline kVorticityForce_;

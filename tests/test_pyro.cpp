@@ -333,3 +333,60 @@ TEST_CASE("Pyro GPU - 6-2: Non-cubic domain simulation stays finite inside the r
   engine.cleanup();
   ctx.cleanup();
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 7: 回転する剛体コライダー (y 軸まわりの一定角速度) — SDF の焼き直しと壁面速度
+// ═══════════════════════════════════════════════════════════════════════════
+TEST_CASE("Pyro GPU - 7-1: Rotating collider moves with the angle and imposes wall velocity omega x r") {
+  HeadlessCtx ctx;
+  ctx.init();
+
+  PyroEngine engine;
+  engine.domainSize = {16.0f, 8.0f, 16.0f};
+  engine.cellSize   = 0.25f;
+  engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS);
+  engine.numPressureIters = 10;
+
+  // ローカル SDF: 回転中心から (2,3,0) にある半径 1 の球。節点間隔 0.1、範囲 [-4,4]x[0,6]x[-4,4]
+  const glm::uvec3 lres(81, 61, 81);
+  const float lcell = 0.1f;
+  const glm::vec3 lmin(-4.0f, 0.0f, -4.0f);
+  std::vector<float> local(size_t(lres.x) * lres.y * lres.z);
+  for(uint32_t k = 0; k < lres.z; k++)
+    for(uint32_t j = 0; j < lres.y; j++)
+      for(uint32_t i = 0; i < lres.x; i++) local[size_t(i) + lres.x * (j + size_t(lres.y) * k)] = glm::length(lmin + glm::vec3(i, j, k) * lcell - glm::vec3(2.0f, 3.0f, 0.0f)) - 1.0f;
+
+  const float omega = 1.0f, dt = 0.1f;
+  engine.setRotatingCollider(local, lres, lcell, lmin, {8.0f, 8.0f}, omega);
+
+  const int steps = 5;
+  for(int i = 0; i < steps; i++) {
+    VkCommandBuffer cmd = ctx.beginCmd();
+    engine.step(cmd, dt);
+    ctx.submitCmd(cmd);
+  }
+  CHECK(engine.rotatingColliderAngle() == doctest::Approx(steps * omega * dt).epsilon(1e-4)); // 0.5 rad
+
+  // 最後のステップは角度 (steps-1)*omega*dt = 0.4 で焼き直されている
+  const float th = (steps - 1) * omega * dt;
+  const glm::vec3 center(8.0f + 2.0f * std::cos(th), 3.0f, 8.0f - 2.0f * std::sin(th)); // R(th) * (2,0,0)
+  const glm::ivec3 c = glm::ivec3(center / engine.cellSize);
+
+  float sdfHere = 0.0f, sdfOld = 0.0f;
+  ctx.readBuffer(engine.getColliderSDFBuffer(), meshSdfMortonEncode(c.x, c.y, c.z) * sizeof(float), &sdfHere, sizeof(float));
+  // 角度 0 の球 (中心 (10,3,8)) の内側 (中心から 0.9) だが、0.4 rad 回った球 (中心から 1.3) の外側になる点
+  const glm::ivec3 c0 = glm::ivec3(glm::vec3(10.9f, 3.0f, 8.0f) / engine.cellSize);
+  ctx.readBuffer(engine.getColliderSDFBuffer(), meshSdfMortonEncode(c0.x, c0.y, c0.z) * sizeof(float), &sdfOld, sizeof(float));
+  CHECK(sdfHere < -0.5f); // 球の中心付近 (半径 1)
+  CHECK(sdfOld > 0.0f);   // 回転前の位置は外側になっている
+
+  glm::vec4 v{};
+  ctx.readBuffer(engine.getVelocityBuffer(), meshSdfMortonEncode(c.x, c.y, c.z) * sizeof(glm::vec4), &v, sizeof(v));
+  // 壁面速度 omega * (r.z, 0, -r.x)。r は回転軸からの水平変位 (2cos th, -2 sin th)
+  CHECK(v.x == doctest::Approx(omega * (-2.0f * std::sin(th))).epsilon(0.2));
+  CHECK(v.z == doctest::Approx(omega * (-2.0f * std::cos(th))).epsilon(0.2));
+  CHECK(std::abs(v.y) < 0.3f);
+
+  engine.cleanup();
+  ctx.cleanup();
+}

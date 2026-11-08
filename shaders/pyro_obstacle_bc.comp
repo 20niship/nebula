@@ -3,7 +3,7 @@
 #include "pyro_common.glsl"
 
 // 障害物 SDF 境界条件: pc.colliderSDFIdx (Morton, 負値=内部) を用いて
-// 内部セルの速度をゼロ化し、表面付近のセルは法線方向速度成分を除去する。
+// 内部セルの速度を壁面速度 (静止なら 0) にし、表面付近のセルは壁面に対する法線方向速度成分を除去する。
 // mpm_nanovdb_bc.comp と同じ手法。pc.velIdxA を対象に適用する
 // (CPU側が呼び出しごとに velIdxA へ現在処理したいバッファを設定する)。
 // dispatch: (totalCells + 255) / 256
@@ -26,8 +26,11 @@ void main() {
     ivec3 ijk = pyroMortonDecodeI(gid);
     float sdf = SAMPLE_SDF(ijk.x, ijk.y, ijk.z);
 
+    // 回転コライダーなら固体の速度は ω×r (地面は 0)。静止コライダーなら 0。
+    vec3 uw = pyroSolidVel((vec3(ijk) + 0.5) * pc.cellSize + pc.worldMin);
+
     if (sdf < 0.0) {
-        writeVec4(pc.velIdxA, gid, vec4(0.0));
+        writeVec4(pc.velIdxA, gid, vec4(uw, 0.0));
         return;
     }
 
@@ -42,7 +45,7 @@ void main() {
         float gl = length(gn);
         if (gl > 1e-6) {
             vec3  n  = gn / gl;
-            float vn = dot(v, n);
+            float vn = dot(v - uw, n); // 壁面に対する相対法線速度
             if (vn < 0.0) v -= vn * n;
         }
         writeVec4(pc.velIdxA, gid, vec4(v, 0.0));

@@ -95,6 +95,7 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/pyro_emit.comp
     ${SHADER_SRC_DIR}/pyro_combustion.comp
     ${SHADER_SRC_DIR}/pyro_obstacle_bc.comp
+    ${SHADER_SRC_DIR}/pyro_rotate_sdf.comp
     ${SHADER_SRC_DIR}/pyro_advect.comp
     ${SHADER_SRC_DIR}/pyro_curl.comp
     ${SHADER_SRC_DIR}/pyro_vorticity_force.comp

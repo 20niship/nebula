@@ -76,8 +76,23 @@ struct PyroSimPC {
 
   // 開境界ビットマスク (bit0..5 = -x,+x,-y,+y,-z,+z)。立っている面は領域外の圧力を 0 (大気圧) とみなし、風が出入りできる (0=従来どおり全面閉)
   uint32_t openBoundaryMask; // 164
+
+  // 回転する剛体コライダー (y 軸まわり)。rotSdfIdx != 0 のとき step() が colliderSDF を毎サブステップ回転させて焼き直し (pyro_rotate_sdf.comp)、
+  // 障害物 BC / 発散は壁面速度 ω×r (solidOmega != 0 のとき) を課す。回転軸は (solidPivotX, *, solidPivotZ) を通る鉛直線。
+  float solidPivotX;   // 168
+  float solidPivotZ;   // 172
+  float solidOmega;    // 176 角速度 [rad/s] (0=静止コライダーとして従来どおり)
+  float solidAngle;    // 180 現在の回転角 [rad] (CPU が omega*dt ずつ進める)
+  uint32_t rotSdfIdx;  // 184 ローカル SDF (線形配置 x 最速, rotRes^3)。節点値で、節点 (i,j,k) の位置は rotMin + (i,j,k)*rotCell
+  uint32_t rotResX;    // 188
+  uint32_t rotResY;    // 192
+  uint32_t rotResZ;    // 196
+  float rotCell;       // 200
+  float rotMinX;       // 204 ローカル SDF 原点 (回転中心からの相対座標 [m])
+  float rotMinY;       // 208
+  float rotMinZ;       // 212
 };
-static_assert(sizeof(PyroSimPC) == 168, "PyroSimPC must be 168 bytes");
+static_assert(sizeof(PyroSimPC) == 216, "PyroSimPC must be 216 bytes");
 static_assert(offsetof(PyroSimPC, gridRes) == 64, "vec3 alignment offset");
 static_assert(offsetof(PyroSimPC, worldMin) == 80, "vec3 alignment offset");
 static_assert(offsetof(PyroSimPC, worldMax) == 96, "vec3 alignment offset");

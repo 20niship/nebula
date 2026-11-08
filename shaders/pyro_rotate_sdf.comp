@@ -1,0 +1,47 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "pyro_common.glsl"
+
+// 回転コライダー: ローカル SDF (線形配置の節点値) を y 軸まわりに pc.solidAngle だけ回し、トリリニア補間で colliderSDF (Morton) へ焼き直す。
+// ついでに地面 (最下段セルを固体) も合成する。ローカル SDF の外側は境界へのクランプ値 + 境界からの距離で延長する。
+// dispatch: (totalCells + 255) / 256
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint gid = gl_GlobalInvocationID.x;
+    uint totalCells = pc.hashCells;
+    if (gid >= totalCells) return;
+    if (pc.colliderSDFIdx == 0u || pc.rotSdfIdx == 0u) return;
+
+    ivec3 ijk = pyroMortonDecodeI(gid);
+    if (ijk.x >= int(pc.gridRes.x) || ijk.y >= int(pc.gridRes.y) || ijk.z >= int(pc.gridRes.z)) {
+        writeFloat(pc.colliderSDFIdx, gid, 1e6);
+        return;
+    }
+
+    vec3 p = (vec3(ijk) + 0.5) * pc.cellSize + pc.worldMin;
+    float sdf = p.y - pc.cellSize; // 地面
+
+    // ワールド -> ローカル (R(-angle), 回転軸 = (pivotX, *, pivotZ) を通る鉛直線。ローカル y = ワールド y)
+    float c = cos(pc.solidAngle), s = sin(pc.solidAngle);
+    vec3 r  = vec3(p.x - pc.solidPivotX, p.y, p.z - pc.solidPivotZ);
+    vec3 q  = vec3(c * r.x - s * r.z, r.y, s * r.x + c * r.z);
+
+    ivec3 res = ivec3(pc.rotResX, pc.rotResY, pc.rotResZ);
+    vec3 g    = (q - vec3(pc.rotMinX, pc.rotMinY, pc.rotMinZ)) / pc.rotCell; // 節点座標
+    vec3 gc   = clamp(g, vec3(0.0), vec3(res) - 1.001);
+    ivec3 i0  = ivec3(gc);
+    vec3  f   = gc - vec3(i0);
+    float acc = 0.0;
+    for (int k = 0; k < 8; k++) {
+        ivec3 d = ivec3(k & 1, (k >> 1) & 1, (k >> 2) & 1);
+        float w = (d.x == 1 ? f.x : 1.0 - f.x) * (d.y == 1 ? f.y : 1.0 - f.y) * (d.z == 1 ? f.z : 1.0 - f.z);
+        ivec3 n = i0 + d;
+        acc += w * readFloat(pc.rotSdfIdx, uint(n.x + res.x * (n.y + res.y * n.z)));
+    }
+    float outside = length(g - clamp(g, vec3(0.0), vec3(res) - 1.0)) * pc.rotCell;
+    sdf = min(sdf, acc + outside);
+
+    writeFloat(pc.colliderSDFIdx, gid, sdf);
+}

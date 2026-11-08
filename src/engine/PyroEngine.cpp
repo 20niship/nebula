@@ -107,6 +107,7 @@ void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool 
   load(kEmit_, "pyro_emit.comp");
   load(kCombustion_, "pyro_combustion.comp");
   load(kObstacleBC_, "pyro_obstacle_bc.comp");
+  load(kRotateSDF_, "pyro_rotate_sdf.comp");
   load(kAdvect_, "pyro_advect.comp");
   load(kCurl_, "pyro_curl.comp");
   load(kVorticityForce_, "pyro_vorticity_force.comp");
@@ -119,7 +120,7 @@ void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool 
 }
 
 void PyroEngine::cleanup() {
-  for(auto* k : {&kEmit_, &kCombustion_, &kForces_, &kObstacleBC_, &kAdvect_, &kCurl_, &kVorticityForce_, &kDivergence_, &kPressureGS_, &kProject_}) k->cleanup();
+  for(auto* k : {&kEmit_, &kCombustion_, &kForces_, &kObstacleBC_, &kRotateSDF_, &kAdvect_, &kCurl_, &kVorticityForce_, &kDivergence_, &kPressureGS_, &kProject_}) k->cleanup();
 #ifdef NEBULA_GPU_PROFILING
   if(profPool_ != VK_NULL_HANDLE) vkDestroyQueryPool(device_, profPool_, nullptr);
 #endif
@@ -137,7 +138,29 @@ void PyroEngine::setColliderSDF(const std::vector<float>& mortonSDF) {
   attrBuf_.upload("colliderSDF", mortonSDF.data(), mortonSDF.size() * sizeof(float), cmdPool_, queue_);
 }
 
-void PyroEngine::clearCollider() { colliderSDFIdx_ = 0; }
+void PyroEngine::clearCollider() {
+  colliderSDFIdx_ = 0;
+  pc_.rotSdfIdx   = 0;
+  pc_.solidOmega  = 0.0f;
+}
+
+void PyroEngine::setRotatingCollider(const std::vector<float>& localSDF, glm::uvec3 res, float localCell, glm::vec3 localMin, glm::vec2 pivotXZ, float omega) {
+  if(localSDF.size() != size_t(res.x) * res.y * res.z) throw std::runtime_error("PyroEngine::setRotatingCollider: localSDF size must equal res.x*res.y*res.z");
+  if(colliderSDFIdx_ == 0) colliderSDFIdx_ = attrBuf_.addAttribute("colliderSDF", sizeof(float), totalCells());
+  pc_.rotSdfIdx = attrBuf_.addAttribute("rotSDF", sizeof(float), localSDF.size());
+  attrBuf_.upload("rotSDF", localSDF.data(), localSDF.size() * sizeof(float), cmdPool_, queue_);
+  pc_.rotResX     = res.x;
+  pc_.rotResY     = res.y;
+  pc_.rotResZ     = res.z;
+  pc_.rotCell     = localCell;
+  pc_.rotMinX     = localMin.x;
+  pc_.rotMinY     = localMin.y;
+  pc_.rotMinZ     = localMin.z;
+  pc_.solidPivotX = pivotXZ.x;
+  pc_.solidPivotZ = pivotXZ.y;
+  pc_.solidOmega  = omega;
+  pc_.solidAngle  = 0.0f;
+}
 
 // ── Emitter ───────────────────────────────────────────────────────────────
 
@@ -281,6 +304,9 @@ void PyroEngine::step(VkCommandBuffer cmd, float dt) {
       pc.emitterCount = emittersActiveCount_;
     }
 
+    // ⓪ 回転コライダー: colliderSDF を現在の角度で焼き直す
+    if(pc.rotSdfIdx != 0) dispatchAndBarrier(cmd, kRotateSDF_, pc, "rotate_sdf");
+
     // ① Emitter 注入 (A バッファへインプレース)
     dispatchAndBarrier(cmd, kEmit_, pc, "emit");
 
@@ -324,6 +350,7 @@ void PyroEngine::step(VkCommandBuffer cmd, float dt) {
 
     // ダブルバッファ入れ替え: 次フレームは B が現在値になる
     cur_ = 1 - cur_;
+    pc_.solidAngle += pc_.solidOmega * subDt; // 回転コライダーの角度を進める (CPU 側で保持し、次サブステップの buildPC に反映)
   }
 }
 

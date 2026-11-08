@@ -4,7 +4,7 @@
 // ── Bindless バッファ配列 ──────────────────────────────────────────────────
 layout(set = 0, binding = 0) buffer StorageBuffers { uint data[]; } buffers[];
 
-// ── PyroSimPC Push Constants (164 bytes) ───────────────────────────────────
+// ── PyroSimPC Push Constants (216 bytes) ───────────────────────────────────
 // issue #46フォローアップ: 直方体ドメイン対応。worldMin/worldMax を vec3 化し、各軸独立の
 // gridRes(uvec3) を追加した。旧 gridRes(スカラー、Morton dispatch用の立方体解像度) は
 // hashCells に改名 (mpm_common.glsl と同一の命名・用法。値は cubeRes^3)。
@@ -45,6 +45,18 @@ layout(push_constant) uniform PC {
     uint  forceBufIdx;        // 156 Force配列(ForceGPU×forceCount)のbindless index (issue #30)
     uint  forceCount;         // 160 有効なForce数
     uint  openBoundaryMask;   // 164 開境界ビット (bit0..5 = -x,+x,-y,+y,-z,+z)。領域外の圧力を 0 とする
+    float solidPivotX;        // 168 回転コライダーの回転軸 (鉛直線) の x
+    float solidPivotZ;        // 172 同 z
+    float solidOmega;         // 176 角速度 [rad/s] (0=静止コライダー)
+    float solidAngle;         // 180 現在の回転角 [rad]
+    uint  rotSdfIdx;          // 184 ローカル SDF (線形, x 最速)。0=無効
+    uint  rotResX;            // 188
+    uint  rotResY;            // 192
+    uint  rotResZ;            // 196
+    float rotCell;            // 200
+    float rotMinX;            // 204 ローカル SDF 原点 (回転中心からの相対座標)
+    float rotMinY;            // 208
+    float rotMinZ;            // 212
 } pc;
 
 // ── Buffer read/write マクロ (MoltenVK: buffers[] は main() でのみ展開) ────
@@ -115,6 +127,16 @@ ivec3 pyroMortonDecodeI(uint code) {
 // セル (ix,iy,iz) (クランプ後) が障害物内部 (SDF<0) かどうか。SDF 未設定なら常に false。
 #define CELL_IS_SOLID(ix_, iy_, iz_) ( pc.colliderSDFIdx != 0u && \
     readFloat(pc.colliderSDFIdx, pyroMortonEncodeI(CLAMP_CELL((ix_), (iy_), (iz_)))) < 0.0 )
+
+// 回転コライダー表面の速度 ω×r (y 軸まわり)。地面 (最下段の固体行) は静止。solidOmega==0 なら 0。
+vec3 pyroSolidVel(vec3 p) {
+    if (pc.solidOmega == 0.0 || p.y < 1.5 * pc.cellSize) return vec3(0.0);
+    vec3 r = vec3(p.x - pc.solidPivotX, 0.0, p.z - pc.solidPivotZ);
+    return pc.solidOmega * vec3(r.z, 0.0, -r.x);
+}
+// 固体隣接セル (クランプ後) の壁面速度。回転コライダーがあれば ω×r、なければ自セル速度 (従来の Neumann/ミラー近似)。
+#define SOLID_NBR_VEL(ix_, iy_, iz_, vSelf_) ( pc.solidOmega != 0.0 ? \
+    pyroSolidVel((vec3(CLAMP_CELL((ix_), (iy_), (iz_))) + 0.5) * pc.cellSize + pc.worldMin) : (vSelf_) )
 
 // 圧力ステンシルの隣接セル値。開境界の外側は 0、障害物は自セル圧力 (Neumann)、それ以外はクランプ参照。
 #define PRESSURE_OPEN_OUT(ix_, iy_, iz_, m_) ( \

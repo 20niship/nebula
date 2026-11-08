@@ -15,7 +15,7 @@ A real-time GPU physics simulator built entirely on **Vulkan compute shaders** �
 
 https://github.com/user-attachments/assets/fc7bfe51-39a6-4694-a515-f3288ba808cb
 
-https://github.com/user-attachments/assets/4347f93c-635c-4ec7-9fb3-be4a3c96b61c
+https://github.com/user-attachments/assets/312909e0-fa6e-499f-b63e-fa1554af9ced
 
 <sub>Note: the video above (seashore waves · city wind · avalanche) is rendered with Blender. See [examples/demo/README.md](examples/demo/README.md) for how to run it.</sub>
 

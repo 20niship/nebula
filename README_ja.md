@@ -15,7 +15,7 @@
 
 https://github.com/user-attachments/assets/fc7bfe51-39a6-4694-a515-f3288ba808cb
 
-https://github.com/user-attachments/assets/4347f93c-635c-4ec7-9fb3-be4a3c96b61c
+https://github.com/user-attachments/assets/312909e0-fa6e-499f-b63e-fa1554af9ced
 
 <sub>注: 上の動画 (海岸の波・都市風・雪崩) は Blender でレンダリングしています。実行方法の詳細は [examples/demo/README.md](examples/demo/README.md) を参照してください。</sub>
 

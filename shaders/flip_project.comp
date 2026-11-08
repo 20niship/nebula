@@ -1,0 +1,39 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "mpm_common.glsl"
+
+// FLIP 圧力投影 ③: v -= dt/ρ0 ∇p (中心差分)。solid/グリッド外の隣接は自ノード圧力 (法線勾配 0)、air は p=0。
+// solid ノード自身と質量のないノードは変更しない。dispatch: (hashCells + 255) / 256
+
+layout(local_size_x = 256) in;
+
+void main() {
+  uint gid = gl_GlobalInvocationID.x;
+  uint NC  = pc.hashCells;
+  if(gid >= NC) return;
+  if(readUint(pc.flipGridIdx, 2u * NC + gid) == 2u) return;
+  if(decodeFixed(readUint(pc.gridMassIdx, gid)) < 1e-10) return;
+
+  ivec3 ijk = mortonDecodeI(gid);
+  float pi  = readFloat(pc.flipGridIdx, gid);
+  vec3 grad = vec3(0.0);
+  for(int a = 0; a < 3; a++) {
+    ivec3 e  = ivec3(a == 0, a == 1, a == 2);
+    float pl = pi;
+    float ph = pi;
+    ivec3 lo = ijk - e;
+    ivec3 hi = ijk + e;
+    if(all(greaterThanEqual(lo, ivec3(0)))) {
+      uint nid = mortonEncodeI(lo);
+      if(readUint(pc.flipGridIdx, 2u * NC + nid) != 2u) pl = readFloat(pc.flipGridIdx, nid);
+    }
+    if(all(lessThan(hi, ivec3(pc.gridRes)))) {
+      uint nid = mortonEncodeI(hi);
+      if(readUint(pc.flipGridIdx, 2u * NC + nid) != 2u) ph = readFloat(pc.flipGridIdx, nid);
+    }
+    grad[a] = (ph - pl) / (2.0 * pc.cellSize);
+  }
+
+  vec3 v = readVec4(pc.gridMomIdx, gid).xyz - (pc.dt / pc.rho0) * grad;
+  writeVec4(pc.gridMomIdx, gid, vec4(v, 0.0));
+}

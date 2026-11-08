@@ -16,6 +16,7 @@ add_library(nebula STATIC
     engine/SoftBodyEngine.cpp
     engine/ParticleGridEngine.cpp
     engine/MPMEngine.cpp
+    engine/FLIPEngine.cpp
     engine/PyroEngine.cpp
     App.cpp
 )

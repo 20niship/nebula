@@ -23,6 +23,7 @@ add_executable(vulkan_tests
     test_pbf_foam.cpp
     test_pbf.cpp
     test_mpm.cpp
+    test_flip.cpp
     test_pyro.cpp
     test_attribute_buffer.cpp
     test_domain.cpp

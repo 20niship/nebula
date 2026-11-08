@@ -1,0 +1,58 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "mpm_common.glsl"
+
+// FLIP 圧力投影 ①: 速度の発散を計算し、圧力を 0 で初期化する (Almgren 近似投影)。
+//   div_i = Σ_axis (v_{i+1} - v_{i-1}) / 2h
+// 隣接が air/グリッド外のときは自ノード速度を使い (勾配 0)、solid は格納済み速度 (壁は法線成分 0 済み) を使う。
+// 密度補正: 圧縮 (質量比 > 1) したノードは目標発散を正にして粒子の過密 (体積ドリフト) を戻す。
+//   b_i = ρ0 h² (div_i - s_i) / dt,   s_i = k · max(0, mass/(ρ0 h³) - 1.25) / dt   (k = pc.xi_hard に FLIPEngine::densityCorrection を渡す)
+// 許容 25%: ランダム配置の粒子は密度が±揺らぐため 1.0 を閾値にすると平均で膨張してしまう。
+// dispatch: (hashCells + 255) / 256
+
+layout(local_size_x = 256) in;
+
+void main() {
+  uint gid = gl_GlobalInvocationID.x;
+  uint NC  = pc.hashCells;
+  if(gid >= NC) return;
+
+  writeFloat(pc.flipGridIdx, gid, 0.0);      // 圧力
+  writeFloat(pc.flipGridIdx, NC + gid, 0.0); // b
+
+  uint type = readUint(pc.flipGridIdx, 2u * NC + gid);
+  if(type != 1u) return;
+
+  ivec3 ijk = mortonDecodeI(gid);
+  vec3 vi   = readVec4(pc.gridMomIdx, gid).xyz;
+  float h   = pc.cellSize;
+
+  float div = 0.0;
+  for(int a = 0; a < 3; a++) {
+    ivec3 e  = ivec3(a == 0, a == 1, a == 2);
+    ivec3 lo = ijk - e;
+    ivec3 hi = ijk + e;
+    float vlo = vi[a];
+    float vhi = vi[a];
+    if(all(greaterThanEqual(lo, ivec3(0)))) {
+      uint nid = mortonEncodeI(lo);
+      uint ntyp = readUint(pc.flipGridIdx, 2u * NC + nid);
+      // 質量のないノードの gridMom は P2G の固定小数点生ビットが残りうる (NaN 化) ので読まない
+      if(ntyp == 1u || (ntyp == 2u && readUint(pc.gridMassIdx, nid) != 0u)) vlo = readVec4(pc.gridMomIdx, nid).xyz[a];
+      else if(ntyp == 2u) vlo = 0.0;
+    }
+    if(all(lessThan(hi, ivec3(pc.gridRes)))) {
+      uint nid = mortonEncodeI(hi);
+      uint ntyp = readUint(pc.flipGridIdx, 2u * NC + nid);
+      if(ntyp == 1u || (ntyp == 2u && readUint(pc.gridMassIdx, nid) != 0u)) vhi = readVec4(pc.gridMomIdx, nid).xyz[a];
+      else if(ntyp == 2u) vhi = 0.0;
+    }
+    div += (vhi - vlo) / (2.0 * h);
+  }
+
+  float fullMass = pc.rho0 * h * h * h;
+  float ratio    = decodeFixed(readUint(pc.gridMassIdx, gid)) / fullMass;
+  float s        = pc.xi_hard * max(0.0, ratio - 1.25) / pc.dt;
+
+  writeFloat(pc.flipGridIdx, NC + gid, pc.rho0 * h * h * (div - s) / pc.dt);
+}

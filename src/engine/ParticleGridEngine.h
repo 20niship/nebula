@@ -65,7 +65,7 @@ public:
   // Emitter::particleType を material id として解釈する
   void addEmitter(std::shared_ptr<Emitter> emitter);
   void clearEmitters();
-  void resetParticles(); // ライブ粒子数を 0 にリセット (バッファは再生成しない)
+  virtual void resetParticles(); // ライブ粒子数を 0 にリセット (バッファは再生成しない)
 
   // pos.w = 粒子体積 Vp, vel.w = floatBitsToUint(material_id)。maxParticles まで追加
   void appendParticles(const std::vector<glm::vec4>& pos, const std::vector<glm::vec4>& vel);
@@ -98,6 +98,8 @@ protected:
   // G2P の後 (二次粒子など)
   virtual void afterG2P(VkCommandBuffer /*cmd*/, const MPMSimPC& /*pc*/) {}
   virtual void cleanupDerived() {}
+  // Emitter::particleVolume 未指定時の粒子体積
+  virtual float defaultParticleVolume() const { return cellSize * cellSize * cellSize; }
 
   void uploadNewParticles_(const glm::vec4* pos, const glm::vec4* vel, uint32_t count, uint32_t first);
   MPMSimPC buildPC(float subDt) const;

@@ -261,7 +261,7 @@ void ParticleGridEngine::emitFromEmitters(float dt) {
     float matIdF;
     std::memcpy(&matIdF, &matId, sizeof(float));
 
-    const float Vp = emitter.particleVolume > 0.0f ? emitter.particleVolume : cellSize * cellSize * cellSize;
+    const float Vp = emitter.particleVolume > 0.0f ? emitter.particleVolume : defaultParticleVolume();
     std::vector<glm::vec4> pos(nNew), vel(nNew);
 
     for(int j = 0; j < nNew; j++) pos[j] = glm::vec4(emitter.sample(emitterRng_), Vp);

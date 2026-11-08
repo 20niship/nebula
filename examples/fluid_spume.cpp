@@ -1,5 +1,5 @@
 // spume (https://github.com/codepawl/spume) の README にある FLIP 液体 example を
-// nebula の MPMEngine (FLUID + FLIP/PIC ブレンド) で再現する。
+// nebula で再現する。既定は MPMEngine (弱圧縮 FLUID + FLIP/PIC ブレンド)、--flip で FLIPEngine (圧力投影による非圧縮 FLIP)。
 //   --scene geyser : 床から垂直に噴き上がるジェット
 //   --scene outfall: 側面パイプから流れ出す急流
 //   --scene culvert: 閉じた暗渠 (天井あり) を走るサージ
@@ -10,6 +10,7 @@
 #include "Collider.h"
 #include "MaterialParams.h"
 #include "core/SimPC.h"
+#include "engine/FLIPEngine.h"
 #include "engine/MPMEngine.h"
 #include "graphics/GraphicsPipeline.h"
 
@@ -17,6 +18,7 @@
 #include <glm/glm.hpp>
 
 #include <algorithm>
+#include <memory>
 #include <cstdio>
 #include <stdexcept>
 #include <string>
@@ -29,7 +31,8 @@ struct SpumeArgs : public argparse::Args {
   float& cell_size            = kwarg("cell-size", "grid cell size [m]").set_default(0.0f);
   int& max_n                  = kwarg("max-n", "max particle count").set_default(400000);
   float& dt                   = kwarg("dt", "frame timestep [s]").set_default(1.0f / 60.0f);
-  int& substeps               = kwarg("substeps", "substeps per frame").set_default(20);
+  bool& flip                  = flag("flip", "FLIPEngine (incompressible FLIP) instead of MPMEngine weakly-compressible fluid");
+  int& substeps               = kwarg("substeps", "substeps per frame (0=solver default: MPM 20, FLIP 4)").set_default(0);
   float& flip_ratio           = kwarg("flip-ratio", "FLIP share of PIC/FLIP blend").set_default(0.95f);
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
@@ -93,11 +96,13 @@ public:
     if(args.cell_size > 0.0f) scene_.cell = args.cell_size;
     base_.screenshotDir = args.screenshot_dir;
 
-    engine_.maxParticles = uint32_t(args.max_n);
-    engine_.domainSize   = scene_.domain;
-    engine_.cellSize     = scene_.cell;
+    if(args.flip) engine_ = std::make_unique<FLIPEngine>();
+    else engine_ = std::make_unique<MPMEngine>();
+    engine_->maxParticles = uint32_t(args.max_n);
+    engine_->domainSize   = scene_.domain;
+    engine_->cellSize     = scene_.cell;
 
-    base_.initWindow(("FLIP (spume) - " + args.scene).c_str());
+    base_.initWindow((std::string(args.flip ? "FLIP" : "MPM FLIP") + " (spume) - " + args.scene).c_str());
     initVulkan(args.substeps, args.flip_ratio);
     mainLoop(args.n_shots);
     cleanup();
@@ -105,7 +110,7 @@ public:
 
 private:
   BaseApp base_;
-  MPMEngine engine_;
+  std::unique_ptr<ParticleGridEngine> engine_; // MPMEngine か FLIPEngine
   GraphicsPipeline graphicsPipe_;
   std::shared_ptr<GravityForce> gravity_;
   Scene scene_;
@@ -115,12 +120,12 @@ private:
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
-    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR);
-    engine_.numSubsteps = substeps;
-    engine_.flip_ratio  = flipRatio;
+    engine_->init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR);
+    if(substeps > 0) engine_->numSubsteps = substeps;
+    engine_->flip_ratio = flipRatio;
     gravity_            = GravityForce::FromDirection({0.0f, 0.0f, 1.0f}, 9.8f);
-    engine_.addForce(gravity_);
-    engine_.setMaterials({presetWater()});
+    engine_->addForce(gravity_);
+    engine_->setMaterials({presetWater()});
 
     const glm::vec3 D = scene_.domain;
     ColliderSet cols;
@@ -131,7 +136,7 @@ private:
     cols.addPlane({D.x * 0.5f, D.y, D.z * 0.5f}, {0, -1, 0}, 0.0f, 0.0f);
     if(scene_.closed) cols.addPlane({D.x * 0.5f, D.y * 0.5f, D.z}, {0, 0, -1}, 0.0f, 0.0f);
     for(auto& [c, h] : scene_.boxes) cols.addBox(c, h, 0.0f, 0.0f);
-    engine_.setColliders(cols);
+    engine_->setColliders(cols);
 
     // 1 粒子 = (cell/2)^3 (8 particles/cell)。1 フレームで開口を通過する体積から放出数を決める。
     const float Vp = std::pow(scene_.cell * 0.5f, 3.0f);
@@ -147,10 +152,10 @@ private:
       e->particleVolume = Vp;
       e->particles_per_step = std::max(1, int(area * in.speed * dt_ / Vp));
       e->step_count     = 0; // 無限に放出
-      engine_.addEmitter(e);
+      engine_->addEmitter(e);
     }
 
-    graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/particle.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");
+    graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_->descriptorSetLayout, SHADER_DIR_STR + "/particle.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");
     base_.createFrameData();
   }
 
@@ -160,7 +165,7 @@ private:
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(cmd, &bi);
 
-    engine_.step(cmd, dt_);
+    engine_->step(cmd, dt_);
 
     VkBufferMemoryBarrier barrier{};
     barrier.sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
@@ -168,7 +173,7 @@ private:
     barrier.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
     barrier.srcQueueFamilyIndex = base_.ctx.computeFamily;
     barrier.dstQueueFamilyIndex = base_.ctx.graphicsFamily;
-    barrier.buffer              = engine_.getPositionBuffer();
+    barrier.buffer              = engine_->getPositionBuffer();
     barrier.offset              = 0;
     barrier.size                = VK_WHOLE_SIZE;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0, 0, nullptr, 1, &barrier, 0, nullptr);
@@ -204,12 +209,12 @@ private:
     vkCmdSetScissor(cmd, 0, 1, &sc);
 
     SimPC renderPc{};
-    renderPc.posIdx        = engine_.posIdx;
-    renderPc.velIdx        = engine_.velIdx;
-    renderPc.particleCount = engine_.liveParticleCount();
+    renderPc.posIdx        = engine_->posIdx;
+    renderPc.velIdx        = engine_->velIdx;
+    renderPc.particleCount = engine_->liveParticleCount();
     renderPc.worldMin      = glm::vec3(0.0f);
-    renderPc.worldMax      = engine_.domainSize;
-    graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.liveParticleCount());
+    renderPc.worldMax      = engine_->domainSize;
+    graphicsPipe_.draw(cmd, engine_->descriptorSet, renderPc, engine_->liveParticleCount());
 
     vkCmdEndRenderPass(cmd);
     vkEndCommandBuffer(cmd);
@@ -297,7 +302,7 @@ private:
 
   void cleanup() {
     graphicsPipe_.cleanup();
-    engine_.cleanup();
+    engine_->cleanup();
     base_.cleanupBase();
   }
 };

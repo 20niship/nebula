@@ -151,7 +151,7 @@ TEST_CASE("FLIP - foam is generated on impact and suppressed when disabled") {
   }
 }
 
-// ダム崩壊 (examples/flip_dambreak_foam.cpp の縮小版): 水塊が崩れて障害物に当たり、有限・領域内のまま前進して泡が出る
+// ダム崩壊 (examples/fluid_pbf.cpp --flip の縮小版): 水塊が崩れて障害物に当たり、有限・領域内のまま前進して泡が出る
 TEST_CASE("FLIP - dam break stays finite, advances and foams on the obstacle") {
   FlipScene s;
   const float cell = 1.0f / 16;
@@ -186,5 +186,31 @@ TEST_CASE("FLIP - dam break stays finite, advances and foams on the obstacle") {
   CHECK(frontEnd > frontStart + 1.0f);
   CHECK(vmax < 40.0f);
   CHECK(s.aliveFoam() > 0u);
+  s.cleanup();
+}
+
+// 動く箱 (パドル): 水を押しても粒子が箱へ入り込まず、箱が進んだ分だけ水が押し出される
+TEST_CASE("FLIP - moving box collider pushes water without penetration") {
+  FlipScene s;
+  const float cell = 2.0f / 32.0f;
+  s.init(2.0f, cell, 200000);
+  const float lo = 1.5f * cell, hi = 2.0f - 1.5f * cell;
+  s.engine.addEmitter(block({lo + 0.5f, lo, lo}, {hi, lo + 0.5f, hi}, {0, 0, 0}, cell));
+  const glm::vec3 half(2.0f * cell, 1.0f, 1.0f);
+  const float speed = 0.5f;
+  for(int f = 0; f < 120; ++f) {
+    const float x = 0.4f + speed * s.dt * float(f);
+    ColliderSet cols;
+    cols.addBox({x, 1.0f, 1.0f}, half, 0.0f, 0.0f, {speed, 0, 0});
+    s.engine.setColliders(cols);
+    s.run(1);
+  }
+  const float boxFront = 0.4f + speed * s.dt * 119.0f + half.x;
+  float minX           = 1e9f;
+  for(const auto& p : s.readPos()) {
+    REQUIRE(std::isfinite(p.x + p.y + p.z));
+    if(p.y > 0.05f) minX = std::min(minX, p.x);
+  }
+  CHECK(minX > boxFront - 0.5f * cell);
   s.cleanup();
 }

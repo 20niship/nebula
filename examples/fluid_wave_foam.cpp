@@ -6,6 +6,7 @@
 #include "core/Emitter.h"
 #include "core/Force.h"
 #include "engine/BoundaryParticles.h"
+#include "engine/FLIPEngine.h"
 #include "engine/FluidEngine.h"
 #include "graphics/GraphicsPipeline.h"
 
@@ -31,6 +32,7 @@ constexpr float BOUNDARY_SPACING_RATIO = 0.75f;
 // ── CLI ───────────────────────────────────────────────────────────────────────
 
 struct WaveFoamArgs : public argparse::Args {
+  bool& flip                  = flag("flip", "FLIPEngine (incompressible FLIP) instead of PBF. --half は無視される");
   float& world_size           = kwarg("world-size", "simulation domain size [m] (X/Z)").set_default(24.0f);
   float& particle_radius      = kwarg("particle-radius", "流体粒子半径 [m]").set_default(24.0f / (134.0f * 2.0f));
   float& water_depth          = kwarg("water-depth", "初期水深 [m]").set_default(11.0f * (24.0f / 134.0f));
@@ -86,6 +88,7 @@ class WaveFoamApp {
 public:
   void run(const WaveFoamArgs& args) {
     dt_                 = args.dt;
+    flip_               = args.flip;
     base_.screenshotDir = args.screenshot_dir;
 
     // --large: 粒子半径を半分(解像度2倍)、泡数を4倍にする高解像度プリセット
@@ -100,7 +103,7 @@ public:
     cfg.particleRadius      = particleRadius;
     cfg.cellSize            = particleRadius * 4.0f; // h=2d 推奨 (d=spacing=2r)
     cfg.domainSize          = glm::vec3(args.world_size, domainSizeY, domainSizeZ);
-    cfg.halfVec4Vel         = args.half;
+    cfg.halfVec4Vel         = args.half && !args.flip;
     cfg.max_boundary        = 20000;
     cfg.maxDiffuseParticles = uint32_t(max_diff);
 
@@ -116,6 +119,10 @@ public:
 private:
   BaseApp base_;
   FluidEngine engine_;
+  FLIPEngine flipEngine_;
+  bool flip_ = false;
+  glm::vec3 paddleHalfExtents_{0.0f}; // FLIP: パドルの箱コライダー半辺長
+  glm::vec3 paddleRestCenter_{0.0f};
   GraphicsPipeline graphicsPipe_;
   GraphicsPipeline foamGraphicsPipe_;
   std::shared_ptr<GravityForce> gravity_;
@@ -132,6 +139,10 @@ private:
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
+    if(flip_) {
+      initFlip(cfg, waterDepth);
+      return;
+    }
     engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
 
     engine_.rho0                 = cfg.computeRestDensity();
@@ -228,7 +239,68 @@ private:
     base_.createFrameData();
   }
 
+  // FLIP 版: 同じ海 + 単振動パドル。FLIP は 8 粒子/セル (cell = 2d なので PBF と同じ粒子間隔)、
+  // パドルは速度付きの箱コライダーを毎フレーム動かして表す (境界粒子は使わない)。
+  void initFlip(const FluidConfig& cfg, float waterDepth) {
+    const float d = cfg.particleSpacing();
+    flipEngine_.domainSize          = cfg.domainSize;
+    flipEngine_.cellSize            = cfg.cellSize;
+    flipEngine_.maxParticles        = uint32_t(cfg.domainSize.x * HALF_Y * 2.0f * waterDepth / (d * d * d)) + 1024u;
+    flipEngine_.maxDiffuseParticles = cfg.maxDiffuseParticles;
+    flipEngine_.foamEnabled         = cfg.maxDiffuseParticles > 0;
+    flipEngine_.numSubsteps         = 2;
+    flipEngine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR);
+    flipEngine_.addForce(GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f)); // Z-up
+
+    const float centerY = cfg.domainSize.y * 0.5f;
+    const float restX   = paddle_.amplitude + 1.2f;
+    paddleHalfExtents_  = glm::vec3(cfg.cellSize, cfg.domainSize.y * 0.5f, cfg.domainSize.z * 0.5f);
+    paddleRestCenter_   = glm::vec3(restX, centerY, cfg.domainSize.z * 0.5f);
+    updatePaddleCollider(0.0f);
+
+    FLIPEngine::FoamParams fp; // Z-up は既定。PBF 版の調整に合わせて生成量・寿命を抑える
+    fp.lifetimeMin = 0.6f;
+    fp.lifetimeMax = 1.8f;
+    flipEngine_.setFoamParams(fp);
+
+    const float oceanXStart = restX + paddleHalfExtents_.x + 2.0f * d;
+    const float oceanXEnd   = cfg.domainSize.x - 1.0f;
+    auto src                = AABBEmitter::FromAABB({oceanXStart, centerY - HALF_Y, 0.0f}, {oceanXEnd, centerY + HALF_Y, waterDepth}, {0, 0, 0}, 0);
+    src->particles_per_step = std::max(1, int(src->size.x * src->size.y * src->size.z / (d * d * d)));
+    src->step_count         = -1;
+    flipEngine_.addEmitter(src);
+
+    graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, flipEngine_.descriptorSetLayout, SHADER_DIR_STR + "/fluid_particle_wave.vert.spv", SHADER_DIR_STR + "/fluid.frag.spv");
+    foamGraphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, flipEngine_.descriptorSetLayout, SHADER_DIR_STR + "/foam_particle_wave.vert.spv", SHADER_DIR_STR + "/foam.frag.spv", VK_PRIMITIVE_TOPOLOGY_POINT_LIST, /*enableBlend=*/true);
+    base_.createFrameData();
+  }
+
+  void updatePaddleCollider(float t) {
+    ColliderSet cols;
+    cols.addBox(paddleRestCenter_ + glm::vec3(paddle_.displacementX(t), 0.0f, 0.0f), paddleHalfExtents_, 0.0f, 0.0f, glm::vec3(paddle_.velocityX(t), 0.0f, 0.0f));
+    flipEngine_.setColliders(cols);
+  }
+
   void recordComputeCmd(VkCommandBuffer cmd) {
+    if(flip_) {
+      VkCommandBufferBeginInfo fbi{};
+      fbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+      fbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+      vkBeginCommandBuffer(cmd, &fbi);
+      updatePaddleCollider(simTime_);
+      flipEngine_.step(cmd, dt_);
+      VkBufferMemoryBarrier fb{};
+      fb.sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+      fb.srcAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
+      fb.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
+      fb.srcQueueFamilyIndex = base_.ctx.computeFamily;
+      fb.dstQueueFamilyIndex = base_.ctx.graphicsFamily;
+      fb.buffer              = flipEngine_.getPositionBuffer();
+      fb.size                = VK_WHOLE_SIZE;
+      vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0, 0, nullptr, 1, &fb, 0, nullptr);
+      vkEndCommandBuffer(cmd);
+      return;
+    }
     // 容量拡張によるバッファ再確保は、recordKinematicBoundaryUpdate が
     // その時点の VkBuffer ハンドルを焼き込む前に解決しておく (screw_fluid.cpp と同じ理由)。
     engine_.emitFromEmitters(dt_);
@@ -280,6 +352,31 @@ private:
     VkRect2D sc{};
     sc.extent = base_.ctx.swapchainExtent;
     vkCmdSetScissor(cmd, 0, 1, &sc);
+
+    if(flip_) {
+      SimPC fpc{};
+      fpc.posIdx        = flipEngine_.posIdx;
+      fpc.velIdx        = flipEngine_.velIdx;
+      fpc.worldMin      = glm::vec3(0.0f);
+      fpc.worldMax      = flipEngine_.domainSize;
+      fpc.boundaryStart = 0;
+      fpc.particleCount = flipEngine_.liveParticleCount();
+      graphicsPipe_.draw(cmd, flipEngine_.descriptorSet, fpc, fpc.particleCount);
+      if(flipEngine_.foamEnabled) {
+        SimPC foamPc{};
+        foamPc.posIdx        = flipEngine_.foamPosIdx();
+        foamPc.velIdx        = flipEngine_.foamVelIdx();
+        foamPc.typeFlagIdx   = flipEngine_.foamKindIdx();
+        foamPc.particleCount = flipEngine_.maxDiffuseParticles;
+        foamPc.worldMin      = glm::vec3(0.0f);
+        foamPc.worldMax      = flipEngine_.domainSize;
+        foamPc.boundaryStart = 0;
+        foamGraphicsPipe_.draw(cmd, flipEngine_.descriptorSet, foamPc, flipEngine_.maxDiffuseParticles);
+      }
+      vkCmdEndRenderPass(cmd);
+      vkEndCommandBuffer(cmd);
+      return;
+    }
 
     SimPC pc{};
     pc.posIdx   = engine_.posIdx();
@@ -405,7 +502,8 @@ private:
   void cleanup() {
     graphicsPipe_.cleanup();
     foamGraphicsPipe_.cleanup();
-    engine_.cleanup();
+    if(flip_) flipEngine_.cleanup();
+    else engine_.cleanup();
     base_.cleanupBase();
   }
 };

@@ -236,11 +236,8 @@ add_sim_example(mpm_snow_impact examples/mpm_snow_impact.cpp)
 # ── mpm_tire_sand: 転がるタイヤ(円柱MESH_SDF)による砂の巻き上げ ───────────────
 add_sim_example(mpm_tire_sand examples/mpm_tire_sand.cpp)
 
-# ── flip_spume: spume README の FLIP 液体シーン集 (geyser/outfall/culvert/slab/dual) ──
-add_sim_example(flip_spume examples/flip_spume.cpp)
-
-# ── fluid_dambreak: ダム崩壊 + 障害物。既定 PBF、--flip で FLIPEngine、--max-diffuse N で泡 ──
-add_sim_example(fluid_dambreak examples/fluid_dambreak.cpp)
+# ── fluid_spume: spume README の FLIP 液体シーン集 (geyser/outfall/culvert/slab/dual)。既定 MPM、--flip で FLIPEngine ──
+add_sim_example(fluid_spume examples/fluid_spume.cpp)
 
 # ── Pyro (グリッドベース煙・火炎) ヘッドレス実行例 ───────────────────────────
 if(APPLE)

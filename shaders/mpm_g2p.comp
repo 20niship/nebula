@@ -240,6 +240,7 @@ void main() {
 
         float psdf;
         vec3 n;
+        vec3 vcoll = vec3(0.0); // BOX のみ: 動くコライダーの面速度 (FLIP パドル用)
         if (ctype == COLL_MESH_SDF) {
             vec3 cpos = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 1u]),
                               uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 2u]),
@@ -264,13 +265,31 @@ void main() {
                               uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 3u]));
             float cr = uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 7u]);
             psdf = sphereSDF(x_new, cpos, cr, n);
+#ifdef NO_DEFORMATION
+        } else if (ctype == COLL_BOX) {
+            // FLIP のみ: 圧力投影はグリッド BC だけでは粒子が箱へ入り込むため、粒子側も押し出す (MPM の挙動は変えない)
+            vec3 cpos = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 1u]),
+                              uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 2u]),
+                              uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 3u]));
+            vec3 chalf = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 4u]),
+                               uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 5u]),
+                               uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 6u]));
+            vcoll = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 8u]),
+                          uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 9u]),
+                          uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 10u]));
+            vec4 cq = vec4(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 16u]),
+                            uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 17u]),
+                            uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 18u]),
+                            uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 19u]));
+            psdf = boxSDF(x_new, cpos, chalf, cq, n);
+#endif
         } else {
             continue;
         }
 
         if (psdf < 0.0) {
             x_new -= psdf * n;              // 固体外に押し出す (psdf<0 → +|psdf|*n)
-            float vn = dot(v_new, n);
+            float vn = dot(v_new - vcoll, n);
             if (vn < 0.0) v_new -= vn * n;  // 法線方向の固体向き速度を除去
 #ifndef NO_DEFORMATION
             F_new   = mat3(1.0);

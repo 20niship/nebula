@@ -1,4 +1,5 @@
 """3 つのデモで共通の Blender (bpy) ヘルパ。"""
+import os
 import math
 
 import bpy
@@ -123,5 +124,13 @@ def cylinder(name, center, radius, half_height, mat=None):
 
 
 def render_still(path):
-    bpy.context.scene.render.filepath = path
+    """途中で落ちても壊れた PNG を残さないよう、一時ファイルに書いてから rename する。"""
+    tmp = path + ".part.png"
+    bpy.context.scene.render.filepath = tmp
     bpy.ops.render.render(write_still=True)
+    os.replace(tmp, path)
+
+
+def done(path):
+    """レンダリング済みのフレームか (再開時にスキップする)。"""
+    return os.path.exists(path) and os.path.getsize(path) > 0

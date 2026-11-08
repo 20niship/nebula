@@ -1,9 +1,10 @@
-// FLIPEngine (非圧縮 FLIP + 格子ベース泡) のダム崩壊デモ。左端の水塊が崩れて障害物 (box) に当たり、
-// 砕けた箇所に泡 (spray/foam/bubble) が出る。Z-up。粒子は 8 個/セル。
+// ダム崩壊 + 障害物 (box) のデモ。既定は PBF (FluidEngine)、--flip で非圧縮 FLIP (FLIPEngine) に切り替わる。
+// 泡 (spray/foam/bubble) は --max-diffuse N (N>0) で有効化 (どちらのソルバーも同じ描画を使う)。Z-up。
 #include "App.h"
 #include "Collider.h"
 #include "core/SimPC.h"
 #include "engine/FLIPEngine.h"
+#include "engine/FluidEngine.h"
 #include "graphics/GraphicsPipeline.h"
 
 #include <argparse/argparse.hpp>
@@ -18,12 +19,13 @@
 static const std::string SHADER_DIR_STR = SHADER_DIR;
 
 struct DamArgs : public argparse::Args {
-  float& cell_size            = kwarg("cell-size", "grid cell size [m]").set_default(1.0f / 16);
+  bool& flip                  = flag("flip", "FLIPEngine (incompressible FLIP) instead of PBF FluidEngine");
+  float& cell_size            = kwarg("cell-size", "grid cell size [m] (8 particles/cell for both solvers)").set_default(1.0f / 16);
   int& max_n                  = kwarg("max-n", "max particle count").set_default(800000);
-  int& foam_n                 = kwarg("foam-n", "max foam particle count (0=disabled)").set_default(200000);
+  int& max_diffuse            = kwarg("max-diffuse", "max spray/foam/bubble particle count (0=no foam)").set_default(0);
   float& dt                   = kwarg("dt", "frame timestep [s]").set_default(1.0f / 60.0f);
-  int& substeps               = kwarg("substeps", "substeps per frame").set_default(4);
-  float& flip_ratio           = kwarg("flip-ratio", "FLIP share of PIC/FLIP blend").set_default(0.95f);
+  int& substeps               = kwarg("substeps", "substeps per frame (0=solver default)").set_default(0);
+  float& flip_ratio           = kwarg("flip-ratio", "FLIP share of PIC/FLIP blend (--flip only)").set_default(0.95f);
   int& n_shots                = kwarg("n-shots", "screenshot count (0=disabled)").set_default(0);
   std::string& screenshot_dir = kwarg("screenshot-dir", "screenshot output directory").set_default(std::string(""));
 };
@@ -32,51 +34,101 @@ class DamApp {
 public:
   void run(const DamArgs& args) {
     dt_                 = args.dt;
+    flip_               = args.flip;
+    cell_               = args.cell_size;
+    maxN_               = uint32_t(args.max_n);
+    maxDiffuse_         = uint32_t(args.max_diffuse);
     base_.screenshotDir = args.screenshot_dir;
 
-    engine_.maxParticles         = uint32_t(args.max_n);
-    engine_.maxDiffuseParticles  = uint32_t(args.foam_n);
-    engine_.domainSize           = domain_;
-    engine_.cellSize             = args.cell_size;
-
-    base_.initWindow("FLIP dam break + foam");
-    initVulkan(args.substeps, args.flip_ratio, args.cell_size);
+    base_.initWindow(flip_ ? "Dam break - FLIP" : "Dam break - PBF");
+    initVulkan(args);
     mainLoop(args.n_shots);
     cleanup();
   }
 
 private:
   BaseApp base_;
-  FLIPEngine engine_;
+  FluidEngine pbf_;
+  FLIPEngine flipEngine_;
   GraphicsPipeline graphicsPipe_;
   GraphicsPipeline foamGraphicsPipe_;
+  bool flip_ = false;
+  float cell_ = 1.0f / 16;
+  uint32_t maxN_ = 0, maxDiffuse_ = 0;
   glm::vec3 domain_{8.0f, 4.0f, 4.0f};
   float dt_ = 1.0f / 60.0f;
 
-  void initVulkan(int substeps, float flipRatio, float cell) {
+  // 障害物 (右寄りの box、床置き)
+  static constexpr glm::vec3 kBoxCenter{5.0f, 2.0f, 0.8f};
+  static constexpr glm::vec3 kBoxHalf{0.4f, 0.9f, 0.8f};
+
+  VkDescriptorSetLayout descriptorSetLayout() const { return flip_ ? flipEngine_.descriptorSetLayout : pbf_.descriptorSetLayout; }
+  VkDescriptorSet descriptorSet() const { return flip_ ? flipEngine_.descriptorSet : pbf_.descriptorSet; }
+  VkBuffer positionBuffer() const { return flip_ ? flipEngine_.getPositionBuffer() : pbf_.getPositionBuffer(); }
+  bool foamOn() const { return maxDiffuse_ > 0; }
+
+  // PBF は SDF コライダーを持たないため、box の表面 2 層を境界粒子として置く
+  std::vector<glm::vec4> boxBoundaryParticles(float spacing) const {
+    std::vector<glm::vec4> pts;
+    const glm::vec3 lo = kBoxCenter - kBoxHalf, hi = kBoxCenter + kBoxHalf;
+    for(float z = lo.z; z <= hi.z + 1e-4f; z += spacing)
+      for(float y = lo.y; y <= hi.y + 1e-4f; y += spacing)
+        for(float x = lo.x; x <= hi.x + 1e-4f; x += spacing) {
+          const glm::vec3 p(x, y, z);
+          const float depth = std::min({p.x - lo.x, hi.x - p.x, p.y - lo.y, hi.y - p.y, hi.z - p.z});
+          if(depth < 2.0f * spacing - 1e-4f) pts.emplace_back(p, 0.0f);
+        }
+    return pts;
+  }
+
+  void initVulkan(const DamArgs& args) {
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
+    VkDevice dev = base_.ctx.device;
 
-    engine_.numSubsteps = substeps;
-    engine_.flip_ratio  = flipRatio;
-    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR);
-    engine_.addForce(GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f));
+    // 両ソルバーとも 8 粒子/セル: 粒子間隔 d = cell/2
+    const float d = cell_ * 0.5f;
+    auto dam      = AABBEmitter::FromAABB({0.3f, 0.3f, 0.3f}, {2.5f, 3.7f, 2.7f}, {0.0f, 0.0f, 0.0f}, 0);
+    dam->particles_per_step = std::min<int>(int(dam->size.x * dam->size.y * dam->size.z / (d * d * d)), int(maxN_));
+    dam->step_count         = -1;
+    auto gravity            = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f);
 
-    // 障害物 (右寄りの box) に水塊が当たって砕ける
-    ColliderSet cols;
-    cols.addBox({5.0f, 2.0f, 0.8f}, {0.4f, 0.9f, 0.8f}, 0.0f, 0.0f);
-    engine_.setColliders(cols);
+    if(flip_) {
+      flipEngine_.maxParticles        = maxN_;
+      flipEngine_.maxDiffuseParticles = maxDiffuse_;
+      flipEngine_.domainSize          = domain_;
+      flipEngine_.cellSize            = cell_;
+      if(args.substeps > 0) flipEngine_.numSubsteps = args.substeps;
+      flipEngine_.flip_ratio = args.flip_ratio;
+      flipEngine_.init(dev, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR);
+      flipEngine_.addForce(gravity);
+      ColliderSet cols;
+      cols.addBox(kBoxCenter, kBoxHalf, 0.0f, 0.0f);
+      flipEngine_.setColliders(cols);
+      flipEngine_.addEmitter(dam);
+      flipEngine_.foamEnabled = foamOn();
+    } else {
+      FluidConfig cfg;
+      cfg.particleRadius       = d * 0.5f;
+      cfg.domainSize           = domain_;
+      cfg.cellSize             = cell_; // h = 2d
+      cfg.max_boundary         = 50000;
+      cfg.maxDiffuseParticles  = maxDiffuse_;
+      cfg.initialCapacityHint  = maxN_;
+      pbf_.init(dev, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
+      if(args.substeps > 0) pbf_.numSubsteps = args.substeps;
+      pbf_.addForce(gravity);
+      pbf_.loadBoundaryParticles(boxBoundaryParticles(d));
+      pbf_.addEmitter(dam);
+      pbf_.foamEnabled = foamOn();
+      if(foamOn()) pbf_.setFoamParams(FluidEngine::FoamParams{});
+    }
 
-    auto e = AABBEmitter::FromAABB({0.3f, 0.3f, 0.3f}, {2.5f, 3.7f, 2.7f}, {0.0f, 0.0f, 0.0f}, 0);
-    const glm::vec3 d     = e->size;
-    e->particles_per_step = std::min<int>(int(d.x * d.y * d.z / (cell * cell * cell) * engine_.particlesPerCell), int(engine_.maxParticles));
-    e->step_count         = -1;
-    engine_.addEmitter(e);
-
-    engine_.foamEnabled = engine_.maxDiffuseParticles > 0;
-
-    graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/particle.vert.spv", SHADER_DIR_STR + "/particle.frag.spv");
-    foamGraphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/foam_particle.vert.spv", SHADER_DIR_STR + "/foam.frag.spv", VK_PRIMITIVE_TOPOLOGY_POINT_LIST, /*enableBlend=*/true);
+    // FLIP は粒子バッファが MPM 形式 (particle.vert)、PBF は fluid_particle.vert。泡の描画は共通。
+    const char* vert = flip_ ? "/particle.vert.spv" : "/fluid_particle.vert.spv";
+    const char* frag = flip_ ? "/particle.frag.spv" : "/fluid.frag.spv";
+    graphicsPipe_.init(dev, base_.ctx.renderPass, descriptorSetLayout(), SHADER_DIR_STR + vert, SHADER_DIR_STR + frag);
+    foamGraphicsPipe_.init(dev, base_.ctx.renderPass, descriptorSetLayout(), SHADER_DIR_STR + "/foam_particle.vert.spv", SHADER_DIR_STR + "/foam.frag.spv", VK_PRIMITIVE_TOPOLOGY_POINT_LIST, /*enableBlend=*/true);
     base_.createFrameData();
   }
 
@@ -86,7 +138,12 @@ private:
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(cmd, &bi);
 
-    engine_.step(cmd, dt_);
+    if(flip_) {
+      flipEngine_.step(cmd, dt_);
+    } else {
+      pbf_.emitFromEmitters(dt_); // 容量拡張による再確保はコマンド記録前に解決する
+      pbf_.step(cmd, dt_);
+    }
 
     VkBufferMemoryBarrier barrier{};
     barrier.sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
@@ -94,7 +151,7 @@ private:
     barrier.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
     barrier.srcQueueFamilyIndex = base_.ctx.computeFamily;
     barrier.dstQueueFamilyIndex = base_.ctx.graphicsFamily;
-    barrier.buffer              = engine_.getPositionBuffer();
+    barrier.buffer              = positionBuffer();
     barrier.offset              = 0;
     barrier.size                = VK_WHOLE_SIZE;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0, 0, nullptr, 1, &barrier, 0, nullptr);
@@ -130,23 +187,32 @@ private:
     vkCmdSetScissor(cmd, 0, 1, &sc);
 
     SimPC renderPc{};
-    renderPc.posIdx        = engine_.posIdx;
-    renderPc.velIdx        = engine_.velIdx;
-    renderPc.particleCount = engine_.liveParticleCount();
-    renderPc.worldMin      = glm::vec3(0.0f);
-    renderPc.worldMax      = engine_.domainSize;
-    graphicsPipe_.draw(cmd, engine_.descriptorSet, renderPc, engine_.liveParticleCount());
+    renderPc.worldMin = glm::vec3(0.0f);
+    renderPc.worldMax = domain_;
+    uint32_t n;
+    if(flip_) {
+      renderPc.posIdx = flipEngine_.posIdx;
+      renderPc.velIdx = flipEngine_.velIdx;
+      n               = flipEngine_.liveParticleCount();
+    } else {
+      renderPc.posIdx        = pbf_.posIdx();
+      renderPc.velIdx        = pbf_.velIdx();
+      renderPc.boundaryStart = pbf_.config().max_boundary; // 流体パーティクル領域の開始オフセット
+      n                      = pbf_.nFluid();
+    }
+    renderPc.particleCount = n;
+    graphicsPipe_.draw(cmd, descriptorSet(), renderPc, n);
 
-    if(engine_.foamEnabled) {
+    if(foamOn()) {
       SimPC foamPc{};
-      foamPc.posIdx        = engine_.foamPosIdx();
-      foamPc.velIdx        = engine_.foamVelIdx();
-      foamPc.typeFlagIdx   = engine_.foamKindIdx(); // foam_particle.vert は kind==0 をクリップする
-      foamPc.particleCount = engine_.maxDiffuseParticles;
+      foamPc.posIdx        = flip_ ? flipEngine_.foamPosIdx() : pbf_.foamPosIdx();
+      foamPc.velIdx        = flip_ ? flipEngine_.foamVelIdx() : pbf_.foamVelIdx();
+      foamPc.typeFlagIdx   = flip_ ? flipEngine_.foamKindIdx() : pbf_.foamKindIdx(); // foam_particle.vert は kind==0 をクリップする
+      foamPc.particleCount = maxDiffuse_;
       foamPc.worldMin      = glm::vec3(0.0f);
-      foamPc.worldMax      = engine_.domainSize;
+      foamPc.worldMax      = domain_;
       foamPc.boundaryStart = 0;
-      foamGraphicsPipe_.draw(cmd, engine_.descriptorSet, foamPc, engine_.maxDiffuseParticles);
+      foamGraphicsPipe_.draw(cmd, descriptorSet(), foamPc, maxDiffuse_);
     }
 
     vkCmdEndRenderPass(cmd);
@@ -236,7 +302,8 @@ private:
   void cleanup() {
     foamGraphicsPipe_.cleanup();
     graphicsPipe_.cleanup();
-    engine_.cleanup();
+    if(flip_) flipEngine_.cleanup();
+    else pbf_.cleanup();
     base_.cleanupBase();
   }
 };

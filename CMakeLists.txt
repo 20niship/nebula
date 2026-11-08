@@ -239,8 +239,8 @@ add_sim_example(mpm_tire_sand examples/mpm_tire_sand.cpp)
 # ── flip_spume: spume README の FLIP 液体シーン集 (geyser/outfall/culvert/slab/dual) ──
 add_sim_example(flip_spume examples/flip_spume.cpp)
 
-# ── flip_dambreak_foam: FLIPEngine のダム崩壊 + 泡デモ ──
-add_sim_example(flip_dambreak_foam examples/flip_dambreak_foam.cpp)
+# ── fluid_dambreak: ダム崩壊 + 障害物。既定 PBF、--flip で FLIPEngine、--max-diffuse N で泡 ──
+add_sim_example(fluid_dambreak examples/fluid_dambreak.cpp)
 
 # ── Pyro (グリッドベース煙・火炎) ヘッドレス実行例 ───────────────────────────
 if(APPLE)

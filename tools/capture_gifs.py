@@ -6,14 +6,13 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import capture_sim as cs  # noqa: E402
 
 # capture_sim.SIMS にまだ無い example (exe 名 -> 追加引数 / kind)
 EXTRA = [
     {"id": "g_fluid_sphere", "exe": "fluid_sphere", "title": "fluid_sphere", "env": {}, "extra_args": []},
     {"id": "g_milk", "exe": "fluid_milk_crown", "title": "fluid_milk_crown", "env": {}, "extra_args": []},
-    {"id": "g_fluid_spume", "exe": "fluid_spume", "title": "fluid_spume", "env": {}, "extra_args": []},
     {"id": "g_pyro_basic", "exe": "pyro_basic", "kind": "pyro", "title": "pyro_basic", "env": {},
      "extra_args": [], "render_mode": "volume", "render_kwargs": {"absorption": 3.0, "exposure": 1.2}},
 ]

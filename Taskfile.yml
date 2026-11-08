@@ -198,7 +198,7 @@ tasks:
     deps: [configure]
     cmds:
       - cmake --build {{.BUILD_DIR}} -j{{.JOBS}}
-      - python3 capture_sim.py
+      - python3 tools/capture_sim.py
     env:
       MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS: "0"
 

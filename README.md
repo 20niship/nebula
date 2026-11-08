@@ -268,7 +268,7 @@ tools/           .sb soft-body generation, STL terrain/cow/sphere generation, Py
 | Vulkan SDK | 1.3.280.1 (LunarG or Homebrew) |
 | Task | latest |
 | GLFW, GLM | via Homebrew or apt install |
-| Python 3 | for the `tools/` scripts, `pyro_raymarch.py`, and `capture_sim.py` |
+| Python 3 | for the `tools/` scripts, `pyro_raymarch.py`, and `tools/capture_sim.py` |
 
 Developed on macOS (MoltenVK) and Linux (Ubuntu 24.04; CI uses Mesa lavapipe, benchmarks on an NVIDIA GPU). Windows is untested.
 

@@ -1,18 +1,22 @@
-#!/opt/homebrew/bin/python3
+#!/usr/bin/env python3
 """
 全シミュレーション キャプチャ → 1本の動画生成スクリプト
 
 各シミュレーションを順次実行し、フレームごとに PPM として保存。
-全シム完了後、対応フレームを 4×5 グリッドに合成して MP4 動画を書き出す。
+全シム完了後、対応フレームを 4×6 グリッドに合成して MP4 動画を書き出す。
+--flip に対応する example ("flip_args" を持つエントリ) は、既定ソルバー (PBF / MPM) と
+FLIP (FLIPEngine) の両方を撮影する (id に "_flip" を付けた別エントリへ展開される)。
 
 テストケース一覧:
-  TC1:  流体 ダムブレイク + 移動ソース                                fluid_pbf
+  TC1:  流体 ダムブレイク + 移動ソース (PBF / FLIP)                   fluid_pbf [--flip]
   TC4:  布シミュレーション（2隅固定）                          cloth_3d
   TC5:  布2枚 + 布-布衝突                                      cloth_scene --scene 5
   TC6:  煙パーティクル                                         smoke
   TC7:  4隅アニメーションピン・布ねじれ                        cloth_scene --scene 7
   TC8:  回転スクリュー + PBF 流体                              screw_fluid
   TC9:  楕円水たまり + 移動円柱吸収ポート                      fluid_absorb
+  TC11: 波発生パドル + 泡 (PBF / FLIP)                          fluid_wave_foam [--flip]
+  TC12: spume 噴流 (MPM / FLIP)                                fluid_spume [--flip]
   TC10: XPBD 四面体ソフトボディ                               xpbd_softbody
   TC-A: MPM Elastic — PIC  (flip_ratio=0.00)                  mpm_elastic
   TC-B: MPM Elastic — APIC (flip_ratio=-1.00)                 mpm_elastic
@@ -24,7 +28,7 @@
   TC-K: Pyro 牛への爆風 — 流速ヒートマップ表示                 pyro_cow_blast
   TC-L: Pyro 爆発 (キノコ雲) — smoke/fire ボリューム表示       pyro_explosion
 使い方:
-  python3 capture_sim.py [--frames N] [--fps F] [--perf-json PATH] [--commit-sha SHA]
+  python3 tools/capture_sim.py [--frames N] [--fps F] [--perf-json PATH] [--commit-sha SHA]
 """
 
 import argparse
@@ -40,11 +44,12 @@ from PIL import Image, ImageDraw, ImageFont, ImageFile
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-sys.path.insert(0, str(Path(__file__).parent / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pyro_raymarch  # noqa: E402  (.pvox -> PNG レンダリングを直接呼び出す)
 
-BUILD_DIR = Path(__file__).parent / "build"
-OUT_DIR   = Path(__file__).parent / "sim_captures"
+ROOT      = Path(__file__).resolve().parent.parent
+BUILD_DIR = ROOT / "build"
+OUT_DIR   = ROOT / "sim_captures"
 OUT_DIR.mkdir(exist_ok=True)
 
 # キャプチャ設定
@@ -53,7 +58,7 @@ VIDEO_FPS = 60     # 出力動画 FPS
 THUMB_W   = 480    # 4列 × 480 = 1920px (ffmpeg scale と一致)
 THUMB_H   = 270    # 16:9
 GRID_COLS = 4
-GRID_ROWS = 5      # 4×5=20 セル; TC1,TC4–TC11 + TC-A,B,E,F,G,H,M,K,L (TC-C/D/I/J除外、18使用・空き2)
+GRID_ROWS = 6      # 4×6=24 セル; FLIP 展開後の全シムが収まる行数 (足りなければ自動で増やす)
 
 # テストケース定義
 # exe=None のエントリは空きセル（グリッドのパディング用）
@@ -65,6 +70,7 @@ SIMS = [
         "env": {},
         "extra_args": [],
         "params": "N~40K | fixed dam-block + moving AABB source | world=40",
+        "flip_args": ["--max-n", "300000"],
     },
     {
         "id": "tc4", "exe": "cloth_3d",
@@ -107,6 +113,15 @@ SIMS = [
         "title": "TC11: Wave Paddle + Bunny + Foam",
         "env": {}, "extra_args": [],
         "params": "N~30K | SHM paddle | 3× bunny obstacle | spray/foam/bubble (issue #47)",
+        "flip_args": [],
+    },
+    {
+        "id": "tc_spume", "exe": "fluid_spume",
+        "title": "TC12: Spume Geyser",
+        "solver": "MPM",
+        "env": {}, "extra_args": ["--scene", "geyser", "--max-n", "200000"],
+        "params": "N<=200K | 床から垂直に噴き上がるジェット | 弱圧縮 MPM 流体",
+        "flip_args": [],
     },
     {
         "id": "tc10", "exe": "xpbd_softbody",
@@ -207,6 +222,25 @@ SIMS = [
         "render_kwargs": {"absorption": 3.0, "exposure": 1.2, "axis": "z"},
     },
 ]
+
+
+def _expand_flip(sims: list[dict]) -> list[dict]:
+    """"flip_args" を持つエントリを、既定ソルバー版と --flip 版の 2 エントリへ展開する。"""
+    out = []
+    for sim in sims:
+        if "flip_args" not in sim:
+            out.append(sim)
+            continue
+        base = dict(sim, title=f"{sim['title']} [{sim.get('solver', 'PBF')}]")
+        flip = dict(sim, id=f"{sim['id']}_flip", title=f"{sim['title']} [FLIP]",
+                    extra_args=sim["extra_args"] + ["--flip"] + sim["flip_args"],
+                    params=f"{sim['params']} | FLIP(圧力投影)")
+        out += [base, flip]
+    return out
+
+
+SIMS = _expand_flip(SIMS)
+GRID_ROWS = max(GRID_ROWS, -(-len(SIMS) // GRID_COLS))  # 展開後のシム数に合わせて行数を確保
 
 
 # ── ユーティリティ ─────────────────────────────────────────────────────────────
@@ -407,7 +441,7 @@ def _resolve_commit_sha(cli_sha: str) -> str:
         return cli_sha
     try:
         out = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=str(Path(__file__).parent),
+            ["git", "rev-parse", "HEAD"], cwd=str(ROOT),
             capture_output=True, text=True, check=True,
         )
         return out.stdout.strip()

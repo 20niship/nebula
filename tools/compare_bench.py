@@ -1,6 +1,6 @@
 #!/opt/homebrew/bin/python3
 """
-compare_bench.py — 2つの capture_sim.py --perf-json 出力を比較し、
+compare_bench.py — 2つの tools/capture_sim.py --perf-json 出力を比較し、
 Markdown テーブルを標準出力へ書き出す (PR コメント用)。
 
 指標は ms_per_frame (1フレームあたりの実行時間, 小さいほど速い)。
@@ -114,7 +114,7 @@ def main():
     current  = load_json(cli.current)
 
     if not current.get("sims"):
-        print("⚠️ 今回の計測結果 (current) が空か読み込めませんでした。capture_sim.py の実行に失敗している可能性があります。")
+        print("⚠️ 今回の計測結果 (current) が空か読み込めませんでした。tools/capture_sim.py の実行に失敗している可能性があります。")
         sys.exit(0)
 
     print("### 📊 Simulation Capture Performance\n")

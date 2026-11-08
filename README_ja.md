@@ -268,7 +268,7 @@ tools/           .sb ソフトボディ生成、STL地形/牛/球体生成、Pyr
 | Vulkan SDK | 1.3.280.1（LunarG または Homebrew） |
 | Task | 最新版 |
 | GLFW, GLM | Homebrew または apt 経由 |
-| Python 3 | `tools/` スクリプト・`pyro_raymarch.py`・`capture_sim.py` 用 |
+| Python 3 | `tools/` スクリプト・`pyro_raymarch.py`・`tools/capture_sim.py` 用 |
 
 **現状 macOS のみ対応**（MoltenVK / Metal 使用）。Linux 対応は可能ですが未検証です。
 

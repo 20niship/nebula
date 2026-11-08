@@ -8,6 +8,7 @@ nebula で時間をかけてシミュレーションし、結果を Blender (`bp
 | 1. 1000 万粒子の流体 | `demo_fluid_10m` | `MPMEngine` (FLUID, FLIP/PIC) | 10,007,808 粒子 / 256×128×128 格子 | 粒子の密度場から等値面メッシュを再構成 → 透過 + 吸収ボリュームの水 (Cycles) |
 | 2. 市街地の気流 | `demo_city_wind` | `PyroEngine` (オイラー格子, 開境界) | 256×96×128 格子 / ビル 20 棟 | 速度場から追跡した流線 (風速で色分け) + ビル群 (Cycles) |
 | 3. 雪崩 | `demo_avalanche_mesh` | `MPMEngine` (Drucker-Prager) | 約 1070 万粒子 / 国土地理院 DEM 由来の地形 + 樹木 37 本 + 岩 16 個 | 密度場から数百万三角形の雪面メッシュを再構成 + DEM 地形メッシュ + 黒松メッシュ (Cycles) |
+| 4. 海岸の波 (issue #137) | `demo_seashore` | `FLIPEngine` (非圧縮 FLIP + 泡) | 既定 約 80 万粒子 (`--spacing 0.05` で約 800 万) + 泡 最大 100 万 | 水面等値面 + 泡の小球インスタンス + 岩 usdc (Cycles, 縦動画) |
 
 ## 使い方
 
@@ -39,6 +40,32 @@ uv run python render/supervise.py --watch out/avalanche_png -- \
 3 つのデモ動画は `python render/combine.py out/fluid_10m.mp4 out/city_wind.mp4 out/avalanche.mp4 -o out/demo_all.mp4` で横に並べた 1 本にできる。
 
 画像・動画は git に含めず、`gh pr comment --attach` で配布する。
+
+### 海岸の波 (岩場に砕ける波と飛沫)
+
+`fluid_wave_foam` (単振動パドル + FLIP + 泡) をベースに、砂浜の斜面と岩 12 個を SDF コライダーにした headless デモ。
+岩は virtual-tokyo PR #6 の高ポリ岩 (usdc)。アセット・動画・画像は git に入れない (`assets_local/`, `out/` は ignore 済み)。
+
+```bash
+cd examples/demo
+# 1. アセット取得 + シーン生成 (gh のログインが必要 / uv が usd-core, scipy を取得する)
+uv run seashore/fetch_rocks.py          # assets_local/seashore/rocks/*.usdc, *.npz
+uv run seashore/make_scene.py --seed 3  # scene.sdf / scene.json / terrain.npz
+# 2. シミュレーション (既定 約 80 万粒子, 360 フレーム, RTX 3060 で約 3 分)
+../../build/examples/demo/demo_seashore --out out/seashore
+#    高解像度: --spacing 0.05 (約 800 万粒子, --max-diffuse 3000000 など)
+# 3. まず点群のままプレビューで確認 (Blender 不要)
+uv run seashore/preview_points.py out/seashore --frames 0 360 --step 12 --out out/seashore_preview
+# 4. 良さそうなら Blender (縦動画 1080x1920)
+uv run python render/render_seashore.py out/seashore --frames 150 150 --out out/seashore_png --samples 64
+```
+
+- 座標は Y-up (x: 沖→岸)。パドルが x≈1..5 で振動し、約 5 秒後に波が岩場 (x 22..38) に届く。泡は `--foam-delay` (2 秒) までは生成しない (初期水面ノイズでの誤生成を避ける)。
+- 格子の固定小数点スケール (`--fp-scale`, 既定 65536) は大きすぎると格子で桁あふれして粒子が爆発する (1e6, および 524288 で確認。131072 まで安定)。8 粒子/セルならセル質量は解像度によらず一定なので、粒子数を増やしても上げない (質量が小さい MPM の 1000 万粒子デモとは逆)。
+- 泡の生成係数 `--foam-rate` も粒子間隔から自動 (`100*(spacing/0.2)^2`)。固定のままだと 80 万粒子で常に上限に張り付いた。
+- 岩の SDF はシミュ格子とは独立に 0.15 m セル (`make_scene.py --sdf-cell`)。レンダでは岩を実メッシュで描く。
+- usdc の色テクスチャは取得元に無いため、レンダ側で手続き的な岩マテリアルに差し替えている。
+- Blender の泡は `foam_*.nbf` の点を Geometry Nodes で小球インスタンス化している (`--foam-radius`)。
 
 ## データ形式
 

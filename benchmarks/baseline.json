@@ -1,54 +1,62 @@
 {
-  "generated_at": "2026-11-03T09:40:34Z",
-  "commit": "03b25376f1d6dde21a85ad91a9ed2e3fe7ac3c6f",
+  "generated_at": "2026-11-08T04:38:10Z",
+  "commit": "012242dce91df66816841eb777633f159ee4d5e4",
   "frames": 60,
   "sims": {
     "tc1": {
-      "title": "TC1: Dam Break + Moving Source",
+      "title": "TC1: Dam Break + Moving Source [PBF]",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 30.01,
-      "ms_per_frame": 500.168,
+      "elapsed_s": 22.011,
+      "ms_per_frame": 366.85,
+      "returncode": 0
+    },
+    "tc1_flip": {
+      "title": "TC1: Dam Break + Moving Source [FLIP]",
+      "status": "ok",
+      "frames": 60,
+      "elapsed_s": 30.013,
+      "ms_per_frame": 500.215,
       "returncode": 0
     },
     "tc4": {
       "title": "TC4: Cloth Drape",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 8.002,
-      "ms_per_frame": 133.368,
+      "elapsed_s": 8.004,
+      "ms_per_frame": 133.405,
       "returncode": 0
     },
     "tc5": {
       "title": "TC5: Two-Cloth Collision",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 6.002,
-      "ms_per_frame": 100.029,
+      "elapsed_s": 6.003,
+      "ms_per_frame": 100.044,
       "returncode": 0
     },
     "tc6": {
       "title": "TC6: Smoke",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 2.001,
-      "ms_per_frame": 33.351,
+      "elapsed_s": 2.002,
+      "ms_per_frame": 33.36,
       "returncode": 0
     },
     "tc7": {
       "title": "TC7: Cloth Twist",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 12.003,
-      "ms_per_frame": 200.049,
+      "elapsed_s": 12.004,
+      "ms_per_frame": 200.063,
       "returncode": 0
     },
     "tc8": {
       "title": "TC8: Rotating Screw",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 8.002,
-      "ms_per_frame": 133.368,
+      "elapsed_s": 6.005,
+      "ms_per_frame": 100.081,
       "returncode": 0
     },
     "tc9": {
@@ -56,31 +64,55 @@
       "status": "ok",
       "frames": 60,
       "elapsed_s": 4.001,
-      "ms_per_frame": 66.688,
+      "ms_per_frame": 66.691,
       "returncode": 0
     },
     "tc_wave_foam": {
-      "title": "TC11: Wave Paddle + Bunny + Foam",
+      "title": "TC11: Wave Paddle + Bunny + Foam [PBF]",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 14.004,
-      "ms_per_frame": 233.404,
+      "elapsed_s": 10.004,
+      "ms_per_frame": 166.729,
       "returncode": 0
+    },
+    "tc_wave_foam_flip": {
+      "title": "TC11: Wave Paddle + Bunny + Foam [FLIP]",
+      "status": "ok",
+      "frames": 60,
+      "elapsed_s": 6.003,
+      "ms_per_frame": 100.042,
+      "returncode": 0
+    },
+    "tc_spume": {
+      "title": "TC12: Spume Geyser [MPM]",
+      "status": "failed",
+      "frames": 0,
+      "elapsed_s": 0.0,
+      "ms_per_frame": null,
+      "returncode": null
+    },
+    "tc_spume_flip": {
+      "title": "TC12: Spume Geyser [FLIP]",
+      "status": "failed",
+      "frames": 0,
+      "elapsed_s": 0.0,
+      "ms_per_frame": null,
+      "returncode": null
     },
     "tc10": {
       "title": "TC10: XPBD Softbody",
-      "status": "ok",
-      "frames": 60,
-      "elapsed_s": 36.008,
-      "ms_per_frame": 600.135,
-      "returncode": 0
+      "status": "failed",
+      "frames": 0,
+      "elapsed_s": 2.001,
+      "ms_per_frame": null,
+      "returncode": 1
     },
     "tc_pic": {
       "title": "TC-A: MPM Elastic — PIC",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 8.002,
-      "ms_per_frame": 133.374,
+      "elapsed_s": 8.004,
+      "ms_per_frame": 133.402,
       "returncode": 0
     },
     "tc_apic": {
@@ -88,31 +120,31 @@
       "status": "ok",
       "frames": 60,
       "elapsed_s": 8.002,
-      "ms_per_frame": 133.374,
+      "ms_per_frame": 133.373,
       "returncode": 0
     },
     "tc_avalanche": {
       "title": "TC-E: MPM Avalanche — Snow",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 70.02,
-      "ms_per_frame": 1166.998,
+      "elapsed_s": 70.022,
+      "ms_per_frame": 1167.038,
       "returncode": 0
     },
     "tc_multi": {
       "title": "TC-F: MPM Multi-Material",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 8.004,
-      "ms_per_frame": 133.393,
+      "elapsed_s": 8.003,
+      "ms_per_frame": 133.391,
       "returncode": 0
     },
     "tc_snow": {
       "title": "TC-G: MPM Snow Impact",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 46.014,
-      "ms_per_frame": 766.894,
+      "elapsed_s": 46.015,
+      "ms_per_frame": 766.924,
       "returncode": 0
     },
     "tc_geolayer": {
@@ -120,31 +152,31 @@
       "status": "ok",
       "frames": 60,
       "elapsed_s": 4.001,
-      "ms_per_frame": 66.687,
+      "ms_per_frame": 66.689,
       "returncode": 0
     },
     "tc_tire": {
       "title": "TC-M: MPM Tire Rolling Sand",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 58.017,
-      "ms_per_frame": 966.957,
+      "elapsed_s": 58.021,
+      "ms_per_frame": 967.01,
       "returncode": 0
     },
     "tc_cow": {
       "title": "TC-K: Pyro Cow Blast",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 45.066,
-      "ms_per_frame": 751.103,
+      "elapsed_s": 45.641,
+      "ms_per_frame": 760.675,
       "returncode": 0
     },
     "tc_explosion": {
       "title": "TC-L: Pyro Explosion (Mushroom Cloud)",
       "status": "ok",
       "frames": 60,
-      "elapsed_s": 29.527,
-      "ms_per_frame": 492.119,
+      "elapsed_s": 30.743,
+      "ms_per_frame": 512.378,
       "returncode": 0
     }
   }

@@ -2,13 +2,13 @@
 // ドメイン左側で単振動(SHM)する壁パドルが波を起こし、右側に並べた複数の Bunny
 // メッシュへ波が衝突して泡を生成する。海面のリアルなレンダリング検証を想定。
 #include "App.h"
+#include "FluidStats.h"
 #include "core/DefineShaderCompiler.h"
 #include "core/Emitter.h"
 #include "core/Force.h"
 #include "engine/BoundaryParticles.h"
 #include "engine/FLIPEngine.h"
 #include "engine/FluidEngine.h"
-#include "FluidStats.h"
 #include "graphics/GraphicsPipeline.h"
 
 #include <argparse/argparse.hpp>
@@ -226,11 +226,9 @@ private:
     // fluid_particle_wave.vert / foam_particle_wave.vert は本シーン専用のカメラ
     if(cfg.halfVec4 || cfg.halfVec4Vel) {
       // vがpackHalf2x16詰めのため、静的SPV(FP32想定)のままだとストライド不一致でゴミ値を読む。FluidEngine::init()のextraForceDefines_と同じ判定。
-      const std::vector<std::pair<std::string, std::string>> halfDefines =
-          cfg.halfVec4 ? std::vector<std::pair<std::string, std::string>>{{"HALF_VEC4", "1"}, {"HALF_VEC4_V", "1"}}
-                       : std::vector<std::pair<std::string, std::string>>{{"HALF_VEC4_V", "1"}};
-      auto fluidVert = DefineShaderCompiler::compile("fluid_particle_wave.vert", halfDefines, /*isVertexShader=*/true);
-      auto foamVert  = DefineShaderCompiler::compile("foam_particle_wave.vert", halfDefines, /*isVertexShader=*/true);
+      const std::vector<std::pair<std::string, std::string>> halfDefines = cfg.halfVec4 ? std::vector<std::pair<std::string, std::string>>{{"HALF_VEC4", "1"}, {"HALF_VEC4_V", "1"}} : std::vector<std::pair<std::string, std::string>>{{"HALF_VEC4_V", "1"}};
+      auto fluidVert                                                     = DefineShaderCompiler::compile("fluid_particle_wave.vert", halfDefines, /*isVertexShader=*/true);
+      auto foamVert                                                      = DefineShaderCompiler::compile("foam_particle_wave.vert", halfDefines, /*isVertexShader=*/true);
       graphicsPipe_.initVertFromSpirv(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, fluidVert, SHADER_DIR_STR + "/fluid.frag.spv");
       foamGraphicsPipe_.initVertFromSpirv(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, foamVert, SHADER_DIR_STR + "/foam.frag.spv", VK_PRIMITIVE_TOPOLOGY_POINT_LIST, /*enableBlend=*/true);
     } else {
@@ -244,12 +242,13 @@ private:
   // FLIP 版: 同じ海 + 単振動パドル。FLIP は 8 粒子/セル (cell = 2d なので PBF と同じ粒子間隔)、
   // パドルは速度付きの箱コライダーを毎フレーム動かして表す (境界粒子は使わない)。
   void initFlip(const FluidConfig& cfg, float waterDepth) {
-    const float d = cfg.particleSpacing();
+    const float d                   = cfg.particleSpacing();
     flipEngine_.domainSize          = cfg.domainSize;
     flipEngine_.cellSize            = cfg.cellSize;
     flipEngine_.maxParticles        = uint32_t(cfg.domainSize.x * HALF_Y * 2.0f * waterDepth / (d * d * d)) + 1024u;
     flipEngine_.maxDiffuseParticles = cfg.maxDiffuseParticles;
     flipEngine_.foamEnabled         = cfg.maxDiffuseParticles > 0;
+    flipEngine_.pressureIterations  = 3;
     flipEngine_.numSubsteps         = 2;
     flipEngine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR);
     flipEngine_.addForce(GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f)); // Z-up
@@ -505,8 +504,10 @@ private:
   void cleanup() {
     graphicsPipe_.cleanup();
     foamGraphicsPipe_.cleanup();
-    if(flip_) flipEngine_.cleanup();
-    else engine_.cleanup();
+    if(flip_)
+      flipEngine_.cleanup();
+    else
+      engine_.cleanup();
     base_.cleanupBase();
   }
 };

@@ -13,15 +13,15 @@ public:
     flip_ratio  = 0.95f;
   }
 
-  int pressureIterations   = 40;    // 赤黒 Gauss-Seidel の反復回数 (1 反復 = 赤+黒)
-  float densityCorrection  = 0.05f; // 過密ノードを膨張させる強さ (0 で無効)。GS が未収束で沈む体積ドリフトの防止。大きいと膨張・振動
-  float particlesPerCell   = 8.0f;  // 1 セルあたりの目標粒子数 (既定粒子体積の算出用)
-  float maxGridSpeed       = 40.0f; // グリッド速度上限 [m/s] (init() 前に設定)
+  int pressureIterations  = 6;     // 赤黒 Gauss-Seidel の反復回数 (1 反復 = 赤+黒)
+  float densityCorrection = 0.05f; // 過密ノードを膨張させる強さ (0 で無効)。GS が未収束で沈む体積ドリフトの防止。大きいと膨張・振動
+  float particlesPerCell  = 8.0f;  // 1 セルあたりの目標粒子数 (既定粒子体積の算出用)
+  float maxGridSpeed      = 40.0f; // グリッド速度上限 [m/s] (init() 前に設定)
 
   uint32_t maxDiffuseParticles = 0; // 泡粒子の上限。0 なら泡パスとバッファを持たない (init() 前に設定)
   bool foamEnabled             = false;
 
-  struct FoamParams { // Ihmsen 2012 ポテンシャル関数ベース
+  struct FoamParams {                             // Ihmsen 2012 ポテンシャル関数ベース
     float kTa = 500.0f, kWc = 500.0f;             // 生成係数 (trapped-air / wave-crest) [1/s]
     float taLo = 1.0f, taHi = 6.0f;               // trapped-air (セル間の相対速度 [m/s]) の正規化範囲
     float wcLo = 1.0f, wcHi = 5.0f;               // wave-crest の正規化範囲

@@ -225,5 +225,13 @@ TEST_CASE("FluidStatsLogger prints after the first frame") {
   info.gridRes   = glm::uvec3(8, 8, 8);
   info.dt        = 1.0f / 60.0f;
   for(int i = 0; i < 3; ++i) logger.frame(info);
-  CHECK(true);
+  CHECK(fluidstats_detail::rssMB() > 0.0);
+  CHECK(fluidstats_detail::processCpuSec() > 0.0);
+
+  // 実 allocator: エンジンが確保したバッファ分の VRAM 確保量が見える
+  FlipScene s;
+  s.init(2.0f, 2.0f / 32, 1000);
+  const auto v = fluidstats_detail::vram(fluidStatsInfo(s.engine, s.dt).allocator);
+  CHECK(v.allocMB > 0.0);
+  s.cleanup();
 }

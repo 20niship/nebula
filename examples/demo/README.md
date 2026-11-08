@@ -5,28 +5,26 @@ nebula で時間をかけてシミュレーションし、結果を Blender (`bp
 
 | デモ | 実行ファイル | ソルバー | 規模 | レンダリング |
 |---|---|---|---|---|
-| 1. 市街地の気流 | `demo_city_wind` | `PyroEngine` (オイラー格子, 開境界) | 256×96×128 格子 / ビル 20 棟 | 速度場から追跡した流線 (風速で色分け) + ビル群 (Cycles) |
-| 2. 雪崩 | `demo_avalanche_mesh` | `MPMEngine` (Drucker-Prager) | 約 1070 万粒子 / 国土地理院 DEM 由来の地形 + 樹木 37 本 + 岩 16 個 | 密度場から数百万三角形の雪面メッシュを再構成 + DEM 地形メッシュ + 黒松メッシュ (Cycles) |
-| 3. 海岸の波 (issue #137) | `demo_seashore` | `FLIPEngine` (非圧縮 FLIP + 泡) | 既定 約 610 万粒子 (`--spacing 0.055` で約 1000 万) + 泡 最大 400 万 | 水面等値面 + 泡の小球インスタンス + 岩 usdc (Cycles, 横動画) |
+| 1. 雪崩 | `demo_avalanche_mesh` | `MPMEngine` (Drucker-Prager) | 約 1070 万粒子 / 国土地理院 DEM 由来の地形 + 樹木 37 本 + 岩 16 個 | 密度場から数百万三角形の雪面メッシュを再構成 + DEM 地形メッシュ + 黒松メッシュ (Cycles) |
+| 2. 海岸の波 (issue #137) | `demo_seashore` | `FLIPEngine` (非圧縮 FLIP + 泡) | 既定 約 610 万粒子 (`--spacing 0.055` で約 1000 万) + 泡 最大 400 万 | 水面等値面 + 泡の小球インスタンス + 岩 usdc (Cycles, 横動画) |
+| 3. 回転する車の風洞 | `demo_car_wind` | `PyroEngine` (オイラー格子, 回転コライダー) | 既定 1024×256×512 格子 (風下×高さ×幅, セル 1.17 cm, 領域 12×3×6 m) / 全長 4.4 m の手続き生成スポーツカー | Q 基準の渦の等値面を速度で着色 + 車メッシュ (PyVista) |
 
 ## 使い方
 
 ```bash
 # 1. nebula 側 (headless)。出力は out/<demo>/ (git 管理外)
 cmake -B build -DCMAKE_BUILD_TYPE=Release -DNEBULA_BUILD_DEMOS=ON && cmake --build build -j
-./build/examples/demo/demo_city_wind      --out examples/demo/out/wind         # 数分
 # 雪崩は地形 DEM が先に必要 (下記「雪崩の入力アセット」。DEM は git 管理外)
 (cd examples/demo && python dem/fetch_dem.py && python dem/make_patch.py 122 88 58 42)
 ./build/examples/demo/demo_avalanche_mesh --out examples/demo/out/avalanche --scale 1.3 --frames 400 --substeps 48 --ground-friction 0.1 --friction 0.3 --cohesion 100   # 約 45 分
 
 # 2. Blender 側 (uv が bpy を取得する。Python 3.11 固定)
 cd examples/demo
-uv run python render/render_wind.py      out/wind      --frames 0 119 --out out/wind_png
 uv run python render/render_avalanche.py out/avalanche --frames 0 330 --out out/avalanche_png
 ```
 
 `--scale` (雪崩) で粒子数を縮小して素早く確認できる。`--frames A B --step N` で一部のフレームだけレンダリングできる。
-連番 PNG は `ffmpeg -framerate 24 -i out/wind_png/frame_%05d.png -c:v libx264 -pix_fmt yuv420p wind.mp4` で動画化する。
+連番 PNG は `ffmpeg -framerate 24 -i out/avalanche_png/frame_%05d.png -c:v libx264 -pix_fmt yuv420p avalanche.mp4` で動画化する。
 長時間のレンダリングは `render/supervise.py` で包むと、異常終了や停止 (出力が増えない) のときに自動で再起動し、出力済みフレームをスキップして続きから再開する (`render_*.py` は出力済みフレームを飛ばす)。
 
 ```bash
@@ -34,7 +32,7 @@ uv run python render/supervise.py --watch out/avalanche_png -- \
     python render/render_avalanche.py out/avalanche --frames 0 330 --out out/avalanche_png
 ```
 
-3 つのデモ動画は `python render/combine.py out/seashore.mp4 out/city_wind.mp4 out/avalanche.mp4 -o out/demo_all.mp4` で横に並べた 1 本にできる。
+3 つのデモ動画は `python render/combine.py out/seashore.mp4 out/car.mp4 out/avalanche.mp4 -o out/demo_all.mp4` で横に並べた 1 本にできる。
 
 画像・動画は git に含めず、`gh pr comment --attach` で配布する。
 
@@ -64,18 +62,37 @@ uv run python seashore/render_seashore.py out/seashore --frames 150 150 --out ou
 - usdc の色テクスチャは取得元に無いため、レンダ側で手続き的な岩マテリアルに差し替えている。
 - Blender の泡は `foam_*.nbf` の点を Geometry Nodes で小球インスタンス化している (`--foam-radius`)。
 
+### 回転する車の風洞 (スポーツカー)
+
+一定角速度 (既定 0.5 rad/s) で自転するスポーツカーに、固定向き (+x) の風 (既定 20 m/s) を当てる。車体の流線型に沿った流れと、リアウイング 2 枚の間のスロットを抜ける流れを見る。
+車は Python で手続き生成する (全長 4.4 m の車体・キャビン・車輪・フロントスプリッター・2 枚構成のリアウイング + 端板 + 支柱)。メッシュのダウンロードもライセンスも不要で、ウイングの隙間 (`--gap`) を自由に変えられる。
+アセットは `assets_local/car/` (git 管理外)。
+
+```bash
+cd examples/demo
+uv run car/make_car.py                    # car.sdf (シミュレーション用, 2cm) / car.npz (Blender 用メッシュ) / 形状確認の断面 PNG
+../../build/examples/demo/demo_car_wind --out out/car      # 1024×256×512 格子, 600 ステップ (dt=1/120), 約 75 分 / GPU メモリ約 10.5GB
+uv run car/render_car.py out/car --frames 0 480 --out out/car_png   # --vis q / streamlines / both。PyVista (VTK) で描画。フォトリアルは不要なので Blender は使わない
+```
+
+- 車は `PyroEngine::setMovingCollider` の剛体コライダー (位置・姿勢・線速度・角速度を持つ `RigidBodyState`)。車のローカル SDF を毎サブステップ GPU でトリリニア補間して現在の姿勢に焼き直し、固体セルと表面付近に壁面速度 `v = linVel + ω×(p − pos)` を課す。回転軸は任意で、並進も同時に扱える (このデモは鉛直軸まわりの自転のみ)。`autoAdvance=false` にして毎ステップ `setColliderState()` で姿勢を与えれば任意の運動にもなる。静止コライダー (都市風デモなど) の挙動は変えていない。
+- 格子は 1024×256×512 (風下×高さ×幅)。車は高さ方向に薄く、自転すると幅方向に約 4.8 m 掃くので、高さに 256・幅に 512 を割り当てる (高さに 512 を割り当てるとセルは 2 cm 止まり)。Pyro のバッファは Morton 符号の最大値 + 1 セル (この格子で約 2.35 億セル) で、軸の長さが 2^n でも x>=y>=z でなければ符号に穴が空く。速度場しか使わないので `PyroEngine::channels = kChVelocityOnly` で密度・温度・燃料・炎・渦度のバッファを持たず、1 セル 88 byte が 44 byte になる (約 10.3GB。全チャンネルだと約 20.7GB で載らない)。
+- 可視化は既定で **Q 基準の等値面** (FluidX3D の渦構造と同じ。速度勾配テンソルの Q = ½(|Ω|² − |S|²) > 0 が渦)。`demo_car_wind` が毎ステップ (`--q-every`, 既定 1 = 全フレーム) Q が閾値 (`--q-thresh`, 既定 (風速/車高)² の 2.0 倍) 以上の流体セルだけをスパースに `q_*.qvox` へ書き出す (1 枚約 26 MB、480 フレームで約 12 GB。車の表面 3 セル以内と地面は壁の勾配で荒れるので除く)。Blender 側で等値面メッシュ (marching cubes) を作り、速度で青→緑→赤に着色して発光させる。`--q-boost` で書き出し閾値の何倍以上を面にするか決める (大きいほど細い渦管だけ)。流線 (`--vis streamlines`) は車体に被って見づらいので既定にしていない。
+- `--vis streamlines` は毎フレーム引き直した流線ではなく、トレーサ粒子を格子速度に乗せて流した軌跡 (`tracers.bin`) を描く (後流の渦で瞬間流線が毎フレーム別物になりちらつくため)。
+- 車の SDF は節点間隔 1 cm (`car/make_car.py --cell`)。ウイングのスロットは既定 8 cm = 約 7 セル。
+
 ## データ形式
 
 - `.nbp` (`NbpDump.h`): 粒子フレーム。位置は領域 AABB に対する `uint16` 量子化 (1000 万粒子で 1 フレーム約 70MB) + 速さ `uint8`。`render/nbp.py` が読む。
-- `.pvox` (`PyroEngine::dumpFrame`): Pyro の格子データ。
-- `city.txt` / `obstacles.txt` / `terrain.f32`: Blender 側でシーンを再現するためのビル配置・樹木と岩・地形高さ。
+- `.pvox` (`PyroEngine::dumpFrame`): Pyro の格子データ (全チャンネル。大きな格子では 1 枚数百 MB)。
+- `tracers.bin` / `q_*.qvox` (`demo_car_wind`): トレーサ粒子の軌跡と、Q 基準が閾値以上のセルのスパース出力 (「回転する車の風洞」の節を参照)。`tracers.bin` は `"TRC1" | u32 steps | u32 M | f32 dt | f32 domain[3] | steps × M × { f32 xyz, u32 gen }` (`gen` は湧き直すと増える)。
+- `obstacles.txt` / `terrain.f32`: Blender 側でシーンを再現するための樹木と岩・地形高さ。
 
 ## 実装メモ
 
-### 1. 気流
-- `PyroSimPC::openBoundaryMask` を追加した (本 PR)。立っている面は領域外の圧力を 0 とみなす開境界になり、風が出入りできる。既定 0 は従来どおり全面閉。
-- Gauss-Seidel の圧力ソルバは大域的な圧力場の収束が遅い (N² 反復) ため、最初の 45 ステップだけ領域全体を一様流に寄せ、街区周りの局所補正だけ解かせる。
-  以降は上流のファン (エミッタ) が風速を維持する。
+### Pyro (回転する車の風洞)
+- 圧力ソルバ (Gauss-Seidel) は大域的な圧力場の収束が遅い (N² 反復) ため、最初の 45 ステップだけ領域全体を一様流に寄せ、車の周りの局所補正だけ解かせる。以降は上流のファン (エミッタ) が風速を維持する。
+- Pyro のバッファは「Morton 符号の最大値 + 1」セル。従来は 2^n の立方体 (`cubeRes^3`) を確保しており、512³ は約 12GB で載らなかった。軸の長さが 2^n で x>=y>=z でも、`1024×256×256` のように x だけ 1 ビット以上長いと符号に穴が空く (この格子で 1.68 億セル)。`PyroEngine::channels` で使わないチャンネルを持たなければ 1 セル 88 byte が 44 byte になる。
 
 ### 2. 雪崩
 - 雪は Drucker-Prager (摩擦 M=0.3, 凝集 100 Pa) で、斜面 (約 31°) に積もった厚さ 3〜4.5 m の層。地形コライダの摩擦を小さく (0.1) して滑り出させる。

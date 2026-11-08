@@ -53,19 +53,22 @@ void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool 
   initEngineBase(device, allocator, descriptorPool, cmdPool, queue);
 
   const uint32_t NC = totalCells();
+  if((channels & kChCurl) == 0 && pc_.vorticityEps > 0.0f) throw std::runtime_error("PyroEngine: vorticityEps > 0 requires kChCurl");
+  // 無効なチャンネルは 1 要素のダミー (シェーダは channelMask で読み書きしない)
+  const uint32_t nDens = (channels & kChDensity) ? NC : 1u, nTemp = (channels & kChTemperature) ? NC : 1u, nFuel = (channels & kChFuel) ? NC : 1u, nFlame = (channels & kChFlame) ? NC : 1u, nCurl = (channels & kChCurl) ? NC : 1u;
 
   velIdx_[0]         = attrBuf_.addAttribute("velA", sizeof(glm::vec4), NC);
   velIdx_[1]         = attrBuf_.addAttribute("velB", sizeof(glm::vec4), NC);
-  densityIdx_[0]     = attrBuf_.addAttribute("densA", sizeof(float), NC);
-  densityIdx_[1]     = attrBuf_.addAttribute("densB", sizeof(float), NC);
-  temperatureIdx_[0] = attrBuf_.addAttribute("tempA", sizeof(float), NC);
-  temperatureIdx_[1] = attrBuf_.addAttribute("tempB", sizeof(float), NC);
-  fuelIdx_[0]        = attrBuf_.addAttribute("fuelA", sizeof(float), NC);
-  fuelIdx_[1]        = attrBuf_.addAttribute("fuelB", sizeof(float), NC);
-  flameIdx_          = attrBuf_.addAttribute("flame", sizeof(float), NC);
+  densityIdx_[0]     = attrBuf_.addAttribute("densA", sizeof(float), nDens);
+  densityIdx_[1]     = attrBuf_.addAttribute("densB", sizeof(float), nDens);
+  temperatureIdx_[0] = attrBuf_.addAttribute("tempA", sizeof(float), nTemp);
+  temperatureIdx_[1] = attrBuf_.addAttribute("tempB", sizeof(float), nTemp);
+  fuelIdx_[0]        = attrBuf_.addAttribute("fuelA", sizeof(float), nFuel);
+  fuelIdx_[1]        = attrBuf_.addAttribute("fuelB", sizeof(float), nFuel);
+  flameIdx_          = attrBuf_.addAttribute("flame", sizeof(float), nFlame);
   pressureIdx_       = attrBuf_.addAttribute("pres", sizeof(float), NC);
   divergenceIdx_     = attrBuf_.addAttribute("div", sizeof(float), NC);
-  curlIdx_           = attrBuf_.addAttribute("curl", sizeof(glm::vec4), NC);
+  curlIdx_           = attrBuf_.addAttribute("curl", sizeof(glm::vec4), nCurl);
   emittersIdx_       = attrBuf_.addAttribute("pyroEmitters", sizeof(EmitterGPU), maxEmitters);
   cur_               = 0;
 
@@ -85,20 +88,26 @@ void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool 
   // GPU バッファは未初期化のため、全フィールドを明示的にゼロクリアする
   {
     std::vector<glm::vec4> zeroVec4(NC, glm::vec4(0.0f));
-    std::vector<float> zeroFloat(NC, 0.0f);
+    std::vector<float> zeroFloat((channels & (kChDensity | kChTemperature | kChFuel | kChFlame)) ? NC : 1u, 0.0f);
     auto up = [&](const std::string& name, const void* data, size_t bytes) { attrBuf_.upload(name, data, bytes, cmdPool_, queue_); };
     up("velA", zeroVec4.data(), NC * sizeof(glm::vec4));
     up("velB", zeroVec4.data(), NC * sizeof(glm::vec4));
-    up("densA", zeroFloat.data(), NC * sizeof(float));
-    up("densB", zeroFloat.data(), NC * sizeof(float));
-    up("tempA", zeroFloat.data(), NC * sizeof(float));
-    up("tempB", zeroFloat.data(), NC * sizeof(float));
-    up("fuelA", zeroFloat.data(), NC * sizeof(float));
-    up("fuelB", zeroFloat.data(), NC * sizeof(float));
-    up("flame", zeroFloat.data(), NC * sizeof(float));
-    up("pres", zeroFloat.data(), NC * sizeof(float));
-    up("div", zeroFloat.data(), NC * sizeof(float));
-    up("curl", zeroVec4.data(), NC * sizeof(glm::vec4));
+    if(channels & kChDensity) {
+      up("densA", zeroFloat.data(), NC * sizeof(float));
+      up("densB", zeroFloat.data(), NC * sizeof(float));
+    }
+    if(channels & kChTemperature) {
+      up("tempA", zeroFloat.data(), NC * sizeof(float));
+      up("tempB", zeroFloat.data(), NC * sizeof(float));
+    }
+    if(channels & kChFuel) {
+      up("fuelA", zeroFloat.data(), NC * sizeof(float));
+      up("fuelB", zeroFloat.data(), NC * sizeof(float));
+    }
+    if(channels & kChFlame) up("flame", zeroFloat.data(), NC * sizeof(float));
+    up("pres", std::vector<float>(NC, 0.0f).data(), NC * sizeof(float));
+    up("div", std::vector<float>(NC, 0.0f).data(), NC * sizeof(float));
+    if(channels & kChCurl) up("curl", zeroVec4.data(), NC * sizeof(glm::vec4));
   }
 
   initForces();
@@ -107,6 +116,7 @@ void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool 
   load(kEmit_, "pyro_emit.comp");
   load(kCombustion_, "pyro_combustion.comp");
   load(kObstacleBC_, "pyro_obstacle_bc.comp");
+  load(kRotateSDF_, "pyro_rotate_sdf.comp");
   load(kAdvect_, "pyro_advect.comp");
   load(kCurl_, "pyro_curl.comp");
   load(kVorticityForce_, "pyro_vorticity_force.comp");
@@ -119,7 +129,7 @@ void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool 
 }
 
 void PyroEngine::cleanup() {
-  for(auto* k : {&kEmit_, &kCombustion_, &kForces_, &kObstacleBC_, &kAdvect_, &kCurl_, &kVorticityForce_, &kDivergence_, &kPressureGS_, &kProject_}) k->cleanup();
+  for(auto* k : {&kEmit_, &kCombustion_, &kForces_, &kObstacleBC_, &kRotateSDF_, &kAdvect_, &kCurl_, &kVorticityForce_, &kDivergence_, &kPressureGS_, &kProject_}) k->cleanup();
 #ifdef NEBULA_GPU_PROFILING
   if(profPool_ != VK_NULL_HANDLE) vkDestroyQueryPool(device_, profPool_, nullptr);
 #endif
@@ -137,7 +147,25 @@ void PyroEngine::setColliderSDF(const std::vector<float>& mortonSDF) {
   attrBuf_.upload("colliderSDF", mortonSDF.data(), mortonSDF.size() * sizeof(float), cmdPool_, queue_);
 }
 
-void PyroEngine::clearCollider() { colliderSDFIdx_ = 0; }
+void PyroEngine::clearCollider() {
+  colliderSDFIdx_ = 0;
+  pc_.rotSdfIdx   = 0;
+}
+
+void PyroEngine::setMovingCollider(const std::vector<float>& localSDF, glm::uvec3 res, float localCell, glm::vec3 localMin, const RigidBodyState& initial, bool autoAdvance) {
+  if(localSDF.size() != size_t(res.x) * res.y * res.z) throw std::runtime_error("PyroEngine::setMovingCollider: localSDF size must equal res.x*res.y*res.z");
+  if(res.x == 0 || res.y == 0 || res.z == 0 || res.x > 1023 || res.y > 1023 || res.z > 1023) throw std::runtime_error("PyroEngine::setMovingCollider: local SDF resolution per axis must be 1..1023");
+  if(colliderSDFIdx_ == 0) colliderSDFIdx_ = attrBuf_.addAttribute("colliderSDF", sizeof(float), totalCells());
+  pc_.rotSdfIdx = attrBuf_.addAttribute("rotSDF", sizeof(float), localSDF.size());
+  attrBuf_.upload("rotSDF", localSDF.data(), localSDF.size() * sizeof(float), cmdPool_, queue_);
+  pc_.rotResPacked = res.x | (res.y << 10u) | (res.z << 20u);
+  pc_.rotCell      = localCell;
+  pc_.rotMin[0]    = localMin.x;
+  pc_.rotMin[1]    = localMin.y;
+  pc_.rotMin[2]    = localMin.z;
+  body_            = initial;
+  bodyAutoAdvance_ = autoAdvance;
+}
 
 // ── Emitter ───────────────────────────────────────────────────────────────
 
@@ -238,6 +266,17 @@ PyroSimPC PyroEngine::buildPC(float dt) const {
   pc.gsColor         = 0;
   pc.divergenceIdx   = divergenceIdx_;
   pc.curlIdx         = curlIdx_;
+  pc.channelMask     = channels;
+  const glm::quat q  = glm::normalize(body_.rotation);
+  for(int k = 0; k < 3; k++) {
+    pc.bodyPos[k]    = body_.position[k];
+    pc.bodyLinVel[k] = body_.linearVelocity[k];
+    pc.bodyAngVel[k] = body_.angularVelocity[k];
+  }
+  pc.bodyQuat[0] = q.x;
+  pc.bodyQuat[1] = q.y;
+  pc.bodyQuat[2] = q.z;
+  pc.bodyQuat[3] = q.w;
   pc.colliderSDFIdx  = colliderSDFIdx_;
   // emittersIdx/emitterCount は updateEmitters() 後に step() 側で設定する (0=無効)
   pc.emittersIdx  = 0;
@@ -281,17 +320,20 @@ void PyroEngine::step(VkCommandBuffer cmd, float dt) {
       pc.emitterCount = emittersActiveCount_;
     }
 
+    // ⓪ 回転コライダー: colliderSDF を現在の角度で焼き直す
+    if(pc.rotSdfIdx != 0) dispatchAndBarrier(cmd, kRotateSDF_, pc, "rotate_sdf");
+
     // ① Emitter 注入 (A バッファへインプレース)
     dispatchAndBarrier(cmd, kEmit_, pc, "emit");
 
     // ①b 燃焼反応 (A バッファへインプレース)
-    dispatchAndBarrier(cmd, kCombustion_, pc, "combustion");
+    if((channels & (kChFuel | kChTemperature | kChFlame | kChDensity)) == (kChFuel | kChTemperature | kChFlame | kChDensity)) dispatchAndBarrier(cmd, kCombustion_, pc, "combustion");
 
     // ② 浮力 (A バッファへインプレース)
     dispatchAndBarrier(cmd, kForces_, pc, "forces");
 
     // ②b 渦度閉じ込め (2パス: curl → 閉じ込め力適用、A バッファへインプレース)
-    if(pc.vorticityEps > 0.0f) {
+    if(pc.vorticityEps > 0.0f && (channels & kChCurl)) {
       dispatchAndBarrier(cmd, kCurl_, pc, "curl");
       dispatchAndBarrier(cmd, kVorticityForce_, pc, "vorticity_force");
     }
@@ -324,6 +366,11 @@ void PyroEngine::step(VkCommandBuffer cmd, float dt) {
 
     // ダブルバッファ入れ替え: 次フレームは B が現在値になる
     cur_ = 1 - cur_;
+    if(bodyAutoAdvance_ && pc_.rotSdfIdx != 0) { // 移動コライダーを一定の線速度・角速度で進める (次サブステップの buildPC に反映)
+      body_.position += body_.linearVelocity * subDt;
+      const float w = glm::length(body_.angularVelocity);
+      if(w > 0.0f) body_.rotation = glm::normalize(glm::angleAxis(w * subDt, body_.angularVelocity / w) * body_.rotation);
+    }
   }
 }
 
@@ -423,14 +470,14 @@ void PyroEngine::dumpFrame(const std::string& path, float simTime) const {
     VkBuffer buf;
     bool present;
   };
-  const Channel channels[] = {
-    {"density", 1u, getDensityBuffer(), true}, {"temperature", 1u, getTemperatureBuffer(), true}, {"fuel", 1u, getFuelBuffer(), true},
-    {"flame", 1u, getFlameBuffer(), true},     {"velocity", 3u, getVelocityBuffer(), true},       {"sdf", 1u, hasCollider() ? attrBuf_.getBuffer("colliderSDF") : VK_NULL_HANDLE, hasCollider()},
+  const Channel chans[] = {
+    {"density", 1u, getDensityBuffer(), (channels & kChDensity) != 0},   {"temperature", 1u, getTemperatureBuffer(), (channels & kChTemperature) != 0}, {"fuel", 1u, getFuelBuffer(), (channels & kChFuel) != 0},
+    {"flame", 1u, getFlameBuffer(), (channels & kChFlame) != 0},         {"velocity", 3u, getVelocityBuffer(), true},                                    {"sdf", 1u, hasCollider() ? attrBuf_.getBuffer("colliderSDF") : VK_NULL_HANDLE, hasCollider()},
   };
 
-  std::vector<std::vector<float>> linearData(std::size(channels));
-  for(size_t i = 0; i < std::size(channels); ++i) {
-    const auto& ch = channels[i];
+  std::vector<std::vector<float>> linearData(std::size(chans));
+  for(size_t i = 0; i < std::size(chans); ++i) {
+    const auto& ch = chans[i];
     if(!ch.present) {
       linearData[i].assign(size_t(realCellCnt), 1e6f);
       continue;
@@ -451,10 +498,10 @@ void PyroEngine::dumpFrame(const std::string& path, float simTime) const {
   float cs = cellSize; // 旧 worldSize(単一float)。直方体対応につき意味を cellSize に変更 (バイト数不変)
   f.write(reinterpret_cast<const char*>(&cs), sizeof(float));
   f.write(reinterpret_cast<const char*>(&simTime), sizeof(float));
-  uint32_t numChannels = uint32_t(std::size(channels));
+  uint32_t numChannels = uint32_t(std::size(chans));
   f.write(reinterpret_cast<const char*>(&numChannels), sizeof(uint32_t));
 
-  for(const auto& ch : channels) {
+  for(const auto& ch : chans) {
     char name[16] = {};
     std::strncpy(name, ch.name, sizeof(name) - 1);
     f.write(name, sizeof(name));

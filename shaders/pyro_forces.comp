@@ -19,11 +19,12 @@ void main() {
     uint totalCells = pc.hashCells;
     if (gid >= totalCells) return;
 
-    float T   = readFloat(pc.temperatureIdxA, gid);
-    float rho = readFloat(pc.densityIdxA, gid);
-
     vec4 v = readVec4(pc.velIdxA, gid);
-    v.y += pc.dt * (pc.buoyancyAlpha * (T - pc.ambientTemp) - pc.buoyancyBeta * rho);
+    if (CHANNEL_ON(CH_TEMPERATURE) && CHANNEL_ON(CH_DENSITY)) {  // 浮力は温度と密度の両方が有効なときだけ
+        float T   = readFloat(pc.temperatureIdxA, gid);
+        float rho = readFloat(pc.densityIdxA, gid);
+        v.y += pc.dt * (pc.buoyancyAlpha * (T - pc.ambientTemp) - pc.buoyancyBeta * rho);
+    }
 
     ivec3 ijk = pyroMortonDecodeI(gid);
     vec3 forcePos = (vec3(ijk) + 0.5) * pc.cellSize + pc.worldMin;

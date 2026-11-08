@@ -88,6 +88,21 @@ inline uint32_t hashCellsCube(const glm::uvec3& res) {
   return p * p * p;
 }
 
+// Morton 符号 (x が最下位ビット, 次が y, z) の最大値 + 1。符号は各軸について単調なので最大セル (nx-1,ny-1,nz-1) で決まる。
+// 軸が x>=y>=z の順に長い直方体 (例 512x256x256) なら上位ビットが立たず、[0, 値) の全符号が実セルかパディングになり、
+// 立方体 (cubeRes^3 = 512^3 で 4 倍) より小さいバッファで済む。短い軸が x/y の場合は穴が増えるだけで正しく動く。
+inline uint32_t hashCellsMorton(const glm::uvec3& res) {
+  auto expand = [](uint32_t v) {
+    v = (v | (v << 16u)) & 0x030000FFu;
+    v = (v | (v << 8u)) & 0x0300F00Fu;
+    v = (v | (v << 4u)) & 0x030C30C3u;
+    v = (v | (v << 2u)) & 0x09249249u;
+    return v;
+  };
+  const glm::uvec3 m = glm::max(res, glm::uvec3(1u)) - 1u;
+  return (expand(m.x) | (expand(m.y) << 1u) | (expand(m.z) << 2u)) + 1u;
+}
+
 inline uint32_t nGroups(uint32_t cells) { return (cells + 255u) / 256u; }
 
 } // namespace domain

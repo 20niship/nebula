@@ -9,6 +9,6 @@ function(nebula_demo name)
     endif()
 endfunction()
 
-nebula_demo(demo_city_wind)
+nebula_demo(demo_car_wind)
 nebula_demo(demo_avalanche_mesh)
 nebula_demo(demo_seashore)

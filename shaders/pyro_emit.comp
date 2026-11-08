@@ -64,9 +64,9 @@ void main() {
     }
 
     if (inflowWeight > 0.0) {
-        writeFloat(pc.densityIdxA,     gid, readFloat(pc.densityIdxA,     gid) + densityAdd);
-        writeFloat(pc.temperatureIdxA, gid, readFloat(pc.temperatureIdxA, gid) + temperatureAdd);
-        writeFloat(pc.fuelIdxA,        gid, readFloat(pc.fuelIdxA,        gid) + fuelAdd);
+        if (CHANNEL_ON(CH_DENSITY))     writeFloat(pc.densityIdxA,     gid, readFloat(pc.densityIdxA,     gid) + densityAdd);
+        if (CHANNEL_ON(CH_TEMPERATURE)) writeFloat(pc.temperatureIdxA, gid, readFloat(pc.temperatureIdxA, gid) + temperatureAdd);
+        if (CHANNEL_ON(CH_FUEL))        writeFloat(pc.fuelIdxA,        gid, readFloat(pc.fuelIdxA,        gid) + fuelAdd);
 
         vec3  vTarget = inflowBlend / inflowWeight;
         vec3  v       = readVec4(pc.velIdxA, gid).xyz;

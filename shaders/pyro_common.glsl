@@ -4,7 +4,7 @@
 // ── Bindless バッファ配列 ──────────────────────────────────────────────────
 layout(set = 0, binding = 0) buffer StorageBuffers { uint data[]; } buffers[];
 
-// ── PyroSimPC Push Constants (164 bytes) ───────────────────────────────────
+// ── PyroSimPC Push Constants (248 bytes) ───────────────────────────────────
 // issue #46フォローアップ: 直方体ドメイン対応。worldMin/worldMax を vec3 化し、各軸独立の
 // gridRes(uvec3) を追加した。旧 gridRes(スカラー、Morton dispatch用の立方体解像度) は
 // hashCells に改名 (mpm_common.glsl と同一の命名・用法。値は cubeRes^3)。
@@ -45,6 +45,26 @@ layout(push_constant) uniform PC {
     uint  forceBufIdx;        // 156 Force配列(ForceGPU×forceCount)のbindless index (issue #30)
     uint  forceCount;         // 160 有効なForce数
     uint  openBoundaryMask;   // 164 開境界ビット (bit0..5 = -x,+x,-y,+y,-z,+z)。領域外の圧力を 0 とする
+    float bodyPosX;           // 168 移動コライダー: 剛体原点の世界座標 (角速度の回転中心)
+    float bodyPosY;           // 172
+    float bodyPosZ;           // 176
+    float bodyQuatX;          // 180 剛体ローカル -> 世界 の回転 (x,y,z,w)
+    float bodyQuatY;          // 184
+    float bodyQuatZ;          // 188
+    float bodyQuatW;          // 192
+    float bodyLinVelX;        // 196 線速度 (世界座標系)
+    float bodyLinVelY;        // 200
+    float bodyLinVelZ;        // 204
+    float bodyAngVelX;        // 208 角速度 (世界座標系, 原点まわり)
+    float bodyAngVelY;        // 212
+    float bodyAngVelZ;        // 216
+    uint  rotSdfIdx;          // 220 ローカル SDF (線形, x 最速)。0=無効
+    uint  rotResPacked;       // 224 節点数 (x | y<<10 | z<<20)
+    float rotCell;            // 228 節点間隔
+    float rotMinX;            // 232 ローカル SDF 原点 (剛体ローカル座標)
+    float rotMinY;            // 236
+    float rotMinZ;            // 240
+    uint  channelMask;        // 244 有効チャンネル (bit0 密度, bit1 温度, bit2 燃料, bit3 炎, bit4 渦度スクラッチ)。無効なバッファは 1 要素のダミー
 } pc;
 
 // ── Buffer read/write マクロ (MoltenVK: buffers[] は main() でのみ展開) ────
@@ -115,6 +135,30 @@ ivec3 pyroMortonDecodeI(uint code) {
 // セル (ix,iy,iz) (クランプ後) が障害物内部 (SDF<0) かどうか。SDF 未設定なら常に false。
 #define CELL_IS_SOLID(ix_, iy_, iz_) ( pc.colliderSDFIdx != 0u && \
     readFloat(pc.colliderSDFIdx, pyroMortonEncodeI(CLAMP_CELL((ix_), (iy_), (iz_)))) < 0.0 )
+
+#define CH_DENSITY 1u
+#define CH_TEMPERATURE 2u
+#define CH_FUEL 4u
+#define CHANNEL_ON(bit_) ((pc.channelMask & (bit_)) != 0u)
+
+// 移動コライダー (剛体) の状態
+vec3 pyroBodyPos()    { return vec3(pc.bodyPosX, pc.bodyPosY, pc.bodyPosZ); }
+vec4 pyroBodyQuat()   { return vec4(pc.bodyQuatX, pc.bodyQuatY, pc.bodyQuatZ, pc.bodyQuatW); }
+vec3 pyroBodyLinVel() { return vec3(pc.bodyLinVelX, pc.bodyLinVelY, pc.bodyLinVelZ); }
+vec3 pyroBodyAngVel() { return vec3(pc.bodyAngVelX, pc.bodyAngVelY, pc.bodyAngVelZ); }
+// クォータニオン q (x,y,z,w, 単位) による v の回転
+vec3 pyroQuatRotate(vec4 q, vec3 v) {
+    vec3 t = 2.0 * cross(q.xyz, v);
+    return v + q.w * t + cross(q.xyz, t);
+}
+// 移動コライダー表面 (点 p) の速度 v = linVel + angVel x (p - pos)。地面 (最下段の固体行) は静止。移動コライダーが無ければ 0。
+vec3 pyroSolidVel(vec3 p) {
+    if (pc.rotSdfIdx == 0u || p.y < 1.5 * pc.cellSize) return vec3(0.0);
+    return pyroBodyLinVel() + cross(pyroBodyAngVel(), p - pyroBodyPos());
+}
+// 固体隣接セル (クランプ後) の壁面速度。移動コライダーがあれば壁面速度、なければ自セル速度 (従来の Neumann/ミラー近似)。
+#define SOLID_NBR_VEL(ix_, iy_, iz_, vSelf_) ( pc.rotSdfIdx != 0u ? \
+    pyroSolidVel((vec3(CLAMP_CELL((ix_), (iy_), (iz_))) + 0.5) * pc.cellSize + pc.worldMin) : (vSelf_) )
 
 // 圧力ステンシルの隣接セル値。開境界の外側は 0、障害物は自セル圧力 (Neumann)、それ以外はクランプ参照。
 #define PRESSURE_OPEN_OUT(ix_, iy_, iz_, m_) ( \

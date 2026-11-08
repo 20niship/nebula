@@ -12,6 +12,7 @@
 #include "core/SimPC.h"
 #include "engine/FLIPEngine.h"
 #include "engine/MPMEngine.h"
+#include "FluidStats.h"
 #include "graphics/GraphicsPipeline.h"
 
 #include <argparse/argparse.hpp>
@@ -111,6 +112,7 @@ public:
 private:
   BaseApp base_;
   std::unique_ptr<ParticleGridEngine> engine_; // MPMEngine か FLIPEngine
+  FluidStatsLogger stats_;
   GraphicsPipeline graphicsPipe_;
   std::shared_ptr<GravityForce> gravity_;
   Scene scene_;
@@ -233,7 +235,8 @@ private:
 
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
-        f.timelineValue++;
+    stats_.frame(fluidStatsInfo(*engine_, dt_));
+    f.timelineValue++;
     vkResetCommandBuffer(f.computeCmd, 0);
     recordComputeCmd(f.computeCmd);
 

@@ -1,6 +1,7 @@
 #include "App.h"
 #include "core/Force.h"
 #include "engine/FluidEngine.h"
+#include "FluidStats.h"
 #include "graphics/GraphicsPipeline.h"
 
 #include <argparse/argparse.hpp>
@@ -56,6 +57,7 @@ public:
 private:
   BaseApp base_;
   FluidEngine engine_;
+  FluidStatsLogger stats_;
   GraphicsPipeline graphicsPipe_;
   std::shared_ptr<GravityForce> gravity_;
 
@@ -164,6 +166,7 @@ private:
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
     simTime_ += dt_;
+    stats_.frame(fluidStatsInfo(engine_, dt_));
 
     f.timelineValue++;
     vkResetCommandBuffer(f.computeCmd, 0);

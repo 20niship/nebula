@@ -3,6 +3,7 @@
 #include "core/Force.h"
 #include "engine/FLIPEngine.h"
 #include "engine/FluidEngine.h"
+#include "FluidStats.h"
 #include "graphics/GraphicsPipeline.h"
 
 #include <argparse/argparse.hpp>
@@ -78,6 +79,7 @@ private:
   BaseApp base_;
   FluidEngine engine_;
   FLIPEngine flipEngine_;
+  FluidStatsLogger stats_;
   bool flip_ = false;
   uint32_t maxN_ = 0;
   GraphicsPipeline graphicsPipe_;
@@ -289,6 +291,7 @@ private:
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
     simTime_ += dt_;
+    stats_.frame(flip_ ? fluidStatsInfo(flipEngine_, dt_) : fluidStatsInfo(engine_, dt_));
 
     f.timelineValue++;
     vkResetCommandBuffer(f.computeCmd, 0);

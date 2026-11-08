@@ -8,6 +8,7 @@
 #include "engine/BoundaryParticles.h"
 #include "engine/FLIPEngine.h"
 #include "engine/FluidEngine.h"
+#include "FluidStats.h"
 #include "graphics/GraphicsPipeline.h"
 
 #include <argparse/argparse.hpp>
@@ -120,6 +121,7 @@ private:
   BaseApp base_;
   FluidEngine engine_;
   FLIPEngine flipEngine_;
+  FluidStatsLogger stats_;
   bool flip_ = false;
   glm::vec3 paddleHalfExtents_{0.0f}; // FLIP: パドルの箱コライダー半辺長
   glm::vec3 paddleRestCenter_{0.0f};
@@ -432,6 +434,7 @@ private:
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
     simTime_ += dt_;
+    stats_.frame(flip_ ? fluidStatsInfo(flipEngine_, dt_) : fluidStatsInfo(engine_, dt_));
 
     f.timelineValue++;
     vkResetCommandBuffer(f.computeCmd, 0);

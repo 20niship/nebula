@@ -1,5 +1,6 @@
 // FLIPEngine GPU テスト: 圧力投影による非圧縮性 (静水プールの体積保存)・コライダー貫通なし・泡生成。
 #include "FLIPEngine.h"
+#include "../examples/FluidStats.h"
 #include "core/Collider.h"
 #include "core/Emitter.h"
 #include "helpers/HeadlessCtx.h"
@@ -213,4 +214,16 @@ TEST_CASE("FLIP - moving box collider pushes water without penetration") {
   }
   CHECK(minX > boxFront - 0.5f * cell);
   s.cleanup();
+}
+
+// fluid 系 example の定期ログ: 間隔 0 なら 2 フレーム目以降は毎回出力され、積算時間が進む
+TEST_CASE("FluidStatsLogger prints after the first frame") {
+  FluidStatsLogger logger(0.0);
+  FluidStatsInfo info;
+  info.solver    = "TEST";
+  info.particles = 1000;
+  info.gridRes   = glm::uvec3(8, 8, 8);
+  info.dt        = 1.0f / 60.0f;
+  for(int i = 0; i < 3; ++i) logger.frame(info);
+  CHECK(true);
 }

@@ -39,3 +39,15 @@ def surface_mesh(pos, lo, hi, voxel, sigma=1.5, level=0.5):
     inner = np.percentile(g[g > 1e-3], 90)
     v, f, _, _ = marching_cubes(np.pad(g, 1), level * inner, spacing=(voxel,) * 3)
     return (v + lo - voxel).astype(np.float32), f.astype(np.int32)
+
+
+def load_nbf(path):
+    """泡粒子 (pos[n,3] float32 [m], kind[n] uint8: 1=spray 2=foam 3=bubble) を返す。"""
+    with open(path, "rb") as f:
+        assert f.read(4) == b"NBF1", path
+        (n,) = struct.unpack("<I", f.read(4))
+        lo = np.array(struct.unpack("<3f", f.read(12)), np.float32)
+        hi = np.array(struct.unpack("<3f", f.read(12)), np.float32)
+        q = np.frombuffer(f.read(n * 6), np.uint16).reshape(n, 3)
+        k = np.frombuffer(f.read(n), np.uint8)
+    return lo + q.astype(np.float32) * ((hi - lo) / 65535.0), k

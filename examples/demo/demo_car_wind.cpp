@@ -1,6 +1,6 @@
 // 風洞: 一定角速度で自転するスポーツカーに、固定向き (+x) の一定風速の風を当てる。PyroEngine (オイラー格子) の回転コライダー
 // (PyroEngine::setMovingCollider: 位置・姿勢・線速度・角速度を持つ剛体コライダー。壁面速度つき) で車を回し、毎ステップ流れに乗せたトレーサ粒子の軌跡を tracers.bin に書き出す
-// (形式は demo_city_wind と同じ)。車 (SDF) は car/make_car.py が手続き生成する。Blender 側は car/render_car.py。
+// ("TRC1" 形式: ヘッダ + steps x M x {xyz, gen})。車 (SDF) は car/make_car.py が手続き生成する。Blender 側は car/render_car.py。
 // 格子は既定 1024x256x512 (風下 x 高さ x 幅)。車は高さ方向に薄く、自転すると幅方向に約 4.8m 掃くので、高さに 256・幅に 512 を割り当てる
 // (高さに 512 を割り当てるとセルは 2cm 止まり)。Pyro のバッファは Morton 符号の最大値+1 セル (この格子では約 2.35 億セル) で、速度場しか使わないので
 // 密度・温度・燃料・炎・渦度のバッファを持たず (PyroEngine::kChVelocityOnly) 1 セル約 44 byte、合計約 10.3GB で 12GB GPU に載る (全チャンネルだと約 20.7GB)。
@@ -150,7 +150,7 @@ int main(int argc, char* argv[]) {
     fan->inflowVelocity = {a.wind, 0.0f, 0.0f};
     e.addEmitter(fan);
 
-    // ── トレーサ (demo_city_wind と同じ方式: 格子速度に乗せて流し、軌跡を記録) ──
+    // ── トレーサ (格子速度に乗せて流し、軌跡を記録) ──
     std::mt19937 rng(a.seed);
     std::uniform_real_distribution<float> U(0.0f, 1.0f);
     struct Tracer {

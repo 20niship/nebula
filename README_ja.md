@@ -141,7 +141,7 @@ Warp 側（`benchmarks/warp/warp_bench.py`）は、同じシーンを `newton.Mo
 <tr><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/4b78ac16-f645-4733-9ebe-a2adde83fc75" alt="mpm_elastic" width="360"></p><p align="center"><b><code>mpm_elastic</code></b><br>弾塑性ブロック。PIC/FLIP/APIC と Elastic/Von Mises/Drucker-Prager を切替</p></td><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/9e831969-e84e-448f-b36d-8f8c86600a4a" alt="mpm_multimaterial" width="360"></p><p align="center"><b><code>mpm_multimaterial</code></b><br>弾性ゼリーと Drucker-Prager 砂の混在</p></td></tr>
 <tr><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/35baada6-4d39-4d27-9f46-7c04404f3f56" alt="mpm_geolayer" width="360"></p><p align="center"><b><code>mpm_geolayer</code></b><br>3 層の地層 (岩・粘土・土) が球コライダで崩壊</p></td><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/21fe2dc3-7e4b-445e-9ef9-dce6337c7704" alt="mpm_avalanche" width="360"></p><p align="center"><b><code>mpm_avalanche</code></b><br>山岳地形を流れる Drucker-Prager 雪崩 (8 万粒子)</p></td></tr>
 <tr><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/1fa2ff6d-faf7-4cf6-8dc1-c22d3d14156d" alt="mpm_snow_impact" width="360"></p><p align="center"><b><code>mpm_snow_impact</code></b><br>移動する箱コライダに打たれる Von Mises 塑性の雪ブロック</p></td><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/8c071b55-3006-4914-83a7-8ce8e7cd01f5" alt="mpm_tire_sand" width="360"></p><p align="center"><b><code>mpm_tire_sand</code></b><br>転がるタイヤが砂を巻き上げる</p></td></tr>
-<tr><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/385d6789-6010-4984-8c14-a40eb6e80aa7" alt="flip_spume" width="360"></p><p align="center"><b><code>flip_spume</code></b><br>MPMEngine 上の FLIP 液体シーン (geyser / outfall / culvert / slab / dual)</p></td><td></td></tr>
+<tr><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/385d6789-6010-4984-8c14-a40eb6e80aa7" alt="fluid_spume" width="360"></p><p align="center"><b><code>fluid_spume</code></b><br>MPMEngine 上の FLIP 液体シーン (geyser / outfall / culvert / slab / dual。`--flip` で非圧縮 FLIPEngine)</p></td><td></td></tr>
 </table>
 
 ### Pyro (グリッド煙・炎)
@@ -268,7 +268,7 @@ tools/           .sb ソフトボディ生成、STL地形/牛/球体生成、Pyr
 | Vulkan SDK | 1.3.280.1（LunarG または Homebrew） |
 | Task | 最新版 |
 | GLFW, GLM | Homebrew または apt 経由 |
-| Python 3 | `tools/` スクリプト・`pyro_raymarch.py`・`capture_sim.py` 用 |
+| Python 3 | `tools/` スクリプト・`pyro_raymarch.py`・`tools/capture_sim.py` 用 |
 
 **現状 macOS のみ対応**（MoltenVK / Metal 使用）。Linux 対応は可能ですが未検証です。
 

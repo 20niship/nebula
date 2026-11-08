@@ -84,6 +84,13 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/mpm_p2g.comp
     ${SHADER_SRC_DIR}/mpm_grid_update.comp
     ${SHADER_SRC_DIR}/mpm_g2p.comp
+    # ── FLIP (圧力投影 + 泡) シェーダー ───────────────────────────────────
+    ${SHADER_SRC_DIR}/flip_classify.comp
+    ${SHADER_SRC_DIR}/flip_divergence.comp
+    ${SHADER_SRC_DIR}/flip_pressure_rb.comp
+    ${SHADER_SRC_DIR}/flip_project.comp
+    ${SHADER_SRC_DIR}/flip_foam_generate.comp
+    ${SHADER_SRC_DIR}/flip_foam_advect.comp
     # ── Pyro (グリッドベース煙・火炎) シェーダー ─────────────────────────────
     ${SHADER_SRC_DIR}/pyro_emit.comp
     ${SHADER_SRC_DIR}/pyro_combustion.comp
@@ -107,7 +114,7 @@ foreach(SHADER ${SHADER_SOURCES})
                          -o ${SPV} ${SHADER}
         DEPENDS ${SHADER} ${SHADER_SRC_DIR}/common.glsl
                 ${SHADER_SRC_DIR}/mpm_common.glsl ${SHADER_SRC_DIR}/collider_common.glsl
-                ${SHADER_SRC_DIR}/pyro_common.glsl
+                ${SHADER_SRC_DIR}/pyro_common.glsl ${SHADER_SRC_DIR}/flip_foam_common.glsl
         COMMENT "Compiling shader ${FNAME}"
     )
     list(APPEND SHADER_SPV ${SPV})
@@ -229,8 +236,8 @@ add_sim_example(mpm_snow_impact examples/mpm_snow_impact.cpp)
 # ── mpm_tire_sand: 転がるタイヤ(円柱MESH_SDF)による砂の巻き上げ ───────────────
 add_sim_example(mpm_tire_sand examples/mpm_tire_sand.cpp)
 
-# ── flip_spume: spume README の FLIP 液体シーン集 (geyser/outfall/culvert/slab/dual) ──
-add_sim_example(flip_spume examples/flip_spume.cpp)
+# ── fluid_spume: spume README の FLIP 液体シーン集 (geyser/outfall/culvert/slab/dual)。既定 MPM、--flip で FLIPEngine ──
+add_sim_example(fluid_spume examples/fluid_spume.cpp)
 
 # ── Pyro (グリッドベース煙・火炎) ヘッドレス実行例 ───────────────────────────
 if(APPLE)

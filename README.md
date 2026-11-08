@@ -141,7 +141,7 @@ One GIF per example in `examples/`. Every example takes its parameters on the co
 <tr><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/4b78ac16-f645-4733-9ebe-a2adde83fc75" alt="mpm_elastic" width="360"></p><p align="center"><b><code>mpm_elastic</code></b><br>Elastic/plastic block; switchable PIC/FLIP/APIC and Elastic/Von Mises/Drucker-Prager</p></td><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/9e831969-e84e-448f-b36d-8f8c86600a4a" alt="mpm_multimaterial" width="360"></p><p align="center"><b><code>mpm_multimaterial</code></b><br>Elastic jelly mixed with Drucker-Prager sand</p></td></tr>
 <tr><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/35baada6-4d39-4d27-9f46-7c04404f3f56" alt="mpm_geolayer" width="360"></p><p align="center"><b><code>mpm_geolayer</code></b><br>Three geological layers (rock / clay / soil) collapsing under a sphere</p></td><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/21fe2dc3-7e4b-445e-9ef9-dce6337c7704" alt="mpm_avalanche" width="360"></p><p align="center"><b><code>mpm_avalanche</code></b><br>Drucker-Prager snow avalanche over mountainous terrain (80k particles)</p></td></tr>
 <tr><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/1fa2ff6d-faf7-4cf6-8dc1-c22d3d14156d" alt="mpm_snow_impact" width="360"></p><p align="center"><b><code>mpm_snow_impact</code></b><br>Von Mises plastic snow block struck by a moving box collider</p></td><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/8c071b55-3006-4914-83a7-8ce8e7cd01f5" alt="mpm_tire_sand" width="360"></p><p align="center"><b><code>mpm_tire_sand</code></b><br>A rolling tire kicking up slipping sand</p></td></tr>
-<tr><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/385d6789-6010-4984-8c14-a40eb6e80aa7" alt="flip_spume" width="360"></p><p align="center"><b><code>flip_spume</code></b><br>FLIP liquid scenes (geyser, outfall, culvert, slab, dual) on MPMEngine</p></td><td></td></tr>
+<tr><td width="50%" valign="top"><p align="center"><img src="https://github.com/user-attachments/assets/385d6789-6010-4984-8c14-a40eb6e80aa7" alt="fluid_spume" width="360"></p><p align="center"><b><code>fluid_spume</code></b><br>FLIP liquid scenes (geyser, outfall, culvert, slab, dual) on MPMEngine (`--flip` for the incompressible FLIPEngine)</p></td><td></td></tr>
 </table>
 
 ### Pyro (grid smoke & fire)
@@ -268,7 +268,7 @@ tools/           .sb soft-body generation, STL terrain/cow/sphere generation, Py
 | Vulkan SDK | 1.3.280.1 (LunarG or Homebrew) |
 | Task | latest |
 | GLFW, GLM | via Homebrew or apt install |
-| Python 3 | for the `tools/` scripts, `pyro_raymarch.py`, and `capture_sim.py` |
+| Python 3 | for the `tools/` scripts, `pyro_raymarch.py`, and `tools/capture_sim.py` |
 
 Developed on macOS (MoltenVK) and Linux (Ubuntu 24.04; CI uses Mesa lavapipe, benchmarks on an NVIDIA GPU). Windows is untested.
 

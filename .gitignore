@@ -87,7 +87,6 @@ __pycache__/
 *.pyc
 
 # README 用 GIF (git に上げず gh --attach で配布)
-gif_out/
 
 # アセット (メッシュ・画像・動画・フォント等) とその生成物は commit しない。
 # examples 用アセットは tools/gen_assets.py が configure 時に <build>/assets へ生成する。

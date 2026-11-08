@@ -117,9 +117,11 @@ void main() {
 
         vec3 vi = readVec4(pc.gridMomIdx, nid).xyz;
         vpic  += w * vi;
+#ifndef NO_DEFORMATION
         vgrad += outerProduct(vi, dw);
         // APIC: B_p = Σ w * v_i ⊗ (x_i - x_p)  (outerProduct の列優先: col j = vi*dxi[j])
         B_new += w * outerProduct(vi, xi - xp);
+#endif
         // FLIP: 後半バッファから物理前グリッド速度を収集 (push constant 分岐は uniform → 全スレッド同一)
         if (pc.flip_ratio > 0.01) {
             vpic_old += w * readVec4(pc.gridMomIdx, nid + totalCells).xyz;
@@ -129,6 +131,7 @@ void main() {
     // ── per-particle material パラメータ読み込み ─────────────────────────
     // MoltenVK: buffers[] は main() でのみアクセス可（関数内不可）
     vec4 velWrd = readVec4(pc.velIdx, p);
+#ifndef NO_DEFORMATION
     uint matId  = floatBitsToUint(velWrd.w);
 
     float mat_mu, mat_lam, mat_bulkK, mat_M, mat_qc, mat_qmax, mat_visc;
@@ -205,9 +208,11 @@ void main() {
         }
     }
 
-    // ── 速度・位置更新 ───────────────────────────────────────────────────
     // APIC: B_new で P2G にアフィン情報を伝達。PIC / FLIP では B = 0
     if (pc.flip_ratio > -0.5) { B_new = mat3(0.0); }
+#endif
+
+    // ── 速度・位置更新 ───────────────────────────────────────────────────
 
     vec3 v_new;
     if (pc.flip_ratio > 0.01) {
@@ -221,7 +226,9 @@ void main() {
     }
 
     // J-リセットが発生した場合: 過圧縮が引き起こした速度も減衰して弾性反発を防ぐ
+#ifndef NO_DEFORMATION
     if (j_reset) v_new *= 0.1;
+#endif
 
     vec3 x_new = xp + pc.dt * v_new;
 
@@ -233,6 +240,7 @@ void main() {
 
         float psdf;
         vec3 n;
+        vec3 vcoll = vec3(0.0); // BOX のみ: 動くコライダーの面速度 (FLIP パドル用)
         if (ctype == COLL_MESH_SDF) {
             vec3 cpos = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 1u]),
                               uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 2u]),
@@ -257,16 +265,36 @@ void main() {
                               uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 3u]));
             float cr = uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 7u]);
             psdf = sphereSDF(x_new, cpos, cr, n);
+#ifdef NO_DEFORMATION
+        } else if (ctype == COLL_BOX) {
+            // FLIP のみ: 圧力投影はグリッド BC だけでは粒子が箱へ入り込むため、粒子側も押し出す (MPM の挙動は変えない)
+            vec3 cpos = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 1u]),
+                              uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 2u]),
+                              uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 3u]));
+            vec3 chalf = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 4u]),
+                               uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 5u]),
+                               uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 6u]));
+            vcoll = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 8u]),
+                          uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 9u]),
+                          uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 10u]));
+            vec4 cq = vec4(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 16u]),
+                            uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 17u]),
+                            uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 18u]),
+                            uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 19u]));
+            psdf = boxSDF(x_new, cpos, chalf, cq, n);
+#endif
         } else {
             continue;
         }
 
         if (psdf < 0.0) {
             x_new -= psdf * n;              // 固体外に押し出す (psdf<0 → +|psdf|*n)
-            float vn = dot(v_new, n);
+            float vn = dot(v_new - vcoll, n);
             if (vn < 0.0) v_new -= vn * n;  // 法線方向の固体向き速度を除去
+#ifndef NO_DEFORMATION
             F_new   = mat3(1.0);
             tau_new = mat3(0.0);
+#endif
         }
     }
 
@@ -284,8 +312,10 @@ void main() {
     // ── 書き戻し ─────────────────────────────────────────────────────────
     writeVec4(pc.posIdx, p, vec4(x_new, Vp));
     writeVec4(pc.velIdx, p, vec4(v_new, velWrd.w));  // w=material id を保持
+#ifndef NO_DEFORMATION
     writeMat3xyz(p, F_new, pc.F0Idx, pc.F1Idx, pc.F2Idx);
     writeStressW(p, tau_new);
     // APIC B 行列を xyz レーンに書き戻す (w レーンの応力は writeStressW が保持)
     writeMat3xyz(p, B_new, pc.B0Idx, pc.B1Idx, pc.B2Idx);
+#endif
 }

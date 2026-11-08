@@ -1,7 +1,9 @@
 #include "App.h"
 #include "core/Emitter.h"
 #include "core/Force.h"
+#include "engine/FLIPEngine.h"
 #include "engine/FluidEngine.h"
+#include "FluidStats.h"
 #include "graphics/GraphicsPipeline.h"
 
 #include <argparse/argparse.hpp>
@@ -19,6 +21,8 @@ static const std::string SHADER_DIR_STR = SHADER_DIR;
 // ── CLI ───────────────────────────────────────────────────────────────────────
 
 struct FluidArgs : public argparse::Args {
+  bool& flip                  = flag("flip", "FLIPEngine (incompressible FLIP) instead of PBF. PBF専用の引数 (cfm-eps 等) は無視される");
+  int& max_n                  = kwarg("max-n", "max fluid particle count (--flip only; PBF grows its buffers automatically)").set_default(1000000);
   float& domain_size_x        = kwarg("domain-size-x", "domain physical size X [m]").set_default(40.0f);
   float& domain_size_y        = kwarg("domain-size-y", "domain physical size Y [m]").set_default(40.0f);
   float& domain_size_z        = kwarg("domain-size-z", "domain physical size Z [m]").set_default(40.0f);
@@ -47,6 +51,9 @@ public:
     base_.screenshotDir = args.screenshot_dir;
     bSpacing_           = args.boundary_spacing;
 
+    flip_ = args.flip;
+    maxN_ = uint32_t(args.max_n);
+
     FluidConfig cfg;
     cfg.particleRadius      = (args.domain_size_x / 192.0f) / 2.0f; // 旧デフォルト nx=192 相当の粒子解像度
     cfg.domainSize          = glm::vec3(args.domain_size_x, args.domain_size_y, args.domain_size_z);
@@ -54,13 +61,15 @@ public:
     cfg.max_boundary        = (uint32_t)args.max_boundary;
     cfg.maxDiffuseParticles = (uint32_t)args.max_diffuse;
 
-    base_.initWindow("Vulkan Sim – PBF Fluid");
+    base_.initWindow(flip_ ? "Vulkan Sim – FLIP Fluid" : "Vulkan Sim – PBF Fluid");
     initVulkan(cfg, args.boundary_obj, args.rho0);
-    engine_.viscosityC       = args.viscosity;
-    engine_.pc_.cfmEpsilon     = args.cfm_eps;
-    engine_.pc_.scorrK         = args.scorr_k;
-    engine_.pc_.surfaceTension = args.surface_tension;
-    engine_.pc_.linearDamping  = args.damping;
+    if(!flip_) {
+      engine_.viscosityC         = args.viscosity;
+      engine_.pc_.cfmEpsilon     = args.cfm_eps;
+      engine_.pc_.scorrK         = args.scorr_k;
+      engine_.pc_.surfaceTension = args.surface_tension;
+      engine_.pc_.linearDamping  = args.damping;
+    }
     setupScenario(cfg);
     mainLoop(args.n_shots);
     cleanup();
@@ -69,6 +78,10 @@ public:
 private:
   BaseApp base_;
   FluidEngine engine_;
+  FLIPEngine flipEngine_;
+  FluidStatsLogger stats_;
+  bool flip_ = false;
+  uint32_t maxN_ = 0;
   GraphicsPipeline graphicsPipe_;
   GraphicsPipeline foamGraphicsPipe_; // 泡 (spray/foam/bubble) 描画用（半透明合成; issue #47）
   std::shared_ptr<GravityForce> gravity_;
@@ -81,10 +94,16 @@ private:
   float nextDiagTime_                  = 0.0f;
   static constexpr float DIAG_INTERVAL = 1.0f;
 
+  void addEmitter(std::shared_ptr<Emitter> e) {
+    if(flip_) flipEngine_.addEmitter(std::move(e));
+    else engine_.addEmitter(std::move(e));
+  }
+
   void setupScenario(const FluidConfig& cfg) {
     const glm::vec3 w = cfg.domainSize;
     const float m     = cfg.cellSize * 0.5f;      // margin
-    const float d     = cfg.particleSpacing();
+    // FLIP は 8 粒子/セル (d = cell/2)、PBF は cfg の粒子間隔
+    const float d     = flip_ ? cfg.cellSize * 0.5f : cfg.particleSpacing();
 
     // 固定エミッタ: ダムブレイクブロック (左半分上部、1回のみ充填)
     // Y(奥行き)は薄い直方体にしN≈10万に抑える(デフォルトdomain=20mでの実測調整値)
@@ -96,7 +115,7 @@ private:
     dam->vel                = glm::vec3(0.0f);
     dam->particles_per_step = (uint32_t)(dam->size.x * dam->size.y * dam->size.z * 4 / (d * d * d));
     dam->step_count         = -1;               // 1回のみ
-    engine_.addEmitter(dam);
+    addEmitter(dam);
 
     // 移動エミッタ: 左端から右方向へ移動するボックスソース (無限放出)
     // X が広いドメイン (domain-size-x=40 を推奨) で左から右へ流体が噴出。
@@ -109,34 +128,55 @@ private:
     const uint32_t boxCount = (uint32_t)(src->size.x * src->size.y * src->size.z / (d * d * d));
     src->particles_per_step = std::max(1u, boxCount / 400u);
     src->step_count         = 0;                  // 無限
-    engine_.addEmitter(src);
+    addEmitter(src);
   }
 
   void initVulkan(const FluidConfig& cfg, const std::string& boundaryObj, float rho0Arg) {
     base_.ctx.init(base_.window);
     base_.createDescriptorPool();
 
-    engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
-    if(rho0Arg > 0.0f) engine_.rho0 = rho0Arg;
-
     gravity_ = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f); // Z-up
-    engine_.addForce(gravity_);
-
-    if(!boundaryObj.empty()) {
-      try {
-        engine_.loadBoundary(boundaryObj, bSpacing_);
-      } catch(const std::exception& e) {
-        std::fprintf(stderr, "Error loading boundary: %s\n", e.what());
+    if(flip_) {
+      flipEngine_.maxParticles        = maxN_;
+      flipEngine_.maxDiffuseParticles = cfg.maxDiffuseParticles;
+      flipEngine_.domainSize          = cfg.domainSize;
+      flipEngine_.cellSize            = cfg.cellSize;
+      if(rho0Arg > 0.0f) flipEngine_.rho0 = rho0Arg;
+      flipEngine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR);
+      flipEngine_.addForce(gravity_);
+      flipEngine_.foamEnabled = cfg.maxDiffuseParticles > 0;
+      if(!boundaryObj.empty()) {
+        try {
+          LocalMeshSDF grid;
+          const uint32_t idx = flipEngine_.loadColliderMesh(boundaryObj, grid, 96);
+          ColliderSet cols;
+          cols.addMeshSDF(idx, grid, glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f), {0, 0, 0}, {0, 0, 0}, 0.0f, 0.0f);
+          flipEngine_.setColliders(cols);
+        } catch(const std::exception& e) {
+          std::fprintf(stderr, "Error loading boundary: %s\n", e.what());
+        }
+      }
+    } else {
+      engine_.init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR, cfg);
+      if(rho0Arg > 0.0f) engine_.rho0 = rho0Arg;
+      engine_.addForce(gravity_);
+      if(!boundaryObj.empty()) {
+        try {
+          engine_.loadBoundary(boundaryObj, bSpacing_);
+        } catch(const std::exception& e) {
+          std::fprintf(stderr, "Error loading boundary: %s\n", e.what());
+        }
       }
     }
 
-    graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/fluid_particle.vert.spv", SHADER_DIR_STR + "/fluid.frag.spv");
+    // fluid_particle.vert は typeFlagIdx==0 のとき死粒子判定を行わないため FLIP の粒子バッファもそのまま描画できる
+    graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, descriptorSetLayout(), SHADER_DIR_STR + "/fluid_particle.vert.spv", SHADER_DIR_STR + "/fluid.frag.spv");
 
     // 泡 (spray/foam/bubble) 描画パイプライン (issue #47)。maxDiffuseParticles==0 でも
     // パイプライン自体は安価に作れるため無条件で初期化し、draw() 呼び出し側で
-    // config().maxDiffuseParticles>0 のときのみ描画する。
-    foamGraphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/foam_particle.vert.spv", SHADER_DIR_STR + "/foam.frag.spv", VK_PRIMITIVE_TOPOLOGY_POINT_LIST, /*enableBlend=*/true);
-    if(cfg.maxDiffuseParticles > 0) {
+    // maxDiffuse>0 のときのみ描画する。
+    foamGraphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, descriptorSetLayout(), SHADER_DIR_STR + "/foam_particle.vert.spv", SHADER_DIR_STR + "/foam.frag.spv", VK_PRIMITIVE_TOPOLOGY_POINT_LIST, /*enableBlend=*/true);
+    if(cfg.maxDiffuseParticles > 0 && !flip_) {
       engine_.foamEnabled = true;
       engine_.setFoamParams(foamParams_);
     }
@@ -144,16 +184,21 @@ private:
     base_.createFrameData();
   }
 
+  VkDescriptorSetLayout descriptorSetLayout() const { return flip_ ? flipEngine_.descriptorSetLayout : engine_.descriptorSetLayout; }
+  VkDescriptorSet descriptorSet() const { return flip_ ? flipEngine_.descriptorSet : engine_.descriptorSet; }
+  uint32_t maxDiffuse() const { return flip_ ? flipEngine_.maxDiffuseParticles : engine_.config().maxDiffuseParticles; }
+
   void recordComputeCmd(VkCommandBuffer cmd) {
-    // 容量拡張によるバッファ再確保はコマンドバッファ記録前に解決しておく
-    engine_.emitFromEmitters(dt_);
+    // 容量拡張によるバッファ再確保はコマンドバッファ記録前に解決しておく (FLIP は step() 内で放出)
+    if(!flip_) engine_.emitFromEmitters(dt_);
 
     VkCommandBufferBeginInfo bi{};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(cmd, &bi);
 
-    engine_.step(cmd, dt_);
+    if(flip_) flipEngine_.step(cmd, dt_);
+    else engine_.step(cmd, dt_);
 
     VkBufferMemoryBarrier barrier{};
     barrier.sType               = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
@@ -161,7 +206,7 @@ private:
     barrier.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
     barrier.srcQueueFamilyIndex = base_.ctx.computeFamily;
     barrier.dstQueueFamilyIndex = base_.ctx.graphicsFamily;
-    barrier.buffer              = engine_.getPositionBuffer();
+    barrier.buffer              = flip_ ? flipEngine_.getPositionBuffer() : engine_.getPositionBuffer();
     barrier.offset              = 0;
     barrier.size                = VK_WHOLE_SIZE;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, 0, 0, nullptr, 1, &barrier, 0, nullptr);
@@ -197,26 +242,35 @@ private:
     vkCmdSetScissor(cmd, 0, 1, &sc);
 
     SimPC pc{};
-    pc.posIdx        = engine_.posIdx();
-    pc.velIdx        = engine_.velIdx();
-    pc.particleCount = engine_.nFluid();
-    pc.worldMin      = glm::vec3(0.0f);
-    pc.worldMax      = engine_.config().domainSize;
-    pc.boundaryStart = engine_.config().max_boundary; // 流体パーティクル領域の開始オフセット
-
-    graphicsPipe_.draw(cmd, engine_.descriptorSet, pc, engine_.nFluid());
+    pc.worldMin = glm::vec3(0.0f);
+    uint32_t nDraw;
+    if(flip_) {
+      pc.posIdx        = flipEngine_.posIdx;
+      pc.velIdx        = flipEngine_.velIdx;
+      pc.worldMax      = flipEngine_.domainSize;
+      pc.boundaryStart = 0;
+      nDraw            = flipEngine_.liveParticleCount();
+    } else {
+      pc.posIdx        = engine_.posIdx();
+      pc.velIdx        = engine_.velIdx();
+      pc.worldMax      = engine_.config().domainSize;
+      pc.boundaryStart = engine_.config().max_boundary; // 流体パーティクル領域の開始オフセット
+      nDraw            = engine_.nFluid();
+    }
+    pc.particleCount = nDraw;
+    graphicsPipe_.draw(cmd, descriptorSet(), pc, nDraw);
 
     // 泡 (spray/foam/bubble) 描画（issue #47; maxDiffuseParticles==0 のとき完全スキップ）
-    if(engine_.config().maxDiffuseParticles > 0) {
+    if(maxDiffuse() > 0) {
       SimPC foamPc{};
-      foamPc.posIdx        = engine_.foamPosIdx();
-      foamPc.velIdx        = engine_.foamVelIdx();
-      foamPc.typeFlagIdx   = engine_.foamKindIdx(); // foam_particle.vert は kind==0 をクリップする
-      foamPc.particleCount = engine_.config().maxDiffuseParticles;
+      foamPc.posIdx        = flip_ ? flipEngine_.foamPosIdx() : engine_.foamPosIdx();
+      foamPc.velIdx        = flip_ ? flipEngine_.foamVelIdx() : engine_.foamVelIdx();
+      foamPc.typeFlagIdx   = flip_ ? flipEngine_.foamKindIdx() : engine_.foamKindIdx(); // foam_particle.vert は kind==0 をクリップする
+      foamPc.particleCount = maxDiffuse();
       foamPc.worldMin      = glm::vec3(0.0f);
-      foamPc.worldMax      = engine_.config().domainSize;
+      foamPc.worldMax      = pc.worldMax;
       foamPc.boundaryStart = 0;
-      foamGraphicsPipe_.draw(cmd, engine_.descriptorSet, foamPc, engine_.config().maxDiffuseParticles);
+      foamGraphicsPipe_.draw(cmd, descriptorSet(), foamPc, maxDiffuse());
     }
 
     vkCmdEndRenderPass(cmd);
@@ -237,6 +291,7 @@ private:
     vkResetFences(base_.ctx.device, 1, &f.inFlightFence);
 
     simTime_ += dt_;
+    stats_.frame(flip_ ? fluidStatsInfo(flipEngine_, dt_) : fluidStatsInfo(engine_, dt_));
 
     f.timelineValue++;
     vkResetCommandBuffer(f.computeCmd, 0);
@@ -311,7 +366,8 @@ private:
   void cleanup() {
     graphicsPipe_.cleanup();
     foamGraphicsPipe_.cleanup();
-    engine_.cleanup();
+    if(flip_) flipEngine_.cleanup();
+    else engine_.cleanup();
     base_.cleanupBase();
   }
 };

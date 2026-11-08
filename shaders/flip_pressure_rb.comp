@@ -1,0 +1,36 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "mpm_common.glsl"
+
+// FLIP 圧力投影 ②: 赤黒 Gauss-Seidel の 1 色分。7 点ラプラシアン Σ_n (p_n - p_i) = b_i を解く。
+//   fluid 隣接: p_n, air 隣接: p_n = 0 (自由表面 Dirichlet), solid/グリッド外: 寄与なし (Neumann)
+//   p_i = (Σ_{n≠solid} p_n - b_i) / (非 solid 隣接数)
+// pc.pass = 更新する色 ((x+y+z)&1)。dispatch: (hashCells + 255) / 256
+
+layout(local_size_x = 256) in;
+
+void main() {
+  uint gid = gl_GlobalInvocationID.x;
+  uint NC  = pc.hashCells;
+  if(gid >= NC) return;
+  if(readUint(pc.flipGridIdx, 2u * NC + gid) != 1u) return;
+
+  ivec3 ijk = mortonDecodeI(gid);
+  if(uint((ijk.x + ijk.y + ijk.z) & 1) != pc.pass) return;
+
+  float sumP = 0.0;
+  float cnt  = 0.0;
+  for(int a = 0; a < 6; a++) {
+    int axis = a >> 1;
+    ivec3 e  = ivec3(axis == 0, axis == 1, axis == 2) * (((a & 1) == 0) ? -1 : 1);
+    ivec3 n  = ijk + e;
+    if(any(lessThan(n, ivec3(0))) || any(greaterThanEqual(n, ivec3(pc.gridRes)))) continue;
+    uint nid  = mortonEncodeI(n);
+    uint ntyp = readUint(pc.flipGridIdx, 2u * NC + nid);
+    if(ntyp == 2u) continue;
+    cnt += 1.0;
+    if(ntyp == 1u) sumP += readFloat(pc.flipGridIdx, nid);
+  }
+  if(cnt < 0.5) return;
+  writeFloat(pc.flipGridIdx, gid, (sumP - readFloat(pc.flipGridIdx, NC + gid)) / cnt);
+}

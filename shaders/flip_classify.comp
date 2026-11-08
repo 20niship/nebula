@@ -1,0 +1,63 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "collider_common.glsl"
+#include "mpm_common.glsl"
+
+// FLIP ノード分類: 0=air (質量なし), 1=fluid, 2=solid (壁 or コライダー内部)。
+// 壁は mpm_grid_update.comp の軸平行壁 BC と同じ範囲 (端から 2 ノード)。
+// コライダーは質量のないノードでも判定する (流体に隣接する固体ノードが air 扱いになると圧力が漏れるため)。
+// dispatch: (hashCells + 255) / 256
+
+layout(local_size_x = 256) in;
+
+void main() {
+  uint gid = gl_GlobalInvocationID.x;
+  uint NC  = pc.hashCells;
+  if(gid >= NC) return;
+
+  ivec3 ijk = mortonDecodeI(gid);
+  uint type = 0u;
+  if(all(lessThan(ijk, ivec3(pc.gridRes)))) {
+    // 流体とみなす質量しきい値: 静止密度の 5% (表面付近の低質量ノードは air として p=0)
+    float mass     = decodeFixed(readUint(pc.gridMassIdx, gid));
+    float fullMass = pc.rho0 * pc.cellSize * pc.cellSize * pc.cellSize;
+    if(mass > 0.05 * fullMass) type = 1u;
+
+    ivec3 N = ivec3(pc.gridRes) - ivec3(1);
+    if(any(lessThanEqual(ijk, ivec3(1))) || any(greaterThanEqual(ijk, N - ivec3(1)))) type = 2u;
+
+    if(type != 2u && pc.colliderCount > 0u) {
+      vec3 xi = (vec3(ijk) + 0.5) * pc.cellSize;
+      for(uint ci = 0u; ci < pc.colliderCount; ci++) {
+        uint cbase = ci * 24u;
+        uint ctype = buffers[pc.colliderIdx].data[cbase];
+        vec3 cpos  = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 1u]), uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 2u]), uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 3u]));
+        vec3 cnrm  = vec3(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 4u]), uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 5u]), uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 6u]));
+        float cr   = uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 7u]);
+        vec4 cq    = vec4(uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 16u]), uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 17u]), uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 18u]), uintBitsToFloat(buffers[pc.colliderIdx].data[cbase + 19u]));
+
+        vec3 n;
+        float sdf;
+        if(ctype == COLL_SPHERE) {
+          sdf = sphereSDF(xi, cpos, cr, n);
+        } else if(ctype == COLL_BOX) {
+          sdf = boxSDF(xi, cpos, cnrm, cq, n);
+        } else if(ctype == COLL_CYLINDER) {
+          sdf = cylinderSDF(xi, cpos, cr, cnrm.y, cq, n);
+        } else if(ctype == COLL_CAPSULE) {
+          sdf = capsuleSDF(xi, cpos, cnrm, cr, n);
+        } else if(ctype == COLL_MESH_SDF) {
+          uint sdfBufIdx = buffers[pc.colliderIdx].data[cbase + 13u];
+          uint meshRes   = buffers[pc.colliderIdx].data[cbase + 14u];
+          vec3 localP    = quatRotate(quatConj(cq), xi - cpos);
+          vec3 nLocal;
+          MESH_SDF_SAMPLE(sdfBufIdx, localP, cnrm, cr, meshRes, sdf, nLocal)
+        } else {
+          sdf = planeSDF(xi, cpos, cnrm, n);
+        }
+        if(sdf <= 0.0) { type = 2u; break; }
+      }
+    }
+  }
+  writeUint(pc.flipGridIdx, 2u * NC + gid, type);
+}

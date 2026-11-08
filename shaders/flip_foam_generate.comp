@@ -1,0 +1,82 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "flip_foam_common.glsl"
+
+// FLIP 泡生成: 流体粒子ごとに 27 ノードを gather して Ihmsen et al. 2012 のポテンシャルから生成数を決める。
+// 近傍探索は不要 (グリッド質量から密度比・表面法線、速度勾配から巻き込み量を得る)。
+//   d    = Σ w · mass_i / (ρ0 h³)        密度比 (表面で < 1)
+//   n    = -∇d / |∇d|                       表面外向き法線
+//   Ita  = |∇v|_F · h                       trapped-air (セル間の相対速度 [m/s])
+//   Iwc  = max(0, v·n) |v|                  wave-crest
+//   Ike  = ½|v|²
+//   生成数 = dt (kTa ψ(Ita) + kWc ψ(Iwc)) ψ(Ike)
+// 生成先は foamKind[maxDiffuse] の単調カーソル % maxDiffuse (真の free-list は持たず古い泡を上書きする)。
+// dispatch: (particleCount + 255) / 256
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint p = gl_GlobalInvocationID.x;
+    if (p >= pc.particleCount) return;
+
+    vec3 xp = readVec4(pc.posIdx, p).xyz;
+    vec3 vp = readVec4(pc.velIdx, p).xyz;
+    float h = pc.cellSize;
+    float fullMass = pc.rho0 * h * h * h;
+
+    ivec3 base = ivec3(floor(xp / h)) - ivec3(1);
+    float d = 0.0;
+    vec3 gradD = vec3(0.0);
+    mat3 gradV = mat3(0.0);
+    for (int iz = 0; iz < 3; iz++)
+    for (int iy = 0; iy < 3; iy++)
+    for (int ix = 0; ix < 3; ix++) {
+        ivec3 nijk = base + ivec3(ix, iy, iz);
+        if (any(lessThan(nijk, ivec3(0))) || any(greaterThanEqual(nijk, ivec3(pc.gridRes)))) continue;
+        uint nid = mortonEncodeI(nijk);
+        float m = decodeFixed(readUint(pc.gridMassIdx, nid));
+        if (m < 1e-10) continue;
+
+        vec3 dd = (xp - (vec3(nijk) + 0.5) * h) / h;
+        float wx = bspline2(dd.x), wy = bspline2(dd.y), wz = bspline2(dd.z);
+        vec3 dw = vec3(bspline2g(dd.x) * wy * wz, wx * bspline2g(dd.y) * wz, wx * wy * bspline2g(dd.z)) / h;
+        float ratio = m / fullMass;
+        d     += wx * wy * wz * ratio;
+        gradD += dw * ratio;
+        gradV += outerProduct(readVec4(pc.gridMomIdx, nid).xyz, dw);
+    }
+
+    if (d > readFloat(pc.flipGridIdx, FP_SURF)) return; // 表面近傍(低密度)の粒子のみ対象
+
+    vec3 nHat = (dot(gradD, gradD) > 1e-10) ? -normalize(gradD) : vec3(0.0, 1.0, 0.0);
+    float vLen = length(vp);
+    float Ita = sqrt(dot(gradV[0], gradV[0]) + dot(gradV[1], gradV[1]) + dot(gradV[2], gradV[2])) * h;
+    float Iwc = max(0.0, dot(vp, nHat)) * vLen;
+    float Ike = 0.5 * vLen * vLen;
+
+    float nd = pc.dt * (readFloat(pc.flipGridIdx, FP_KTA) * psi(Ita, readFloat(pc.flipGridIdx, FP_TALO), readFloat(pc.flipGridIdx, FP_TAHI))
+                      + readFloat(pc.flipGridIdx, FP_KWC) * psi(Iwc, readFloat(pc.flipGridIdx, FP_WCLO), readFloat(pc.flipGridIdx, FP_WCHI)))
+             * psi(Ike, readFloat(pc.flipGridIdx, FP_KELO), readFloat(pc.flipGridIdx, FP_KEHI));
+    if (nd <= 0.0) return;
+
+    uint nSpawn = uint(floor(nd));
+    if (hashRand(p, 0u) < nd - float(nSpawn)) nSpawn += 1u;
+    nSpawn = min(nSpawn, 4u);
+
+    uint maxN = readUint(pc.flipGridIdx, FP_MAXN);
+    uint posIdx = readUint(pc.flipGridIdx, FP_POSIDX);
+    uint velIdx = readUint(pc.flipGridIdx, FP_VELIDX);
+    uint kindIdx = readUint(pc.flipGridIdx, FP_KINDIDX);
+    float lifeMin = readFloat(pc.flipGridIdx, FP_LIFEMIN);
+    float lifeMax = readFloat(pc.flipGridIdx, FP_LIFEMAX);
+
+    for (uint s = 0u; s < nSpawn; ++s) {
+        uint cursor = atomicAdd(buffers[kindIdx].data[maxN], 1u);
+        uint slot = cursor % maxN;
+        float life = mix(lifeMin, lifeMax, hashRand(p, s * 2u + 1u));
+        vec3 jitter = (vec3(hashRand(p, s * 3u + 2u), hashRand(p, s * 3u + 3u), hashRand(p, s * 3u + 4u)) - 0.5) * (h * 0.5);
+        writeVec4(posIdx, slot, vec4(xp + jitter, life));
+        writeVec4(velIdx, slot, vec4(vp, life));
+        writeUint(kindIdx, slot, 2u); // 暫定 foam。次の advect パスで再分類
+    }
+}

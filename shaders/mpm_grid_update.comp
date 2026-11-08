@@ -30,7 +30,10 @@ void main() {
   // 自由落下 10m の終端速度 ~14 m/s を上限として非物理的なピークを除去
   {
     float vspeed    = length(v);
-    float vmax_grid = 15.0; // m/s
+#ifndef GRID_VMAX
+#define GRID_VMAX 15.0
+#endif
+    float vmax_grid = GRID_VMAX; // m/s
     if(vspeed > vmax_grid) v *= vmax_grid / vspeed;
   }
 

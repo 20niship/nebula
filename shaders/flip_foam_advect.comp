@@ -1,0 +1,76 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "flip_foam_common.glsl"
+
+// FLIP 泡の寿命管理・分類・移流。位置でグリッドを B-spline 補間して密度比 d と格子速度を得る
+// (gridMom には圧力投影後の速度が残っている)。kind: 0=死, 1=spray, 2=foam, 3=bubble
+//   d < densityLo: spray (重力のみ), d < densityHi: foam (格子速度へ追従), それ以上: bubble (追従 + 浮力)
+// dispatch: (maxDiffuse + 255) / 256
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    uint maxN = readUint(pc.flipGridIdx, FP_MAXN);
+    if (i >= maxN) return;
+
+    uint posIdx = readUint(pc.flipGridIdx, FP_POSIDX);
+    uint velIdx = readUint(pc.flipGridIdx, FP_VELIDX);
+    uint kindIdx = readUint(pc.flipGridIdx, FP_KINDIDX);
+
+    if (readUint(kindIdx, i) == 0u) return;
+
+    vec4 posW = readVec4(posIdx, i);
+    vec4 velW = readVec4(velIdx, i);
+    vec3 pos = posW.xyz;
+    vec3 vel = velW.xyz;
+    float life = posW.w - pc.dt;
+    if (life <= 0.0) { writeUint(kindIdx, i, 0u); return; }
+
+    float h = pc.cellSize;
+    float fullMass = pc.rho0 * h * h * h;
+    ivec3 base = ivec3(floor(pos / h)) - ivec3(1);
+    float d = 0.0, wsum = 0.0;
+    vec3 vgrid = vec3(0.0);
+    for (int iz = 0; iz < 3; iz++)
+    for (int iy = 0; iy < 3; iy++)
+    for (int ix = 0; ix < 3; ix++) {
+        ivec3 nijk = base + ivec3(ix, iy, iz);
+        if (any(lessThan(nijk, ivec3(0))) || any(greaterThanEqual(nijk, ivec3(pc.gridRes)))) continue;
+        uint nid = mortonEncodeI(nijk);
+        float m = decodeFixed(readUint(pc.gridMassIdx, nid));
+        if (m < 1e-10) continue;
+        vec3 dd = (pos - (vec3(nijk) + 0.5) * h) / h;
+        float w = bspline2(dd.x) * bspline2(dd.y) * bspline2(dd.z);
+        d     += w * m / fullMass;
+        wsum  += w;
+        vgrid += w * readVec4(pc.gridMomIdx, nid).xyz;
+    }
+    if (wsum > 1e-6) vgrid /= wsum;
+
+    float drag = readFloat(pc.flipGridIdx, FP_DRAG);
+    vec3 g = vec3(readFloat(pc.flipGridIdx, FP_GRAV), readFloat(pc.flipGridIdx, FP_GRAV + 1u), readFloat(pc.flipGridIdx, FP_GRAV + 2u));
+    uint kind;
+    if (d < readFloat(pc.flipGridIdx, FP_DENLO)) {
+        kind = 1u;
+        vel += g * pc.dt;
+    } else if (d < readFloat(pc.flipGridIdx, FP_DENHI)) {
+        kind = 2u;
+        vel = mix(vel, vgrid, drag);
+    } else {
+        kind = 3u;
+        vel = mix(vel, vgrid, drag);
+        vel -= normalize(g) * readFloat(pc.flipGridIdx, FP_BUOY) * pc.dt;
+    }
+
+    pos += vel * pc.dt;
+    vec3 hi = pc.worldMax;
+    if (pos.x < 0.0 || pos.x > hi.x) vel.x = 0.0;
+    if (pos.y < 0.0 || pos.y > hi.y) vel.y = 0.0;
+    if (pos.z < 0.0 || pos.z > hi.z) vel.z = 0.0;
+    pos = clamp(pos, vec3(0.0), hi);
+
+    writeVec4(posIdx, i, vec4(pos, life));
+    writeVec4(velIdx, i, vec4(vel, velW.w));
+    writeUint(kindIdx, i, kind);
+}

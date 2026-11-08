@@ -34,7 +34,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent / "tools"))
 from capture_sim import SIMS, BUILD_DIR, _resolve_commit_sha  # noqa: E402  (シーン定義を再利用)
 
 N_FRAMES = 100  # task capture (300) より少なめ。ポーリング/レイマーチング起因の

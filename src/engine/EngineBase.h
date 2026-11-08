@@ -29,6 +29,7 @@ public:
   void setForces(std::vector<std::shared_ptr<Force>> forces);
   void clearForces();
   const std::vector<std::shared_ptr<Force>>& forces() const { return forces_; }
+  VmaAllocator allocator() const { return allocator_; }
 
 protected:
   static constexpr uint32_t kMaxForces = 32;

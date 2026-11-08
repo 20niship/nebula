@@ -8,6 +8,7 @@ nebula で時間をかけてシミュレーションし、結果を Blender (`bp
 | 1. 市街地の気流 | `demo_city_wind` | `PyroEngine` (オイラー格子, 開境界) | 512×256×256 格子 (セル 0.4 m, 領域 205×102×102 m) / ビル 28 棟 | 流れに乗せたトレーサ粒子の軌跡 (風速で色分け) + ビル群 (Cycles) |
 | 2. 雪崩 | `demo_avalanche_mesh` | `MPMEngine` (Drucker-Prager) | 約 1070 万粒子 / 国土地理院 DEM 由来の地形 + 樹木 37 本 + 岩 16 個 | 密度場から数百万三角形の雪面メッシュを再構成 + DEM 地形メッシュ + 黒松メッシュ (Cycles) |
 | 3. 海岸の波 (issue #137) | `demo_seashore` | `FLIPEngine` (非圧縮 FLIP + 泡) | 既定 約 610 万粒子 (`--spacing 0.055` で約 1000 万) + 泡 最大 400 万 | 水面等値面 + 泡の小球インスタンス + 岩 usdc (Cycles, 横動画) |
+| 4. 回転する車の風洞 | `demo_car_wind` | `PyroEngine` (オイラー格子, 回転コライダー) | 既定 1024×256×256 格子 (セル 2 cm, 領域 20.5×5.1×5.1 m) / 全長 4.4 m の手続き生成スポーツカー | 風速で色分けしたトレーサの軌跡 + 車メッシュ (Cycles) |
 
 ## 使い方
 
@@ -63,6 +64,24 @@ uv run python seashore/render_seashore.py out/seashore --frames 150 150 --out ou
 - 岩の SDF はシミュ格子とは独立に 0.15 m セル (`make_scene.py --sdf-cell`)。レンダでは岩を実メッシュで描く。
 - usdc の色テクスチャは取得元に無いため、レンダ側で手続き的な岩マテリアルに差し替えている。
 - Blender の泡は `foam_*.nbf` の点を Geometry Nodes で小球インスタンス化している (`--foam-radius`)。
+
+### 回転する車の風洞 (スポーツカー)
+
+一定角速度 (既定 0.5 rad/s) で自転するスポーツカーに、固定向き (+x) の風 (既定 20 m/s) を当てる。車体の流線型に沿った流れと、リアウイング 2 枚の間のスロットを抜ける流れを見る。
+車は Python で手続き生成する (全長 4.4 m の車体・キャビン・車輪・フロントスプリッター・2 枚構成のリアウイング + 端板 + 支柱)。メッシュのダウンロードもライセンスも不要で、ウイングの隙間 (`--gap`) を自由に変えられる。
+アセットは `assets_local/car/` (git 管理外)。
+
+```bash
+cd examples/demo
+uv run car/make_car.py                    # car.sdf (シミュレーション用, 2cm) / car.npz (Blender 用メッシュ) / 形状確認の断面 PNG
+../../build/examples/demo/demo_car_wind --out out/car      # 約 1024×256×256 格子, 720 ステップ (dt=1/120)
+uv run python car/render_car.py out/car --frames 0 600 --step 4 --out out/car_png --samples 48
+```
+
+- 回転は `PyroEngine::setRotatingCollider` (車のローカル SDF を毎サブステップ GPU でトリリニア補間して回し、固体セルと表面付近に壁面速度 ω×r を課す)。車体の自転で流れが引きずられる効果が入る。静止コライダー (都市風デモなど) の挙動は変えていない。
+- 格子は 1024×256×256 (2^26 セル, 約 6GB)。Pyro のバッファは Morton 符号の最大値 + 1 セルで、x>=y>=z の 2^n 直方体ならちょうど実セル数になる。1024×512×256 は約 12GB で 12GB の GPU に載らない。
+- 流線は毎フレーム引き直さず、トレーサ粒子を格子速度に乗せて流した軌跡を描く (都市風デモと同じ。`tracers.bin` の形式も同じ)。
+- 車の SDF は節点間隔 2 cm。ウイングのスロットは既定 8 cm = 4 セル。
 
 ## データ形式
 

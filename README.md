@@ -13,11 +13,11 @@ A real-time GPU physics simulator built entirely on **Vulkan compute shaders** �
 
 [Project page](https://20niship.github.io/nebula/) · [Examples](#examples) · [日本語](README_ja.md)
 
-https://github.com/user-attachments/assets/fc7bfe51-39a6-4694-a515-f3288ba808cb
-
 https://github.com/user-attachments/assets/312909e0-fa6e-499f-b63e-fa1554af9ced
 
 <sub>Note: the video above (seashore waves · city wind · avalanche) is rendered with Blender. See [examples/demo/README.md](examples/demo/README.md) for how to run it.</sub>
+
+https://github.com/user-attachments/assets/fc7bfe51-39a6-4694-a515-f3288ba808cb
 
 ---
 

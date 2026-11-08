@@ -124,6 +124,8 @@ for i, col in enumerate(COLORS):
 
 rng = np.random.default_rng(3)
 for f in range(a.frames[0], a.frames[1] + 1, a.step):
+    if C.done(f"{a.out}/frame_{f:05d}.png"):
+        continue
     t0 = time.time()
     vox, cell = load_pvox(f"{a.src}/frame_{f:05d}.pvox")
     vel = vox["velocity"]

@@ -29,6 +29,15 @@ uv run python render/render_avalanche.py out/avalanche --frames 0 330 --out out/
 
 `--scale` (流体・雪崩) で粒子数を縮小して素早く確認できる。`--frames A B --step N` で一部のフレームだけレンダリングできる。
 連番 PNG は `ffmpeg -framerate 24 -i out/fluid_png/frame_%05d.png -c:v libx264 -pix_fmt yuv420p fluid.mp4` で動画化する。
+長時間のレンダリングは `render/supervise.py` で包むと、異常終了や停止 (出力が増えない) のときに自動で再起動し、出力済みフレームをスキップして続きから再開する (`render_*.py` は出力済みフレームを飛ばす)。
+
+```bash
+uv run python render/supervise.py --watch out/avalanche_png -- \
+    python render/render_avalanche.py out/avalanche --frames 0 330 --out out/avalanche_png
+```
+
+3 つのデモ動画は `python render/combine.py out/fluid_10m.mp4 out/city_wind.mp4 out/avalanche.mp4 -o out/demo_all.mp4` で横に並べた 1 本にできる。
+
 画像・動画は git に含めず、`gh pr comment --attach` で配布する。
 
 ## データ形式

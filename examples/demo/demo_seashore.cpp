@@ -1,7 +1,7 @@
 // 海岸の波 (issue #137): 沖のパドルが起こした波が砂浜の斜面と岩場で砕け、泡・飛沫が出る FLIP 流体。
 // fluid_wave_foam (単振動パドル + FLIP + 泡) をベースに、地形・岩を SDF コライダーにして headless で .nbp / .nbf を dump する。
 // 地形 SDF は seashore/make_scene.py が作る (岩アセットは seashore/fetch_rocks.py で取得。いずれも git 管理外)。
-// 確認:  python seashore/preview_points.py out/seashore --frame 100     レンダ: render/render_seashore.py
+// 確認:  python seashore/preview_points.py out/seashore --frame 100     レンダ: seashore/render_seashore.py
 #include "Collider.h"
 #include "Force.h"
 #include "NbpDump.h"

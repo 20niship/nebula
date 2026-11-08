@@ -57,7 +57,7 @@ uv run seashore/make_scene.py --seed 3  # scene.sdf / scene.json / terrain.npz
 # 3. まず点群のままプレビューで確認 (Blender 不要)
 uv run seashore/preview_points.py out/seashore --frames 0 600 --step 12 --out out/seashore_preview
 # 4. 良さそうなら Blender (横動画 1920x1080)
-uv run python render/render_seashore.py out/seashore --frames 150 150 --out out/seashore_png --samples 64
+uv run python seashore/render_seashore.py out/seashore --frames 150 150 --out out/seashore_png --samples 64
 ```
 
 - 座標は Y-up (x: 沖→岸)。パドルが x≈1..5 で振動し、約 5 秒後に波が岩場 (x 22..38) に届く。泡は `--foam-delay` (2 秒) までは生成しない (初期水面ノイズでの誤生成を避ける)。

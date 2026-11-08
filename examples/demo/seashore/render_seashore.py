@@ -2,7 +2,7 @@
 
 水: 粒子密度場の等値面メッシュ (透過 + 吸収)。泡: 点を Geometry Nodes で小球インスタンス化 (白)。
 地形・岩: seashore/make_scene.py の scene.json + terrain.npz、岩は virtual-tokyo の usdc をそのまま取り込む (マテリアル込み)。
-  uv run python render/render_seashore.py out/seashore --frames 150 150 --out out/seashore_png --samples 64
+  uv run python seashore/render_seashore.py out/seashore --frames 150 150 --out out/seashore_png --samples 64
 """
 import argparse
 import json
@@ -11,7 +11,7 @@ import os
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "render"))  # common.py / nbp.py
 import bpy
 import common as C  # noqa: E402
 import mathutils  # noqa: E402

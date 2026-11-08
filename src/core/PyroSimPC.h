@@ -77,25 +77,21 @@ struct PyroSimPC {
   // 開境界ビットマスク (bit0..5 = -x,+x,-y,+y,-z,+z)。立っている面は領域外の圧力を 0 (大気圧) とみなし、風が出入りできる (0=従来どおり全面閉)
   uint32_t openBoundaryMask; // 164
 
-  // 回転する剛体コライダー (y 軸まわり)。rotSdfIdx != 0 のとき step() が colliderSDF を毎サブステップ回転させて焼き直し (pyro_rotate_sdf.comp)、
-  // 障害物 BC / 発散は壁面速度 ω×r (solidOmega != 0 のとき) を課す。回転軸は (solidPivotX, *, solidPivotZ) を通る鉛直線。
-  float solidPivotX;   // 168
-  float solidPivotZ;   // 172
-  float solidOmega;    // 176 角速度 [rad/s] (0=静止コライダーとして従来どおり)
-  float solidAngle;    // 180 現在の回転角 [rad] (CPU が omega*dt ずつ進める)
-  uint32_t rotSdfIdx;  // 184 ローカル SDF (線形配置 x 最速, rotRes^3)。節点値で、節点 (i,j,k) の位置は rotMin + (i,j,k)*rotCell
-  uint32_t rotResX;    // 188
-  uint32_t rotResY;    // 192
-  uint32_t rotResZ;    // 196
-  float rotCell;       // 200
-  float rotMinX;       // 204 ローカル SDF 原点 (回転中心からの相対座標 [m])
-  float rotMinY;       // 208
-  float rotMinZ;       // 212
+  // 移動する剛体コライダー (任意の位置・姿勢・線速度・角速度)。rotSdfIdx != 0 のとき step() が colliderSDF を毎サブステップ剛体の姿勢に合わせて焼き直し
+  // (pyro_rotate_sdf.comp)、障害物 BC / 発散は壁面速度 v = linVel + angVel × (p - pos) を課す。地面 (最下段の固体行) は静止。
+  float bodyPos[3];     // 168 剛体原点の世界座標 [m]。角速度の回転中心でもある
+  float bodyQuat[4];    // 180 剛体ローカル -> 世界 の回転 (x,y,z,w)
+  float bodyLinVel[3];  // 196 線速度 (世界座標系) [m/s]
+  float bodyAngVel[3];  // 208 角速度 (世界座標系, 原点まわり) [rad/s]
+  uint32_t rotSdfIdx;   // 220 ローカル SDF (線形, x 最速)。節点値で、節点 (i,j,k) の位置は rotMin + (i,j,k)*rotCell。0=無効
+  uint32_t rotResPacked; // 224 ローカル SDF の節点数 (x | y<<10 | z<<20, 各 1..1023)
+  float rotCell;        // 228 節点間隔 [m]
+  float rotMin[3];      // 232 ローカル SDF 原点 (剛体ローカル座標 [m])
 
   // 有効なチャンネル (PyroEngine::kChDensity 等のビット)。無効なチャンネルのバッファは 1 要素のダミーで、シェーダは読み書きしない
-  uint32_t channelMask; // 216
+  uint32_t channelMask; // 244
 };
-static_assert(sizeof(PyroSimPC) == 220, "PyroSimPC must be 220 bytes");
+static_assert(sizeof(PyroSimPC) == 248, "PyroSimPC must be 248 bytes (push constant 上限 256 に収める)");
 static_assert(offsetof(PyroSimPC, gridRes) == 64, "vec3 alignment offset");
 static_assert(offsetof(PyroSimPC, worldMin) == 80, "vec3 alignment offset");
 static_assert(offsetof(PyroSimPC, worldMax) == 96, "vec3 alignment offset");

@@ -1,5 +1,5 @@
 // 風洞: 一定角速度で自転するスポーツカーに、固定向き (+x) の一定風速の風を当てる。PyroEngine (オイラー格子) の回転コライダー
-// (PyroEngine::setRotatingCollider: 壁面速度 ω×r つき) で車を回し、毎ステップ流れに乗せたトレーサ粒子の軌跡を tracers.bin に書き出す
+// (PyroEngine::setMovingCollider: 位置・姿勢・線速度・角速度を持つ剛体コライダー。壁面速度つき) で車を回し、毎ステップ流れに乗せたトレーサ粒子の軌跡を tracers.bin に書き出す
 // (形式は demo_city_wind と同じ)。車 (SDF) は car/make_car.py が手続き生成する。Blender 側は car/render_car.py。
 // 格子は既定 1024x256x512 (風下 x 高さ x 幅)。車は高さ方向に薄く、自転すると幅方向に約 4.8m 掃くので、高さに 256・幅に 512 を割り当てる
 // (高さに 512 を割り当てるとセルは 2cm 止まり)。Pyro のバッファは Morton 符号の最大値+1 セル (この格子では約 2.35 億セル) で、速度場しか使わないので
@@ -38,8 +38,8 @@ struct Args : public argparse::Args {
   int& tracer_life = kwarg("tracer-life", "max tracer age [steps]").set_default(400);
   int& warmup      = kwarg("warmup", "この step 数までは記録しない (一様流の初期化 + 後流の立ち上がり)").set_default(120);
   int& seed        = kwarg("seed", "tracer seed").set_default(7);
-  int& q_every     = kwarg("q-every", "Q 基準 (渦の等値面) を N ステップごとに q_%05d.qvox へ書き出す (0=しない)").set_default(4);
-  float& q_thresh  = kwarg("q-thresh", "Q の閾値 (wind/車高 1.3m)^2 に対する比。これ以上のセルだけ書き出す").set_default(0.5f);
+  int& q_every     = kwarg("q-every", "Q 基準 (渦の等値面) を N ステップごとに q_%05d.qvox へ書き出す (既定 1 = 全フレーム。0=しない)").set_default(1);
+  float& q_thresh  = kwarg("q-thresh", "Q の閾値 (wind/車高 1.3m)^2 に対する比。これ以上のセルだけ書き出す").set_default(2.0f);
 };
 
 // Q 基準 Q = 0.5 (|Omega|^2 - |S|^2) (速度勾配テンソルの反対称/対称成分) が thresh 以上の流体セルを書き出す。
@@ -132,7 +132,10 @@ int main(int argc, char* argv[]) {
     e.pc_.buoyancyBeta       = 0.0f;
     e.pc_.vorticityEps       = 0.0f;
     e.pc_.densityDissipation = 0.02f;
-    e.setRotatingCollider(local, lres, lcell, lmin, pivot, a.omega);
+    PyroEngine::RigidBodyState car;  // 車は鉛直軸まわりに一定角速度で自転する (任意の軸・並進も同じ API で表せる)
+    car.position        = {pivot.x, 0.0f, pivot.y};
+    car.angularVelocity = {0.0f, a.omega, 0.0f};
+    e.setMovingCollider(local, lres, lcell, lmin, car);
 
     // 圧力ソルバ (Gauss-Seidel) は大域的な圧力場の収束が遅いため、最初の数十ステップだけ領域全体を一様流へ寄せ、車の周りの局所補正だけ解かせる。
     auto init            = std::make_shared<AABBEmitter>();
@@ -159,10 +162,9 @@ int main(int argc, char* argv[]) {
     const glm::uvec3 res = e.gridRes();
     std::vector<glm::vec4> vel(e.totalCells());
     // 車の SDF をセル中心 (回転後) でトリリニア参照して、トレーサが車体に入ったか判定する (CPU)
-    auto carSdf = [&](glm::vec3 p, float angle) {
-      const float c = std::cos(angle), s = std::sin(angle);
-      const glm::vec3 r(p.x - pivot.x, p.y, p.z - pivot.y);
-      const glm::vec3 q(c * r.x - s * r.z, r.y, s * r.x + c * r.z);
+    auto carSdf = [&](glm::vec3 p) {  // エンジンの現在の剛体状態 (位置・姿勢) でローカル座標へ戻す
+      const auto& st = e.colliderState();
+      const glm::vec3 q = glm::conjugate(st.rotation) * (p - st.position);
       glm::vec3 g = (q - lmin) / lcell;
       if(g.x < 0 || g.y < 0 || g.z < 0 || g.x > lres.x - 1.001f || g.y > lres.y - 1.001f || g.z > lres.z - 1.001f) return 1.0f;
       const glm::uvec3 i = glm::uvec3(g);
@@ -209,7 +211,6 @@ int main(int argc, char* argv[]) {
       e.step(cmd, a.dt);
       ctx.submitCmd(cmd);
       ctx.readBuffer(e.getVelocityBuffer(), 0, vel.data(), vel.size() * sizeof(glm::vec4));
-      const float angle = e.rotatingColliderAngle();
       const float vcap  = 2.0f * a.wind;
       auto vlim         = [&](glm::vec3 v) { return glm::length(v) > vcap ? v * (vcap / glm::length(v)) : v; };
       for(size_t i = 0; i < tr.size(); i++) {
@@ -217,7 +218,7 @@ int main(int argc, char* argv[]) {
         const glm::vec3 v1 = vlim(sample(t.p)), v2 = vlim(sample(t.p + 0.5f * a.dt * v1));
         t.p += a.dt * v2;
         t.age++;
-        if(t.p.x > domain.x - 0.3f || t.p.y > domain.y - 0.2f || t.p.y < 0.03f || t.p.z < 0.2f || t.p.z > domain.z - 0.2f || t.age > a.tracer_life || carSdf(t.p, angle) < 0.0f) spawn(t);
+        if(t.p.x > domain.x - 0.3f || t.p.y > domain.y - 0.2f || t.p.y < 0.03f || t.p.z < 0.2f || t.p.z > domain.z - 0.2f || t.age > a.tracer_life || carSdf(t.p) < 0.0f) spawn(t);
         std::memcpy(&rec[i * 4], &t.p, 12);
         std::memcpy(&rec[i * 4 + 3], &t.gen, 4);
       }
@@ -228,7 +229,7 @@ int main(int argc, char* argv[]) {
           char qp[512];
           std::snprintf(qp, sizeof qp, "%s/q_%05u.qvox", a.out.c_str(), steps);
           // 車の表面から 3 セル以内と地面付近 (最下段 3 セル) は除く
-          const uint32_t n = writeQvox(qp, vel, res, a.cell, qth, 1.6f * a.wind, [&](int x, int y, int z) { return y < 3 || carSdf((glm::vec3(float(x), float(y), float(z)) + 0.5f) * a.cell, angle) < 3.0f * a.cell; });
+          const uint32_t n = writeQvox(qp, vel, res, a.cell, qth, 1.6f * a.wind, [&](int x, int y, int z) { return y < 3 || carSdf((glm::vec3(float(x), float(y), float(z)) + 0.5f) * a.cell) < 3.0f * a.cell; });
           std::printf("  q_%05u: %u cells\n", steps, n);
         }
         steps++;

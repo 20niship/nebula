@@ -150,25 +150,21 @@ void PyroEngine::setColliderSDF(const std::vector<float>& mortonSDF) {
 void PyroEngine::clearCollider() {
   colliderSDFIdx_ = 0;
   pc_.rotSdfIdx   = 0;
-  pc_.solidOmega  = 0.0f;
 }
 
-void PyroEngine::setRotatingCollider(const std::vector<float>& localSDF, glm::uvec3 res, float localCell, glm::vec3 localMin, glm::vec2 pivotXZ, float omega) {
-  if(localSDF.size() != size_t(res.x) * res.y * res.z) throw std::runtime_error("PyroEngine::setRotatingCollider: localSDF size must equal res.x*res.y*res.z");
+void PyroEngine::setMovingCollider(const std::vector<float>& localSDF, glm::uvec3 res, float localCell, glm::vec3 localMin, const RigidBodyState& initial, bool autoAdvance) {
+  if(localSDF.size() != size_t(res.x) * res.y * res.z) throw std::runtime_error("PyroEngine::setMovingCollider: localSDF size must equal res.x*res.y*res.z");
+  if(res.x == 0 || res.y == 0 || res.z == 0 || res.x > 1023 || res.y > 1023 || res.z > 1023) throw std::runtime_error("PyroEngine::setMovingCollider: local SDF resolution per axis must be 1..1023");
   if(colliderSDFIdx_ == 0) colliderSDFIdx_ = attrBuf_.addAttribute("colliderSDF", sizeof(float), totalCells());
   pc_.rotSdfIdx = attrBuf_.addAttribute("rotSDF", sizeof(float), localSDF.size());
   attrBuf_.upload("rotSDF", localSDF.data(), localSDF.size() * sizeof(float), cmdPool_, queue_);
-  pc_.rotResX     = res.x;
-  pc_.rotResY     = res.y;
-  pc_.rotResZ     = res.z;
-  pc_.rotCell     = localCell;
-  pc_.rotMinX     = localMin.x;
-  pc_.rotMinY     = localMin.y;
-  pc_.rotMinZ     = localMin.z;
-  pc_.solidPivotX = pivotXZ.x;
-  pc_.solidPivotZ = pivotXZ.y;
-  pc_.solidOmega  = omega;
-  pc_.solidAngle  = 0.0f;
+  pc_.rotResPacked = res.x | (res.y << 10u) | (res.z << 20u);
+  pc_.rotCell      = localCell;
+  pc_.rotMin[0]    = localMin.x;
+  pc_.rotMin[1]    = localMin.y;
+  pc_.rotMin[2]    = localMin.z;
+  body_            = initial;
+  bodyAutoAdvance_ = autoAdvance;
 }
 
 // ── Emitter ───────────────────────────────────────────────────────────────
@@ -271,6 +267,16 @@ PyroSimPC PyroEngine::buildPC(float dt) const {
   pc.divergenceIdx   = divergenceIdx_;
   pc.curlIdx         = curlIdx_;
   pc.channelMask     = channels;
+  const glm::quat q  = glm::normalize(body_.rotation);
+  for(int k = 0; k < 3; k++) {
+    pc.bodyPos[k]    = body_.position[k];
+    pc.bodyLinVel[k] = body_.linearVelocity[k];
+    pc.bodyAngVel[k] = body_.angularVelocity[k];
+  }
+  pc.bodyQuat[0] = q.x;
+  pc.bodyQuat[1] = q.y;
+  pc.bodyQuat[2] = q.z;
+  pc.bodyQuat[3] = q.w;
   pc.colliderSDFIdx  = colliderSDFIdx_;
   // emittersIdx/emitterCount は updateEmitters() 後に step() 側で設定する (0=無効)
   pc.emittersIdx  = 0;
@@ -360,7 +366,11 @@ void PyroEngine::step(VkCommandBuffer cmd, float dt) {
 
     // ダブルバッファ入れ替え: 次フレームは B が現在値になる
     cur_ = 1 - cur_;
-    pc_.solidAngle += pc_.solidOmega * subDt; // 回転コライダーの角度を進める (CPU 側で保持し、次サブステップの buildPC に反映)
+    if(bodyAutoAdvance_ && pc_.rotSdfIdx != 0) { // 移動コライダーを一定の線速度・角速度で進める (次サブステップの buildPC に反映)
+      body_.position += body_.linearVelocity * subDt;
+      const float w = glm::length(body_.angularVelocity);
+      if(w > 0.0f) body_.rotation = glm::normalize(glm::angleAxis(w * subDt, body_.angularVelocity / w) * body_.rotation);
+    }
   }
 }
 

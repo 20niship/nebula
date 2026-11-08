@@ -137,6 +137,7 @@ def main():
     pl.camera.up = (0, 1, 0)
     pl.camera.view_angle = a.fov
 
+    qcache = {}
     for f in range(a.frames[0], a.frames[1] + 1, a.step):
         out = f"{a.out}/frame_{f:05d}.png"
         if os.path.exists(out):
@@ -150,7 +151,9 @@ def main():
         actors = [pl.add_mesh(car, scalars="rgb", rgb=True, opacity=0.92, smooth_shading=True, specular=0.4)]
         if a.vis in ("q", "both"):
             qf = min(qs, key=lambda k: abs(k - f))
-            m = vortex_mesh(f"{a.src}/q_{qf:05d}.qvox", a.smooth, a.q_boost)
+            if qcache.get("qf") != qf:  # 同じ Q ファイルのフレーム (q-every=4 なら 4 枚) は等値面を作り直さない
+                qcache.update(qf=qf, mesh=vortex_mesh(f"{a.src}/q_{qf:05d}.qvox", a.smooth, a.q_boost))
+            m = qcache["mesh"]
             if m.n_points:
                 actors.append(pl.add_mesh(m, scalars="speed", cmap="turbo", clim=(0.0, 1.0), smooth_shading=True, show_scalar_bar=False, ambient=0.35))
         if a.vis in ("streamlines", "both"):

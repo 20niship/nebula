@@ -3,7 +3,7 @@
 #include "pyro_common.glsl"
 
 // 障害物 SDF 境界条件: pc.colliderSDFIdx (Morton, 負値=内部) を用いて
-// 内部セルの速度を壁面速度 (静止なら 0) にし、表面付近のセルは壁面に対する法線方向速度成分を除去する。
+// 内部セルの速度を壁面速度 (移動コライダー: linVel + angVel×(p-pos)、静止なら 0) にし、表面付近のセルは壁面に対する法線方向速度成分を除去する。
 // mpm_nanovdb_bc.comp と同じ手法。pc.velIdxA を対象に適用する
 // (CPU側が呼び出しごとに velIdxA へ現在処理したいバッファを設定する)。
 // dispatch: (totalCells + 255) / 256

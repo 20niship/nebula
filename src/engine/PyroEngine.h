@@ -1,6 +1,9 @@
 #pragma once
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
+
+#include <cmath>
 #include <string>
 #include <vector>
 #include <vk_mem_alloc.h>
@@ -54,12 +57,20 @@ public:
   void setColliderSDF(const std::vector<float>& mortonSDF);
   void clearCollider();
 
-  // ── 回転する剛体コライダー (y 軸まわりの一定角速度。車を自転させる風洞など) ──────────
-  // localSDF: 剛体のローカル座標の SDF (節点値, x 最速の線形配置 res.x*res.y*res.z)。節点 (i,j,k) は 回転中心からの相対位置 localMin + (i,j,k)*localCell。
-  // pivotXZ: 回転軸 (鉛直線) の世界座標 (x,z)、y の高さは回転しても変わらない (ローカル y = ワールド y)。
-  // step() は毎サブステップ colliderSDF をこの SDF から焼き直し (GPU)、障害物 BC と発散に壁面速度 ω×r を課す。地面 (最下段セル) も固体になる。
-  void setRotatingCollider(const std::vector<float>& localSDF, glm::uvec3 res, float localCell, glm::vec3 localMin, glm::vec2 pivotXZ, float omega);
-  float rotatingColliderAngle() const { return pc_.solidAngle; }
+  // ── 移動する剛体コライダー (任意の位置・姿勢・線速度・角速度。回転する車の風洞、動く物体など) ──────────
+  // 剛体の状態。角速度は剛体原点まわり、すべて世界座標系。表面の速さは v = linearVelocity + angularVelocity x (p - position)。
+  struct RigidBodyState {
+    glm::vec3 position{0.0f};
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f}; // 剛体ローカル -> 世界
+    glm::vec3 linearVelocity{0.0f};
+    glm::vec3 angularVelocity{0.0f};
+  };
+  // localSDF: 剛体ローカル座標の SDF (節点値, x 最速の線形配置 res.x*res.y*res.z, 各軸 1..1023)。節点 (i,j,k) の位置は localMin + (i,j,k)*localCell (剛体ローカル座標)。
+  // step() は毎サブステップ colliderSDF をこの SDF から現在の姿勢で焼き直し (GPU)、障害物 BC と発散に壁面速度を課す。地面 (最下段セル) も固体になる。
+  // autoAdvance=true: 一定の線速度・角速度で状態を積分する (位置 += v dt、姿勢 = exp(ω dt) * 姿勢)。false: 呼び出し側が毎ステップ setColliderState() で与える (任意の運動)。
+  void setMovingCollider(const std::vector<float>& localSDF, glm::uvec3 res, float localCell, glm::vec3 localMin, const RigidBodyState& initial, bool autoAdvance = true);
+  void setColliderState(const RigidBodyState& s) { body_ = s; }
+  const RigidBodyState& colliderState() const { return body_; }
   VkBuffer getColliderSDFBuffer() const { return colliderSDFIdx_ ? attrBuf_.getBuffer("colliderSDF") : VK_NULL_HANDLE; }
 
   // ── 複数 Emitter (連続的な density/temperature/fuel/velocity 注入) ──────
@@ -116,6 +127,8 @@ private:
   ComputePipeline kForces_;
   ComputePipeline kObstacleBC_;
   ComputePipeline kRotateSDF_;
+  RigidBodyState body_;
+  bool bodyAutoAdvance_ = false;
   ComputePipeline kAdvect_;
   ComputePipeline kCurl_;
   ComputePipeline kVorticityForce_;

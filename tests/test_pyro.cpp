@@ -357,7 +357,10 @@ TEST_CASE("Pyro GPU - 7-1: Rotating collider moves with the angle and imposes wa
       for(uint32_t i = 0; i < lres.x; i++) local[size_t(i) + lres.x * (j + size_t(lres.y) * k)] = glm::length(lmin + glm::vec3(i, j, k) * lcell - glm::vec3(2.0f, 3.0f, 0.0f)) - 1.0f;
 
   const float omega = 1.0f, dt = 0.1f;
-  engine.setRotatingCollider(local, lres, lcell, lmin, {8.0f, 8.0f}, omega);
+  PyroEngine::RigidBodyState body;
+  body.position        = {8.0f, 0.0f, 8.0f};
+  body.angularVelocity = {0.0f, omega, 0.0f}; // y 軸まわりの回転
+  engine.setMovingCollider(local, lres, lcell, lmin, body);
 
   const int steps = 5;
   for(int i = 0; i < steps; i++) {
@@ -365,7 +368,7 @@ TEST_CASE("Pyro GPU - 7-1: Rotating collider moves with the angle and imposes wa
     engine.step(cmd, dt);
     ctx.submitCmd(cmd);
   }
-  CHECK(engine.rotatingColliderAngle() == doctest::Approx(steps * omega * dt).epsilon(1e-4)); // 0.5 rad
+  CHECK(2.0f * std::atan2(engine.colliderState().rotation.y, engine.colliderState().rotation.w) == doctest::Approx(steps * omega * dt).epsilon(1e-4)); // 0.5 rad
 
   // 最後のステップは角度 (steps-1)*omega*dt = 0.4 で焼き直されている
   const float th = (steps - 1) * omega * dt;
@@ -432,4 +435,68 @@ TEST_CASE("Pyro GPU - 8-1: velocity-only channels give the same velocity field a
   }
   CHECK(maxV > 0.1f); // 風が実際に流れている
   CHECK(maxDiff < 1e-4f);
+}
+
+TEST_CASE("Pyro GPU - 7-2: Moving collider with arbitrary rotation axis and translation") {
+  HeadlessCtx ctx;
+  ctx.init();
+
+  PyroEngine engine;
+  engine.domainSize = {16.0f, 12.0f, 16.0f};
+  engine.cellSize   = 0.25f;
+  engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS);
+  engine.numPressureIters = 10;
+
+  // ローカル SDF: 原点から (2,0,0) にある半径 0.8 の球。節点間隔 0.1、範囲 [-4,4]^3
+  const glm::uvec3 lres(81, 81, 81);
+  const float lcell = 0.1f;
+  const glm::vec3 lmin(-4.0f);
+  std::vector<float> local(size_t(lres.x) * lres.y * lres.z);
+  for(uint32_t k = 0; k < lres.z; k++)
+    for(uint32_t j = 0; j < lres.y; j++)
+      for(uint32_t i = 0; i < lres.x; i++) local[size_t(i) + lres.x * (j + size_t(lres.y) * k)] = glm::length(lmin + glm::vec3(i, j, k) * lcell - glm::vec3(2.0f, 0.0f, 0.0f)) - 0.8f;
+
+  // 斜めの軸 (1,0,1)/sqrt2 まわりに 1 rad/s で回しつつ、(0.5, 0, 0) m/s で並進する
+  PyroEngine::RigidBodyState s;
+  s.position        = {6.0f, 5.0f, 8.0f};
+  s.angularVelocity = glm::normalize(glm::vec3(1.0f, 0.0f, 1.0f)) * 1.0f;
+  s.linearVelocity  = {0.5f, 0.0f, 0.0f};
+  engine.setMovingCollider(local, lres, lcell, lmin, s, true);
+
+  const float dt = 0.1f;
+  const int steps = 6;
+  for(int i = 0; i < steps; i++) {
+    VkCommandBuffer cmd = ctx.beginCmd();
+    engine.step(cmd, dt);
+    ctx.submitCmd(cmd);
+  }
+  // 最後のステップは (steps-1) 回積分した姿勢・位置で焼き直されている
+  const float t = (steps - 1) * dt;
+  const glm::vec3 axis = glm::normalize(glm::vec3(1.0f, 0.0f, 1.0f));
+  const glm::quat q    = glm::angleAxis(1.0f * t, axis);
+  const glm::vec3 pos  = s.position + s.linearVelocity * t;
+  const glm::vec3 center = pos + q * glm::vec3(2.0f, 0.0f, 0.0f); // 球の中心の世界座標
+  const glm::ivec3 c = glm::ivec3(center / engine.cellSize);
+
+  float sdfHere = 0.0f;
+  ctx.readBuffer(engine.getColliderSDFBuffer(), meshSdfMortonEncode(c.x, c.y, c.z) * sizeof(float), &sdfHere, sizeof(float));
+  CHECK(sdfHere < -0.4f);
+
+  // 壁面速度 = linVel + omega x (p - pos)。セル中心での値と比べる
+  glm::vec4 v{};
+  ctx.readBuffer(engine.getVelocityBuffer(), meshSdfMortonEncode(c.x, c.y, c.z) * sizeof(glm::vec4), &v, sizeof(v));
+  const glm::vec3 pc = (glm::vec3(c) + 0.5f) * engine.cellSize;
+  const glm::vec3 expect = s.linearVelocity + glm::cross(s.angularVelocity, pc - pos);
+  CHECK(v.x == doctest::Approx(expect.x).epsilon(0.05).scale(1.0));
+  CHECK(v.y == doctest::Approx(expect.y).epsilon(0.05).scale(1.0));
+  CHECK(v.z == doctest::Approx(expect.z).epsilon(0.05).scale(1.0));
+  CHECK(std::abs(expect.y) > 0.3f); // 斜め軸なので y 成分も出る (y 軸まわりだけの実装では 0)
+
+  // 回転後の姿勢 (クォータニオン) と位置が積分されている
+  const auto& st = engine.colliderState();
+  CHECK(st.position.x == doctest::Approx(s.position.x + 0.5f * steps * dt).epsilon(1e-4));
+  CHECK(glm::length(st.rotation) == doctest::Approx(1.0f).epsilon(1e-4));
+
+  engine.cleanup();
+  ctx.cleanup();
 }

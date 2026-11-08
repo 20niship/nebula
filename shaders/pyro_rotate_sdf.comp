@@ -2,7 +2,7 @@
 #extension GL_EXT_nonuniform_qualifier : enable
 #include "pyro_common.glsl"
 
-// 回転コライダー: ローカル SDF (線形配置の節点値) を y 軸まわりに pc.solidAngle だけ回し、トリリニア補間で colliderSDF (Morton) へ焼き直す。
+// 移動コライダー: ローカル SDF (線形配置の節点値) を剛体の位置・姿勢 (pc.bodyPos / pc.bodyQuat) に合わせ、トリリニア補間で colliderSDF (Morton) へ焼き直す。
 // ついでに地面 (最下段セルを固体) も合成する。ローカル SDF の外側は境界へのクランプ値 + 境界からの距離で延長する。
 // dispatch: (totalCells + 255) / 256
 
@@ -23,12 +23,11 @@ void main() {
     vec3 p = (vec3(ijk) + 0.5) * pc.cellSize + pc.worldMin;
     float sdf = p.y - pc.cellSize; // 地面
 
-    // ワールド -> ローカル (R(-angle), 回転軸 = (pivotX, *, pivotZ) を通る鉛直線。ローカル y = ワールド y)
-    float c = cos(pc.solidAngle), s = sin(pc.solidAngle);
-    vec3 r  = vec3(p.x - pc.solidPivotX, p.y, p.z - pc.solidPivotZ);
-    vec3 q  = vec3(c * r.x - s * r.z, r.y, s * r.x + c * r.z);
+    // ワールド -> ローカル: 剛体の位置を引いて、姿勢の逆回転 (共役クォータニオン) をかける
+    vec4 qc = pyroBodyQuat();
+    vec3 q  = pyroQuatRotate(vec4(-qc.xyz, qc.w), p - pyroBodyPos());
 
-    ivec3 res = ivec3(pc.rotResX, pc.rotResY, pc.rotResZ);
+    ivec3 res = ivec3(pc.rotResPacked & 1023u, (pc.rotResPacked >> 10u) & 1023u, (pc.rotResPacked >> 20u) & 1023u);
     vec3 g    = (q - vec3(pc.rotMinX, pc.rotMinY, pc.rotMinZ)) / pc.rotCell; // 節点座標
     vec3 gc   = clamp(g, vec3(0.0), vec3(res) - 1.001);
     ivec3 i0  = ivec3(gc);

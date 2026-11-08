@@ -4,7 +4,7 @@
 
 // Stable Fluids (Stam) 流儀の速度発散計算。
 // div = -0.5*h * ( (vx(i+1)-vx(i-1)) + (vy(j+1)-vy(j-1)) + (vz(k+1)-vz(k-1)) )
-// 障害物内部 (SDF<0) の近傍セルは自セルの速度で代用する (Neumann/ミラー境界近似)。回転コライダー (pc.solidOmega != 0) なら壁面速度 ω×r を使う。
+// 障害物内部 (SDF<0) の近傍セルは自セルの速度で代用する (Neumann/ミラー境界近似)。移動コライダー (pc.rotSdfIdx != 0) なら壁面速度 linVel + angVel×(p-pos) を使う。
 // 自セルが障害物内部なら divergence=0 とする。
 // dispatch: (totalCells + 255) / 256
 

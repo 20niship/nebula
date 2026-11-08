@@ -8,7 +8,7 @@ nebula で時間をかけてシミュレーションし、結果を Blender (`bp
 | 1. 市街地の気流 | `demo_city_wind` | `PyroEngine` (オイラー格子, 開境界) | 512×256×256 格子 (セル 0.4 m, 領域 205×102×102 m) / ビル 28 棟 | 流れに乗せたトレーサ粒子の軌跡 (風速で色分け) + ビル群 (Cycles) |
 | 2. 雪崩 | `demo_avalanche_mesh` | `MPMEngine` (Drucker-Prager) | 約 1070 万粒子 / 国土地理院 DEM 由来の地形 + 樹木 37 本 + 岩 16 個 | 密度場から数百万三角形の雪面メッシュを再構成 + DEM 地形メッシュ + 黒松メッシュ (Cycles) |
 | 3. 海岸の波 (issue #137) | `demo_seashore` | `FLIPEngine` (非圧縮 FLIP + 泡) | 既定 約 610 万粒子 (`--spacing 0.055` で約 1000 万) + 泡 最大 400 万 | 水面等値面 + 泡の小球インスタンス + 岩 usdc (Cycles, 横動画) |
-| 4. 回転する車の風洞 | `demo_car_wind` | `PyroEngine` (オイラー格子, 回転コライダー) | 既定 1024×256×256 格子 (セル 2 cm, 領域 20.5×5.1×5.1 m) / 全長 4.4 m の手続き生成スポーツカー | 風速で色分けしたトレーサの軌跡 + 車メッシュ (Cycles) |
+| 4. 回転する車の風洞 | `demo_car_wind` | `PyroEngine` (オイラー格子, 回転コライダー) | 既定 1024×256×512 格子 (風下×高さ×幅, セル 1.17 cm, 領域 12×3×6 m) / 全長 4.4 m の手続き生成スポーツカー | Q 基準の渦の等値面を速度で着色 + 車メッシュ (PyVista) |
 
 ## 使い方
 
@@ -74,15 +74,15 @@ uv run python seashore/render_seashore.py out/seashore --frames 150 150 --out ou
 ```bash
 cd examples/demo
 uv run car/make_car.py                    # car.sdf (シミュレーション用, 2cm) / car.npz (Blender 用メッシュ) / 形状確認の断面 PNG
-../../build/examples/demo/demo_car_wind --out out/car      # 約 1024×256×256 格子, 720 ステップ (dt=1/120)
-uv run python car/render_car.py out/car --frames 0 600 --step 4 --out out/car_png --samples 48 --vis q   # q / streamlines / both
+../../build/examples/demo/demo_car_wind --out out/car      # 1024×256×512 格子, 600 ステップ (dt=1/120), 約 75 分 / GPU メモリ約 10.5GB
+uv run car/render_car.py out/car --frames 0 480 --step 4 --out out/car_png   # --vis q / streamlines / both。PyVista (VTK) で描画。フォトリアルは不要なので Blender は使わない
 ```
 
 - 回転は `PyroEngine::setRotatingCollider` (車のローカル SDF を毎サブステップ GPU でトリリニア補間して回し、固体セルと表面付近に壁面速度 ω×r を課す)。車体の自転で流れが引きずられる効果が入る。静止コライダー (都市風デモなど) の挙動は変えていない。
-- 格子は 1024×256×256 (2^26 セル, 約 6GB)。Pyro のバッファは Morton 符号の最大値 + 1 セルで、x>=y>=z の 2^n 直方体ならちょうど実セル数になる。1024×512×256 は約 12GB で 12GB の GPU に載らない。
+- 格子は 1024×256×512 (風下×高さ×幅)。車は高さ方向に薄く、自転すると幅方向に約 4.8 m 掃くので、高さに 256・幅に 512 を割り当てる (高さに 512 を割り当てるとセルは 2 cm 止まり)。Pyro のバッファは Morton 符号の最大値 + 1 セル (この格子で約 2.35 億セル) で、軸の長さが 2^n でも x>=y>=z でなければ符号に穴が空く。速度場しか使わないので `PyroEngine::channels = kChVelocityOnly` で密度・温度・燃料・炎・渦度のバッファを持たず、1 セル 88 byte が 44 byte になる (約 10.3GB。全チャンネルだと約 20.7GB で載らない)。
 - 可視化は既定で **Q 基準の等値面** (FluidX3D の渦構造と同じ。速度勾配テンソルの Q = ½(|Ω|² − |S|²) > 0 が渦)。`demo_car_wind` が 4 ステップごとに Q が閾値 (`--q-thresh`, 既定 (風速/車高)² の 0.5 倍) 以上の流体セルだけをスパースに `q_*.qvox` へ書き出す (1 枚約 数十 MB。車の表面 3 セル以内と地面は壁の勾配で荒れるので除く)。Blender 側で等値面メッシュ (marching cubes) を作り、速度で青→緑→赤に着色して発光させる。`--q-boost` で書き出し閾値の何倍以上を面にするか決める (大きいほど細い渦管だけ)。流線 (`--vis streamlines`) は車体に被って見づらいので既定にしていない。
 - 流線は毎フレーム引き直さず、トレーサ粒子を格子速度に乗せて流した軌跡を描く (都市風デモと同じ。`tracers.bin` の形式も同じ)。
-- 車の SDF は節点間隔 2 cm。ウイングのスロットは既定 8 cm = 4 セル。
+- 車の SDF は節点間隔 1 cm (`car/make_car.py --cell`)。ウイングのスロットは既定 8 cm = 約 7 セル。
 
 ## データ形式
 

@@ -1,7 +1,9 @@
 // 風洞: 一定角速度で自転するスポーツカーに、固定向き (+x) の一定風速の風を当てる。PyroEngine (オイラー格子) の回転コライダー
 // (PyroEngine::setRotatingCollider: 壁面速度 ω×r つき) で車を回し、毎ステップ流れに乗せたトレーサ粒子の軌跡を tracers.bin に書き出す
 // (形式は demo_city_wind と同じ)。車 (SDF) は car/make_car.py が手続き生成する。Blender 側は car/render_car.py。
-// 格子は既定 1024x256x256 (2^26 セル, 約 6GB)。x>=y>=z の 2^n 直方体なので Morton バッファが実セル数ちょうどで済む (1024x512x256 は約 12GB で 12GB GPU には載らない)。
+// 格子は既定 1024x256x512 (風下 x 高さ x 幅)。車は高さ方向に薄く、自転すると幅方向に約 4.8m 掃くので、高さに 256・幅に 512 を割り当てる
+// (高さに 512 を割り当てるとセルは 2cm 止まり)。Pyro のバッファは Morton 符号の最大値+1 セル (この格子では約 2.35 億セル) で、速度場しか使わないので
+// 密度・温度・燃料・炎・渦度のバッファを持たず (PyroEngine::kChVelocityOnly) 1 セル約 44 byte、合計約 10.3GB で 12GB GPU に載る (全チャンネルだと約 20.7GB)。
 #include "core/MeshSDF.h"
 #include "engine/PyroEngine.h"
 #include "helpers/HeadlessCtx.h"
@@ -24,10 +26,10 @@ struct Args : public argparse::Args {
   std::string& out = kwarg("out", "output directory").set_default(std::string("out/car"));
   std::string& sdf = kwarg("sdf", "car SDF (car/make_car.py)").set_default(std::string("assets_local/car/car.sdf"));
   int& nx          = kwarg("nx", "grid cells X (風下方向, 2^n)").set_default(1024);
-  int& ny          = kwarg("ny", "grid cells Y (高さ, 2^n, nx 以下)").set_default(256);
-  int& nz          = kwarg("nz", "grid cells Z (幅, 2^n, ny 以下)").set_default(256);
-  float& cell      = kwarg("cell-size", "cell size [m]").set_default(0.02f);
-  int& frames      = kwarg("frames", "simulation steps").set_default(720);
+  int& ny          = kwarg("ny", "grid cells Y (高さ。車は薄いので少なくてよい)").set_default(256);
+  int& nz          = kwarg("nz", "grid cells Z (幅。自転する車が掃く約 4.8m を覆う)").set_default(512);
+  float& cell      = kwarg("cell-size", "cell size [m]").set_default(0.0117f);
+  int& frames      = kwarg("frames", "simulation steps").set_default(600);
   float& dt        = kwarg("dt", "step [s]").set_default(1.0f / 120.0f);
   float& wind      = kwarg("wind", "inflow wind speed [m/s]").set_default(20.0f);
   float& omega     = kwarg("omega", "car spin [rad/s] (y 軸まわり)").set_default(0.5f);
@@ -122,6 +124,7 @@ int main(int argc, char* argv[]) {
     e.domainSize  = domain;
     e.cellSize    = a.cell;
     e.maxEmitters = 8;
+    e.channels    = PyroEngine::kChVelocityOnly;  // 風洞は速度場だけ。メモリを半分にする
     e.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR);
     e.numPressureIters       = a.iters;
     e.pc_.openBoundaryMask   = 1u | 2u | 8u | 16u | 32u;  // 地面以外は開放

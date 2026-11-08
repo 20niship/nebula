@@ -33,16 +33,22 @@ void main() {
     TRILERP_VEC3(pc.velIdxA, gBack, vNew);
     writeVec4(pc.velIdxB, gid, vec4(vNew, 0.0));
 
-    float densNew, tempNew, fuelNew;
-    TRILERP_FLOAT(pc.densityIdxA,     gBack, densNew);
-    TRILERP_FLOAT(pc.temperatureIdxA, gBack, tempNew);
-    TRILERP_FLOAT(pc.fuelIdxA,        gBack, fuelNew);
-
-    densNew *= exp(-pc.densityDissipation * pc.dt);
-    tempNew  = pc.ambientTemp + (tempNew - pc.ambientTemp) * exp(-pc.tempDissipation * pc.dt);
-    fuelNew  = max(fuelNew, 0.0);
-
-    writeFloat(pc.densityIdxB,     gid, max(densNew, 0.0));
-    writeFloat(pc.temperatureIdxB, gid, tempNew);
-    writeFloat(pc.fuelIdxB,        gid, fuelNew);
+    // 無効なチャンネル (メモリ節約のため 1 要素のダミー) は読み書きしない
+    if (CHANNEL_ON(CH_DENSITY)) {
+        float densNew;
+        TRILERP_FLOAT(pc.densityIdxA, gBack, densNew);
+        densNew *= exp(-pc.densityDissipation * pc.dt);
+        writeFloat(pc.densityIdxB, gid, max(densNew, 0.0));
+    }
+    if (CHANNEL_ON(CH_TEMPERATURE)) {
+        float tempNew;
+        TRILERP_FLOAT(pc.temperatureIdxA, gBack, tempNew);
+        tempNew = pc.ambientTemp + (tempNew - pc.ambientTemp) * exp(-pc.tempDissipation * pc.dt);
+        writeFloat(pc.temperatureIdxB, gid, tempNew);
+    }
+    if (CHANNEL_ON(CH_FUEL)) {
+        float fuelNew;
+        TRILERP_FLOAT(pc.fuelIdxA, gBack, fuelNew);
+        writeFloat(pc.fuelIdxB, gid, max(fuelNew, 0.0));
+    }
 }

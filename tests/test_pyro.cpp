@@ -390,3 +390,46 @@ TEST_CASE("Pyro GPU - 7-1: Rotating collider moves with the angle and imposes wa
   engine.cleanup();
   ctx.cleanup();
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 8: チャンネルの取捨 (メモリ節約) — 速度場のみで動く
+// ═══════════════════════════════════════════════════════════════════════════
+TEST_CASE("Pyro GPU - 8-1: velocity-only channels give the same velocity field as all channels (no buoyancy)") {
+  auto run = [](uint32_t channels, std::vector<glm::vec4>& vel) {
+    HeadlessCtx ctx;
+    ctx.init();
+    PyroEngine engine;
+    engine.domainSize = {8.0f, 4.0f, 4.0f};
+    engine.cellSize   = 0.25f;
+    engine.channels   = channels;
+    engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS);
+    engine.pc_.buoyancyAlpha = 0.0f;
+    engine.pc_.buoyancyBeta  = 0.0f;
+    engine.numPressureIters  = 20;
+    auto fan            = std::make_shared<AABBEmitter>();
+    fan->center         = {1.0f, 2.0f, 2.0f};
+    fan->size           = {1.0f, 3.0f, 3.0f};
+    fan->inflowVelocity = {5.0f, 0.0f, 0.0f};
+    engine.addEmitter(fan);
+    for(int i = 0; i < 10; i++) {
+      VkCommandBuffer cmd = ctx.beginCmd();
+      engine.step(cmd, 0.05f);
+      ctx.submitCmd(cmd);
+    }
+    vel.resize(engine.totalCells());
+    ctx.readBuffer(engine.getVelocityBuffer(), 0, vel.data(), vel.size() * sizeof(glm::vec4));
+    engine.cleanup();
+    ctx.cleanup();
+  };
+  std::vector<glm::vec4> a, b;
+  run(PyroEngine::kChAll, a);
+  run(PyroEngine::kChVelocityOnly, b);
+  REQUIRE(a.size() == b.size());
+  float maxDiff = 0.0f, maxV = 0.0f;
+  for(size_t i = 0; i < a.size(); i++) {
+    maxDiff = std::max(maxDiff, glm::length(glm::vec3(a[i]) - glm::vec3(b[i])));
+    maxV    = std::max(maxV, glm::length(glm::vec3(a[i])));
+  }
+  CHECK(maxV > 0.1f); // 風が実際に流れている
+  CHECK(maxDiff < 1e-4f);
+}

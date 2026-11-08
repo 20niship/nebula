@@ -95,7 +95,7 @@ def car_sdf(P, gap=0.08):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--cell", type=float, default=0.02, help="シミュレーション用 SDF の節点間隔 [m]")
+    ap.add_argument("--cell", type=float, default=0.01, help="シミュレーション用 SDF の節点間隔 [m]")
     ap.add_argument("--mesh-cell", type=float, default=0.012, help="メッシュ (marching cubes) の間隔 [m]")
     ap.add_argument("--gap", type=float, default=0.08, help="リアウイングの 2 枚の間のスロット幅 [m]")
     a = ap.parse_args()

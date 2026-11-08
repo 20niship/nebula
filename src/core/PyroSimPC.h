@@ -91,8 +91,11 @@ struct PyroSimPC {
   float rotMinX;       // 204 ローカル SDF 原点 (回転中心からの相対座標 [m])
   float rotMinY;       // 208
   float rotMinZ;       // 212
+
+  // 有効なチャンネル (PyroEngine::kChDensity 等のビット)。無効なチャンネルのバッファは 1 要素のダミーで、シェーダは読み書きしない
+  uint32_t channelMask; // 216
 };
-static_assert(sizeof(PyroSimPC) == 216, "PyroSimPC must be 216 bytes");
+static_assert(sizeof(PyroSimPC) == 220, "PyroSimPC must be 220 bytes");
 static_assert(offsetof(PyroSimPC, gridRes) == 64, "vec3 alignment offset");
 static_assert(offsetof(PyroSimPC, worldMin) == 80, "vec3 alignment offset");
 static_assert(offsetof(PyroSimPC, worldMax) == 96, "vec3 alignment offset");

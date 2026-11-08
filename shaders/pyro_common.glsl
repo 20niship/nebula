@@ -4,7 +4,7 @@
 // ── Bindless バッファ配列 ──────────────────────────────────────────────────
 layout(set = 0, binding = 0) buffer StorageBuffers { uint data[]; } buffers[];
 
-// ── PyroSimPC Push Constants (216 bytes) ───────────────────────────────────
+// ── PyroSimPC Push Constants (220 bytes) ───────────────────────────────────
 // issue #46フォローアップ: 直方体ドメイン対応。worldMin/worldMax を vec3 化し、各軸独立の
 // gridRes(uvec3) を追加した。旧 gridRes(スカラー、Morton dispatch用の立方体解像度) は
 // hashCells に改名 (mpm_common.glsl と同一の命名・用法。値は cubeRes^3)。
@@ -57,6 +57,7 @@ layout(push_constant) uniform PC {
     float rotMinX;            // 204 ローカル SDF 原点 (回転中心からの相対座標)
     float rotMinY;            // 208
     float rotMinZ;            // 212
+    uint  channelMask;        // 216 有効チャンネル (bit0 密度, bit1 温度, bit2 燃料, bit3 炎, bit4 渦度スクラッチ)。無効なバッファは 1 要素のダミー
 } pc;
 
 // ── Buffer read/write マクロ (MoltenVK: buffers[] は main() でのみ展開) ────
@@ -127,6 +128,11 @@ ivec3 pyroMortonDecodeI(uint code) {
 // セル (ix,iy,iz) (クランプ後) が障害物内部 (SDF<0) かどうか。SDF 未設定なら常に false。
 #define CELL_IS_SOLID(ix_, iy_, iz_) ( pc.colliderSDFIdx != 0u && \
     readFloat(pc.colliderSDFIdx, pyroMortonEncodeI(CLAMP_CELL((ix_), (iy_), (iz_)))) < 0.0 )
+
+#define CH_DENSITY 1u
+#define CH_TEMPERATURE 2u
+#define CH_FUEL 4u
+#define CHANNEL_ON(bit_) ((pc.channelMask & (bit_)) != 0u)
 
 // 回転コライダー表面の速度 ω×r (y 軸まわり)。地面 (最下段の固体行) は静止。solidOmega==0 なら 0。
 vec3 pyroSolidVel(vec3 p) {

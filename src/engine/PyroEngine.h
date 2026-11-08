@@ -37,6 +37,12 @@ public:
 #endif
 
   // pc_と同名同義の物理パラメータ(buoyancyAlpha等)は個別メンバを持たずpc_を直接書き換える。numPressureItersはRed-Black Gauss-Seidel sweep回数(1 sweepにつきred/black 2ディスパッチ)。
+  // 有効なチャンネル (init() 前に設定)。無効なチャンネルは 1 要素のダミーバッファになり、その分のメモリ (1 セルあたり density 8B, temperature 8B, fuel 8B, flame 4B, curl 16B) を節約できる。
+  // 風洞のように速度場しか使わないなら kChVelocityOnly で 1 セル約 44 byte (既定 88 byte)。燃焼 (fuel/flame) には fuel+temperature+flame+density、浮力には temperature+density、渦度閉じ込めには curl が必要。
+  static constexpr uint32_t kChDensity = 1u, kChTemperature = 2u, kChFuel = 4u, kChFlame = 8u, kChCurl = 16u;
+  static constexpr uint32_t kChAll = 31u, kChVelocityOnly = 0u;
+  uint32_t channels = kChAll;
+
   int numPressureIters = 10; // CPU側ループ回数(PyroSimPCに対応フィールドなし)
   int numSubsteps      = 1;  // CPU側ループ回数(PyroSimPCに対応フィールドなし)
 

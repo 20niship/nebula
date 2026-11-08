@@ -51,6 +51,8 @@ sun.rotation_euler = (0.9, 0.2, 0.6)
 bpy.context.collection.objects.link(sun)
 
 for f in range(a.frames[0], a.frames[1] + 1, a.step):
+    if C.done(f"{a.out}/frame_{f:05d}.png"):
+        continue
     t0 = time.time()
     pos, spd, lo, hi = load_nbp(f"{a.src}/frame_{f:05d}.nbp")
     v, fa = surface_mesh(pos, lo, hi, a.voxel)

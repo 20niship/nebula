@@ -15,6 +15,10 @@ A real-time GPU physics simulator built entirely on **Vulkan compute shaders** �
 
 https://github.com/user-attachments/assets/fc7bfe51-39a6-4694-a515-f3288ba808cb
 
+https://github.com/user-attachments/assets/2b6674f5-aa29-4dbf-87a3-444f5e1d23a6
+
+<sub>Note: the video above (10M-particle fluid · city wind · avalanche) is rendered with Blender. See [examples/demo/README.md](examples/demo/README.md) for how to run it.</sub>
+
 ---
 
 ## Why nebula

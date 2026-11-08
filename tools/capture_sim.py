@@ -28,7 +28,7 @@ FLIP (FLIPEngine) の両方を撮影する (id に "_flip" を付けた別エン
   TC-K: Pyro 牛への爆風 — 流速ヒートマップ表示                 pyro_cow_blast
   TC-L: Pyro 爆発 (キノコ雲) — smoke/fire ボリューム表示       pyro_explosion
 使い方:
-  python3 tools/capture_sim.py [--frames N] [--fps F] [--perf-json PATH] [--commit-sha SHA]
+  python3 tools/capture_sim.py [--frames N] [--fps F] [--no-individual] [--perf-json PATH] [--commit-sha SHA]
 """
 
 import argparse
@@ -491,16 +491,17 @@ def write_perf_json(path: Path, n_frames: int, commit_sha: str, timing: dict):
     print(f"  perf JSON 出力: {path}")
 
 
-def encode_video(frame_dir: Path, out_path: Path, fps: int):
+def encode_video(frame_dir: Path, out_path: Path, fps: int, ext: str = "png", scale: str = "scale=1920:-2"):
+    """frame_dir/frame%04d.<ext> を MP4 にする。scale は ffmpeg の -vf (個別動画は元解像度のまま偶数丸め)。"""
     if shutil.which("ffmpeg"):
         cmd = [
-            "ffmpeg", "-y",
+            "ffmpeg", "-y", "-loglevel", "error",
             "-framerate", str(fps),
-            "-i",         str(frame_dir / "frame%04d.png"),
+            "-i",         str(frame_dir / f"frame%04d.{ext}"),
             "-vcodec",    "libx264",
             "-pix_fmt",   "yuv420p",
             "-preset",    "fast",
-            "-vf",        "scale=1920:-2",
+            "-vf",        scale,
             str(out_path),
         ]
         subprocess.run(cmd, check=True)
@@ -509,7 +510,7 @@ def encode_video(frame_dir: Path, out_path: Path, fps: int):
         try:
             import imageio
             writer = imageio.get_writer(str(out_path), fps=fps)
-            for p in sorted(frame_dir.glob("frame*.png")):
+            for p in sorted(frame_dir.glob(f"frame*.{ext}")):
                 writer.append_data(imageio.imread(str(p)))
             writer.close()
             print(f"  動画保存 (imageio): {out_path}")
@@ -532,6 +533,8 @@ def main():
                         help="perf-json に埋め込む commit sha (未指定なら git rev-parse HEAD)")
     parser.add_argument("--sim-timeout", type=float, default=0,
                         help="1シムあたりの最大実行秒数 (0=無制限; CIでのハング対策)")
+    parser.add_argument("--no-individual", action="store_true",
+                        help="シムごとの個別 MP4 (OUT_DIR/videos/<id>.mp4) を生成しない (既定は生成する)")
     parser.add_argument("--skip-sim", action="store_true",
                         help="シム実行/既存フレーム削除をスキップし、OUT_DIR に既に保存済みのフレームだけでグリッド合成・動画エンコードする")
     cli = parser.parse_args()
@@ -567,6 +570,22 @@ def main():
             fps_map[sim["id"]] = f"RealFPS: {len(frames) / elapsed:.1f}"
         else:
             fps_map[sim["id"]] = f"FAILED (rc={returncode})"
+
+    # シムごとの個別動画 (グリッド動画とは別に、元解像度のまま videos/<id>.mp4 へ)
+    if not cli.no_individual:
+        video_dir = OUT_DIR / "videos"
+        video_dir.mkdir(exist_ok=True)
+        print("\n=== 個別動画エンコード ===")
+        for sim in SIMS:
+            frames = sim_frames.get(sim["id"], [])
+            if not frames:
+                continue
+            ext = Path(frames[0]).suffix.lstrip(".")
+            try:
+                encode_video(Path(frames[0]).parent, video_dir / f"{sim['id']}.mp4", video_fps, ext,
+                             scale="scale=trunc(iw/2)*2:trunc(ih/2)*2")
+            except Exception as e:
+                print(f"  [warn] {sim['id']} の動画エンコードに失敗: {e}")
 
     if cli.perf_json:
         write_perf_json(Path(cli.perf_json), n_frames, _resolve_commit_sha(cli.commit_sha), timing)

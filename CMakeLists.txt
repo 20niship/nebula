@@ -281,5 +281,5 @@ endif()
 add_custom_target(capture_all DEPENDS
     fluid_pbf cloth_3d cloth_scene smoke fluid_absorb xpbd_softbody
     screw_fluid fluid_wave_foam mpm_elastic mpm_avalanche mpm_multimaterial
-    mpm_snow_impact mpm_geolayer mpm_tire_sand pyro_cow_blast pyro_explosion
+    mpm_snow_impact mpm_geolayer mpm_tire_sand fluid_spume pyro_cow_blast pyro_explosion
 )

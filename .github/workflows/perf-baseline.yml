@@ -36,7 +36,8 @@ jobs:
         run: |
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
-            -DVULKAN_SDK=/usr
+            -DVULKAN_SDK=/usr \
+            -DPython3_EXECUTABLE=$(which python3)
 
       - name: Build capture targets
         run: cmake --build build --target capture_all -j$(nproc)

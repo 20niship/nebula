@@ -13,9 +13,9 @@
 
 [プロジェクトページ](https://20niship.github.io/nebula/) · [Examples](#サンプル) · [English](README.md)
 
-https://github.com/user-attachments/assets/312909e0-fa6e-499f-b63e-fa1554af9ced
+https://github.com/user-attachments/assets/00c55268-2028-4ad3-9af5-5cb14007cdfa
 
-<sub>注: 上の動画 (海岸の波・都市風・雪崩) は Blender でレンダリングしています。実行方法の詳細は [examples/demo/README.md](examples/demo/README.md) を参照してください。</sub>
+<sub>注: 上の動画 (海岸の波・回転する車の風洞・雪崩) は Blender でレンダリングしています (車の風洞は Q 基準の渦の等値面を PyVista で描画)。実行方法の詳細は [examples/demo/README.md](examples/demo/README.md) を参照してください。</sub>
 
 https://github.com/user-attachments/assets/fc7bfe51-39a6-4694-a515-f3288ba808cb
 

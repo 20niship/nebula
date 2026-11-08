@@ -123,7 +123,7 @@ private:
     engine_->init(base_.ctx.device, base_.ctx.allocator, base_.descriptorPool, base_.ctx.graphicsCommandPool, base_.ctx.graphicsQueue, SHADER_DIR_STR);
     if(substeps > 0) engine_->numSubsteps = substeps;
     engine_->flip_ratio = flipRatio;
-    gravity_            = GravityForce::FromDirection({0.0f, 0.0f, 1.0f}, 9.8f);
+    gravity_            = GravityForce::FromDirection({0.0f, 0.0f, -1.0f}, 9.8f);
     engine_->addForce(gravity_);
     engine_->setMaterials({presetWater()});
 

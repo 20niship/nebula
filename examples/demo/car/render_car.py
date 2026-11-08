@@ -116,6 +116,16 @@ def main():
 
     npz = np.load(ASSETS / "car.npz")
     car0 = pv.PolyData(npz["verts"].astype(np.float32), np.c_[np.full(len(npz["faces"]), 3), npz["faces"]].ravel())
+    # 車体の部位ごとに色を付ける (ローカル座標で判定): リアウイング=オレンジ (スロットが見える)、車輪=濃いグレー、車体=明るい青みがかった白
+    lp = car0.points
+    col = np.tile(np.array([205, 214, 230], np.uint8), (len(lp), 1))
+    wheel = np.zeros(len(lp), bool)
+    for wx in (1.35, -1.25):
+        wheel |= (np.hypot(lp[:, 0] - wx, lp[:, 1] - 0.34) < 0.37) & (np.abs(np.abs(lp[:, 2]) - 0.80) < 0.18)
+    col[wheel] = (45, 48, 56)
+    col[(lp[:, 0] < -1.55) & (lp[:, 1] > 0.88)] = (255, 140, 20)  # ウイング (2 枚 + 端板 + 支柱の上部)
+    col[(lp[:, 0] > 1.75) & (lp[:, 1] < 0.14)] = (255, 90, 90)    # フロントスプリッター
+    car0["rgb"] = col
     qs = sorted(int(n[2:7]) for n in os.listdir(a.src) if n.startswith("q_") and n.endswith(".qvox"))
 
     pl = pv.Plotter(off_screen=True, window_size=tuple(a.res))
@@ -137,7 +147,7 @@ def main():
         R = np.array([[c, 0, s], [0, 1, 0], [-s, 0, c]])  # y 軸まわり (エンジンの Ry と同じ向き)
         car = car0.copy()
         car.points = (car0.points @ R.T + P3).astype(np.float32)
-        actors = [pl.add_mesh(car, color="#2a2e38", opacity=0.55, smooth_shading=True, specular=0.5)]
+        actors = [pl.add_mesh(car, scalars="rgb", rgb=True, opacity=0.92, smooth_shading=True, specular=0.4)]
         if a.vis in ("q", "both"):
             qf = min(qs, key=lambda k: abs(k - f))
             m = vortex_mesh(f"{a.src}/q_{qf:05d}.qvox", a.smooth, a.q_boost)

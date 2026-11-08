@@ -16,6 +16,7 @@
 #include <cstring>
 #include <filesystem>
 #include <random>
+#include <thread>
 
 static const std::string SHADER_DIR_STR = SHADER_DIR;
 
@@ -35,7 +36,57 @@ struct Args : public argparse::Args {
   int& tracer_life = kwarg("tracer-life", "max tracer age [steps]").set_default(400);
   int& warmup      = kwarg("warmup", "この step 数までは記録しない (一様流の初期化 + 後流の立ち上がり)").set_default(120);
   int& seed        = kwarg("seed", "tracer seed").set_default(7);
+  int& q_every     = kwarg("q-every", "Q 基準 (渦の等値面) を N ステップごとに q_%05d.qvox へ書き出す (0=しない)").set_default(4);
+  float& q_thresh  = kwarg("q-thresh", "Q の閾値 (wind/車高 1.3m)^2 に対する比。これ以上のセルだけ書き出す").set_default(0.5f);
 };
+
+// Q 基準 Q = 0.5 (|Omega|^2 - |S|^2) (速度勾配テンソルの反対称/対称成分) が thresh 以上の流体セルを書き出す。
+// FluidX3D の渦構造の可視化と同じ量。形式: "QVX1" | u32 nx ny nz | f32 cell | f32 vmax | u32 n | n x { u16 x,y,z; u8 speed (0..vmax); u8 q (0..255 = thresh..8*thresh の対数) }
+// solid(x,y,z) が true のセルと、その 2 セル以内は壁の速度勾配で Q が荒れるので除く。
+template <class Solid>
+static uint32_t writeQvox(const std::string& path, const std::vector<glm::vec4>& vel, glm::uvec3 res, float cell, float thresh, float vmax, Solid solid) {
+  const unsigned nt = std::max(1u, std::thread::hardware_concurrency());
+  struct Cell {
+    uint16_t x, y, z;
+    uint8_t s, q;
+  };
+  std::vector<std::vector<Cell>> out(nt);
+  auto work = [&](unsigned t) {
+    auto V = [&](int x, int y, int z) { return glm::vec3(vel[meshSdfMortonEncode(uint32_t(x), uint32_t(y), uint32_t(z))]); };
+    const float inv = 0.5f / cell;
+    for(uint32_t z = 2 + t; z + 2 < res.z; z += nt)
+      for(uint32_t y = 2; y + 2 < res.y; y++)
+        for(uint32_t x = 2; x + 2 < res.x; x++) {
+          if(solid(int(x), int(y), int(z))) continue;
+          const glm::vec3 dx = (V(x + 1, y, z) - V(x - 1, y, z)) * inv, dy = (V(x, y + 1, z) - V(x, y - 1, z)) * inv, dz = (V(x, y, z + 1) - V(x, y, z - 1)) * inv;
+          // A_ij = d u_i / d x_j : 列 j は d/dx_j
+          const float a00 = dx.x, a01 = dy.x, a02 = dz.x, a10 = dx.y, a11 = dy.y, a12 = dz.y, a20 = dx.z, a21 = dy.z, a22 = dz.z;
+          const float s01 = 0.5f * (a01 + a10), s02 = 0.5f * (a02 + a20), s12 = 0.5f * (a12 + a21);
+          const float w01 = 0.5f * (a01 - a10), w02 = 0.5f * (a02 - a20), w12 = 0.5f * (a12 - a21);
+          const float S2 = a00 * a00 + a11 * a11 + a22 * a22 + 2.0f * (s01 * s01 + s02 * s02 + s12 * s12);
+          const float W2 = 2.0f * (w01 * w01 + w02 * w02 + w12 * w12);
+          const float Q  = 0.5f * (W2 - S2);
+          if(Q < thresh) continue;
+          const float sp = glm::length(V(x, y, z));
+          out[t].push_back({uint16_t(x), uint16_t(y), uint16_t(z), uint8_t(std::clamp(sp / vmax, 0.0f, 1.0f) * 255.0f), uint8_t(std::clamp(std::log2(Q / thresh) / 3.0f, 0.0f, 1.0f) * 255.0f)});
+        }
+  };
+  std::vector<std::thread> th;
+  for(unsigned t = 0; t < nt; t++) th.emplace_back(work, t);
+  for(auto& t : th) t.join();
+  uint32_t n = 0;
+  for(auto& v : out) n += uint32_t(v.size());
+  FILE* f = std::fopen(path.c_str(), "wb");
+  std::fwrite("QVX1", 1, 4, f);
+  const uint32_t dims[3] = {res.x, res.y, res.z};
+  std::fwrite(dims, 4, 3, f);
+  std::fwrite(&cell, 4, 1, f);
+  std::fwrite(&vmax, 4, 1, f);
+  std::fwrite(&n, 4, 1, f);
+  for(auto& v : out) std::fwrite(v.data(), sizeof(Cell), v.size(), f);
+  std::fclose(f);
+  return n;
+}
 
 int main(int argc, char* argv[]) {
   auto a = argparse::parse<Args>(argc, argv);
@@ -169,6 +220,14 @@ int main(int argc, char* argv[]) {
       }
       if(f >= a.warmup) {
         std::fwrite(rec.data(), 4, rec.size(), trf);
+        if(a.q_every > 0 && steps % uint32_t(a.q_every) == 0) {
+          const float qth = a.q_thresh * (a.wind / 1.3f) * (a.wind / 1.3f);
+          char qp[512];
+          std::snprintf(qp, sizeof qp, "%s/q_%05u.qvox", a.out.c_str(), steps);
+          // 車の表面から 3 セル以内と地面付近 (最下段 3 セル) は除く
+          const uint32_t n = writeQvox(qp, vel, res, a.cell, qth, 1.6f * a.wind, [&](int x, int y, int z) { return y < 3 || carSdf((glm::vec3(float(x), float(y), float(z)) + 0.5f) * a.cell, angle) < 3.0f * a.cell; });
+          std::printf("  q_%05u: %u cells\n", steps, n);
+        }
         steps++;
       }
       if(f % 30 == 0) std::printf("step %d/%d  %.1fs\n", f, a.frames, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count()), std::fflush(stdout);

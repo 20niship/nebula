@@ -75,11 +75,12 @@ uv run python seashore/render_seashore.py out/seashore --frames 150 150 --out ou
 cd examples/demo
 uv run car/make_car.py                    # car.sdf (シミュレーション用, 2cm) / car.npz (Blender 用メッシュ) / 形状確認の断面 PNG
 ../../build/examples/demo/demo_car_wind --out out/car      # 約 1024×256×256 格子, 720 ステップ (dt=1/120)
-uv run python car/render_car.py out/car --frames 0 600 --step 4 --out out/car_png --samples 48
+uv run python car/render_car.py out/car --frames 0 600 --step 4 --out out/car_png --samples 48 --vis q   # q / streamlines / both
 ```
 
 - 回転は `PyroEngine::setRotatingCollider` (車のローカル SDF を毎サブステップ GPU でトリリニア補間して回し、固体セルと表面付近に壁面速度 ω×r を課す)。車体の自転で流れが引きずられる効果が入る。静止コライダー (都市風デモなど) の挙動は変えていない。
 - 格子は 1024×256×256 (2^26 セル, 約 6GB)。Pyro のバッファは Morton 符号の最大値 + 1 セルで、x>=y>=z の 2^n 直方体ならちょうど実セル数になる。1024×512×256 は約 12GB で 12GB の GPU に載らない。
+- 可視化は既定で **Q 基準の等値面** (FluidX3D の渦構造と同じ。速度勾配テンソルの Q = ½(|Ω|² − |S|²) > 0 が渦)。`demo_car_wind` が 4 ステップごとに Q が閾値 (`--q-thresh`, 既定 (風速/車高)² の 0.5 倍) 以上の流体セルだけをスパースに `q_*.qvox` へ書き出す (1 枚約 数十 MB。車の表面 3 セル以内と地面は壁の勾配で荒れるので除く)。Blender 側で等値面メッシュ (marching cubes) を作り、速度で青→緑→赤に着色して発光させる。`--q-boost` で書き出し閾値の何倍以上を面にするか決める (大きいほど細い渦管だけ)。流線 (`--vis streamlines`) は車体に被って見づらいので既定にしていない。
 - 流線は毎フレーム引き直さず、トレーサ粒子を格子速度に乗せて流した軌跡を描く (都市風デモと同じ。`tracers.bin` の形式も同じ)。
 - 車の SDF は節点間隔 2 cm。ウイングのスロットは既定 8 cm = 4 セル。
 

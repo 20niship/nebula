@@ -47,6 +47,19 @@ TEST_CASE("domain::hashCellsCube - 実セル数の最大軸以上の最小の2�
   CHECK(hc > res.x * res.y * res.z); // Morton符号空間はより疎なので必ず大きい
 }
 
+TEST_CASE("domain::hashCellsMorton - Morton 符号の最大値+1 (Pyro のバッファ数)") {
+  CHECK(domain::hashCellsMorton(glm::uvec3(64u, 64u, 64u)) == 64u * 64u * 64u);   // 2^n 立方体は hashCellsCube と一致
+  CHECK(domain::hashCellsMorton(glm::uvec3(512u, 256u, 256u)) == 512u * 256u * 256u); // x>=y>=z の 2^n 直方体は実セル数ちょうど
+  CHECK(domain::hashCellsMorton(glm::uvec3(512u, 512u, 256u)) == 512u * 512u * 256u);
+  CHECK(domain::hashCellsMorton(glm::uvec3(256u, 128u, 128u)) == 256u * 128u * 128u);
+  CHECK(domain::hashCellsMorton(glm::uvec3(1u, 1u, 1u)) == 1u);
+  // 短い軸が x/y だと符号に穴が空くが、立方体を超えることはない
+  const glm::uvec3 r(128u, 256u, 512u);
+  CHECK(domain::hashCellsMorton(r) <= domain::hashCellsCube(r));
+  CHECK(domain::hashCellsMorton(r) >= r.x * r.y * r.z);
+  CHECK(domain::hashCellsMorton(glm::uvec3(40u, 10u, 10u)) <= domain::hashCellsCube(glm::uvec3(40u, 10u, 10u)));
+}
+
 TEST_CASE("domain::computeAdaptiveMortonParams / hashCells - 軸ごとの必要ビット数の合計で決まる直方体") {
   // 立方体ドメイン (bx=by=bz=6): commonBits=6, shiftはすべてinterleave部のみ
   {

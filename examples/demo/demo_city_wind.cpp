@@ -1,7 +1,8 @@
 // 気流シミュレーション: ビル群の中を風が通り抜ける。PyroEngine (オイラー格子) で風速場を解き、毎ステップ流れに乗せたトレーサ粒子の軌跡を tracers.bin に書き出す。
 // 流線を各フレームの瞬間速度場から引くと、後流の渦で軌跡が毎フレーム別物になりちらつく。トレーサを時間方向に連続して流す (pathline) ことでちらつきを避ける。
 // ビル配置は city.txt (x0 y0 z0 x1 y1 z1 [m])、領域は domain.txt に書き出し、render/render_wind.py が Blender で読み込む。
-// 格子は 256x128x128 固定 (PyroEngine は 2^n の立方体 Morton グリッドで、512^3 は約 12GB で載らない)。--cell-size で領域の実寸が決まる。
+// 格子は 512x256x256 固定。PyroEngine のバッファは Morton 符号の最大値+1 セル (1 セル約 88 byte) で、x>=y>=z の 2^n 直方体ならちょうど実セル数 (約 3GB)。
+// 立方体 512^3 (約 12GB) は載らないので、風下 x を最長・高さ y と幅 z を短くする。--cell-size で領域の実寸が決まる。
 #include "core/MeshSDF.h"
 #include "engine/PyroEngine.h"
 #include "helpers/HeadlessCtx.h"
@@ -23,10 +24,10 @@ struct Args : public argparse::Args {
   std::string& out = kwarg("out", "output directory").set_default(std::string("out/wind"));
   int& frames      = kwarg("frames", "simulation steps").set_default(720);
   int& dump_every  = kwarg("dump-every", "dump a .pvox (全チャンネル, 1 枚約 150MB) every N steps (0=しない)").set_default(0);
-  int& tracers     = kwarg("tracers", "tracer particles (pool size)").set_default(8000);
+  int& tracers     = kwarg("tracers", "tracer particles (pool size)").set_default(20000);
   int& tracer_life = kwarg("tracer-life", "max tracer age [steps]").set_default(500);
   float& dt        = kwarg("dt", "step [s]").set_default(1.0f / 30.0f);
-  float& cell      = kwarg("cell-size", "cell size [m] (格子 256x128x128 なので領域 = 256,128,128 x cell)").set_default(0.4f);
+  float& cell      = kwarg("cell-size", "cell size [m] (格子 512x256x256 なので領域 = 512,256,256 x cell)").set_default(0.4f);
   float& wind      = kwarg("wind", "inflow wind speed [m/s]").set_default(14.0f);
   int& iters       = kwarg("pressure-iters", "pressure solver sweeps").set_default(120);
   int& seed        = kwarg("seed", "city layout seed").set_default(7);
@@ -45,7 +46,7 @@ static float boxSdf(glm::vec3 p, const Box& b) {
 int main(int argc, char* argv[]) {
   auto a = argparse::parse<Args>(argc, argv);
   try {
-    const glm::vec3 domain = glm::vec3(256.0f, 128.0f, 128.0f) * a.cell;
+    const glm::vec3 domain = glm::vec3(512.0f, 256.0f, 256.0f) * a.cell;
 
     // 街区: 道路幅 6~10m、区画 14~18m を格子状に並べ、高さを乱数で決める。上流 (x<24m) は助走区間として空ける。
     std::mt19937 rng(a.seed);
@@ -120,7 +121,7 @@ int main(int argc, char* argv[]) {
     std::vector<Tracer> tr(size_t(a.tracers));
     std::vector<glm::vec4> vel(e.totalCells());
     auto spawn = [&](Tracer& t) {
-      t.p = {3.0f, 1.0f + (domain.y - 8.0f) * U(rng) * U(rng), 2.0f + (domain.z - 4.0f) * U(rng)};  // 地表近くほど密にして、ビルの周りを濃く見せる
+      t.p = {3.0f, 1.0f + (std::min(domain.y - 8.0f, 56.0f)) * U(rng) * U(rng), 2.0f + (domain.z - 4.0f) * U(rng)};  // 地表近くほど密にして、ビルの周りを濃く見せる
       t.age = 0;
       t.gen++;
     };

@@ -280,7 +280,10 @@ TEST_CASE("Pyro CPU - 6-1: Non-cubic domain derives per-axis gridRes and cubeRes
   CHECK(res.y == 7); // ceil(4/0.625) = ceil(6.4) = 7
   CHECK(res.z == 32);
   CHECK(engine.cubeRes() == 32); // 最大軸(32)が既に2^nなのでそのまま
-  CHECK(engine.totalCells() == 32u * 32u * 32u);
+  // バッファ数は立方体 (32^3) ではなく Morton 符号の最大値+1。短い y 軸 (7 セル) の分だけ小さい
+  CHECK(engine.totalCells() == domain::hashCellsMorton(res));
+  CHECK(engine.totalCells() < 32u * 32u * 32u);
+  CHECK(engine.totalCells() >= res.x * res.y * res.z);
 }
 
 TEST_CASE("Pyro GPU - 6-2: Non-cubic domain simulation stays finite inside the real cell bounds") {

@@ -5,7 +5,7 @@ nebula で時間をかけてシミュレーションし、結果を Blender (`bp
 
 | デモ | 実行ファイル | ソルバー | 規模 | レンダリング |
 |---|---|---|---|---|
-| 1. 市街地の気流 | `demo_city_wind` | `PyroEngine` (オイラー格子, 開境界) | 256×96×128 格子 / ビル 20 棟 | 速度場から追跡した流線 (風速で色分け) + ビル群 (Cycles) |
+| 1. 市街地の気流 | `demo_city_wind` | `PyroEngine` (オイラー格子, 開境界) | 512×256×256 格子 (セル 0.4 m, 領域 205×102×102 m) / ビル 28 棟 | 流れに乗せたトレーサ粒子の軌跡 (風速で色分け) + ビル群 (Cycles) |
 | 2. 雪崩 | `demo_avalanche_mesh` | `MPMEngine` (Drucker-Prager) | 約 1070 万粒子 / 国土地理院 DEM 由来の地形 + 樹木 37 本 + 岩 16 個 | 密度場から数百万三角形の雪面メッシュを再構成 + DEM 地形メッシュ + 黒松メッシュ (Cycles) |
 | 3. 海岸の波 (issue #137) | `demo_seashore` | `FLIPEngine` (非圧縮 FLIP + 泡) | 既定 約 610 万粒子 (`--spacing 0.055` で約 1000 万) + 泡 最大 400 万 | 水面等値面 + 泡の小球インスタンス + 岩 usdc (Cycles, 横動画) |
 
@@ -14,14 +14,14 @@ nebula で時間をかけてシミュレーションし、結果を Blender (`bp
 ```bash
 # 1. nebula 側 (headless)。出力は out/<demo>/ (git 管理外)
 cmake -B build -DCMAKE_BUILD_TYPE=Release -DNEBULA_BUILD_DEMOS=ON && cmake --build build -j
-./build/examples/demo/demo_city_wind      --out examples/demo/out/wind         # 数分
+./build/examples/demo/demo_city_wind      --out examples/demo/out/wind         # 約 16 分 (出力はトレーサ軌跡 tracers.bin 約 210MB。GPU メモリ約 3.4GB)
 # 雪崩は地形 DEM が先に必要 (下記「雪崩の入力アセット」。DEM は git 管理外)
 (cd examples/demo && python dem/fetch_dem.py && python dem/make_patch.py 122 88 58 42)
 ./build/examples/demo/demo_avalanche_mesh --out examples/demo/out/avalanche --scale 1.3 --frames 400 --substeps 48 --ground-friction 0.1 --friction 0.3 --cohesion 100   # 約 45 分
 
 # 2. Blender 側 (uv が bpy を取得する。Python 3.11 固定)
 cd examples/demo
-uv run python render/render_wind.py      out/wind      --frames 0 119 --out out/wind_png
+uv run python render/render_wind.py      out/wind      --frames 0 659 --step 2 --out out/wind_png
 uv run python render/render_avalanche.py out/avalanche --frames 0 330 --out out/avalanche_png
 ```
 
@@ -67,8 +67,9 @@ uv run python seashore/render_seashore.py out/seashore --frames 150 150 --out ou
 ## データ形式
 
 - `.nbp` (`NbpDump.h`): 粒子フレーム。位置は領域 AABB に対する `uint16` 量子化 (1000 万粒子で 1 フレーム約 70MB) + 速さ `uint8`。`render/nbp.py` が読む。
-- `.pvox` (`PyroEngine::dumpFrame`): Pyro の格子データ。
-- `city.txt` / `obstacles.txt` / `terrain.f32`: Blender 側でシーンを再現するためのビル配置・樹木と岩・地形高さ。
+- `.pvox` (`PyroEngine::dumpFrame`): Pyro の格子データ (512×256×256 では 1 枚約 600MB。`demo_city_wind --dump-every N` で出す。既定は出さない)。
+- `tracers.bin` (`demo_city_wind`): トレーサ粒子の軌跡。`"TRC1" | u32 steps | u32 M | f32 dt | f32 domain[3] | steps × M × { f32 xyz, u32 gen }` (660 ステップ × 20000 粒子 × 16 byte ≈ 210MB)。`gen` は湧き直すと増える (描画側で軌跡を切る)。`render/render_wind.py` が読む。
+- `city.txt` / `domain.txt` / `obstacles.txt` / `terrain.f32`: Blender 側でシーンを再現するためのビル配置・領域・樹木と岩・地形高さ。
 
 ## 実装メモ
 
@@ -76,6 +77,11 @@ uv run python seashore/render_seashore.py out/seashore --frames 150 150 --out ou
 - `PyroSimPC::openBoundaryMask` を追加した (本 PR)。立っている面は領域外の圧力を 0 とみなす開境界になり、風が出入りできる。既定 0 は従来どおり全面閉。
 - Gauss-Seidel の圧力ソルバは大域的な圧力場の収束が遅い (N² 反復) ため、最初の 45 ステップだけ領域全体を一様流に寄せ、街区周りの局所補正だけ解かせる。
   以降は上流のファン (エミッタ) が風速を維持する。
+- Pyro のバッファは「Morton 符号の最大値 + 1」セル (1 セル約 88 byte)。従来は 2^n の立方体 (`cubeRes^3`) を確保しており、512³ は約 12GB で載らなかった。
+  軸が x>=y>=z の順に長い 2^n 直方体 (512×256×256) なら上位ビットが立たず、符号の範囲がちょうど実セル数 (3350 万セル, 約 3GB) になる。風下 x を最長、高さ y と幅 z を短くしている。
+  短い軸が x/y の直方体でも動くが、符号に穴が空く分だけ大きくなる (立方体を超えることはない)。
+- 流線ではなくトレーサの軌跡 (pathline) を描く。瞬間速度場から毎フレーム流線を引くと、(1) 種を毎フレーム作り直していた、(2) 後流の渦で軌跡が敏感に変わる、の両方でちらつく。256×128×128 で実測すると、速度場自体は 0.2 秒で約 3.5% しか変わらないが、500 ステップ追跡した流線の終点は大きくずれた。
+  トレーサは毎ステップ格子速度 (トリリニア, RK2) で流し、風上の断面から湧かせて、風下・建物内に入ったら湧き直す。軌跡は時間方向に連続するのでちらつかない。
 
 ### 2. 雪崩
 - 雪は Drucker-Prager (摩擦 M=0.3, 凝集 100 Pa) で、斜面 (約 31°) に積もった厚さ 3〜4.5 m の層。地形コライダの摩擦を小さく (0.1) して滑り出させる。

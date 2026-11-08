@@ -15,9 +15,9 @@
 
 https://github.com/user-attachments/assets/fc7bfe51-39a6-4694-a515-f3288ba808cb
 
-https://github.com/user-attachments/assets/2b6674f5-aa29-4dbf-87a3-444f5e1d23a6
+https://github.com/user-attachments/assets/4347f93c-635c-4ec7-9fb3-be4a3c96b61c
 
-<sub>注: 上の動画 (1000 万粒子の流体・都市風・雪崩) は Blender でレンダリングしています。実行方法の詳細は [examples/demo/README.md](examples/demo/README.md) を参照してください。</sub>
+<sub>注: 上の動画 (海岸の波・都市風・雪崩) は Blender でレンダリングしています。実行方法の詳細は [examples/demo/README.md](examples/demo/README.md) を参照してください。</sub>
 
 ---
 

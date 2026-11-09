@@ -47,9 +47,6 @@ void PyroEngine::dispatchAndBarrier(VkCommandBuffer cmd, ComputePipeline& k, con
 // ── 初期化 ────────────────────────────────────────────────────────────────
 
 void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir) {
-  // Morton符号化は10bit幅(軸あたり最大1024)のため、domainSize/cellSizeから導出されるcubeResがこれを超える場合のみ例外を投げる。
-  if(cubeRes() > 1024) throw std::runtime_error("PyroEngine: domainSize/cellSize から導出される Morton cube 解像度が上限を超えています (cubeRes=" + std::to_string(cubeRes()) + " > 1024)");
-
   initEngineBase(device, allocator, descriptorPool, cmdPool, queue);
 
   const uint32_t NC = totalCells();
@@ -138,13 +135,13 @@ void PyroEngine::cleanup() {
 
 // ── 障害物 SDF ────────────────────────────────────────────────────────────
 
-void PyroEngine::setColliderSDF(const std::vector<float>& mortonSDF) {
-  if(mortonSDF.size() != totalCells())
-    throw std::runtime_error("PyroEngine::setColliderSDF: mortonSDF size (" + std::to_string(mortonSDF.size()) + ") must equal totalCells() (" + std::to_string(totalCells()) + ")");
+void PyroEngine::setColliderSDF(const std::vector<float>& linearSDF) {
+  if(linearSDF.size() != totalCells())
+    throw std::runtime_error("PyroEngine::setColliderSDF: linearSDF size (" + std::to_string(linearSDF.size()) + ") must equal totalCells() (" + std::to_string(totalCells()) + ")");
   if(colliderSDFIdx_ == 0) {
     colliderSDFIdx_ = attrBuf_.addAttribute("colliderSDF", sizeof(float), totalCells());
   }
-  attrBuf_.upload("colliderSDF", mortonSDF.data(), mortonSDF.size() * sizeof(float), cmdPool_, queue_);
+  attrBuf_.upload("colliderSDF", linearSDF.data(), linearSDF.size() * sizeof(float), cmdPool_, queue_);
 }
 
 void PyroEngine::clearCollider() {
@@ -430,29 +427,13 @@ void PyroEngine::readBufferToCPU(VkBuffer src, void* dst, size_t bytes) const {
 
 namespace {
 
-// GPU 側 pyroMortonCompact/pyroMortonDecodeI (shaders/pyro_common.glsl) と同一ロジック
-uint32_t mortonCompact(uint32_t v) {
-  v &= 0x09249249u;
-  v = (v | (v >> 2u)) & 0x030C30C3u;
-  v = (v | (v >> 4u)) & 0x0300F00Fu;
-  v = (v | (v >> 8u)) & 0x030000FFu;
-  v = (v | (v >> 16u)) & 0x000003FFu;
-  return v;
-}
-glm::ivec3 mortonDecode(uint32_t code) { return {int(mortonCompact(code)), int(mortonCompact(code >> 1u)), int(mortonCompact(code >> 2u))}; }
-
-// Morton 順(cubeCells要素、パディング含む)の配列から実セル範囲(realRes)内のみを取り出し、
-// 線形 (x + y*nx + z*nx*ny) 順に並べ替えて channelsOut へ追記する(パディングセルは除外)。
-// components=1: float スカラー。components=3: vec4 の xyz のみ (w は捨てる)。
-void appendChannelLinear(const std::vector<uint8_t>& mortonRaw, const glm::uvec3& realRes, uint32_t cubeCells, uint32_t components, std::vector<float>& out) {
-  out.resize(size_t(realRes.x) * realRes.y * realRes.z * components);
-  const float* src = reinterpret_cast<const float*>(mortonRaw.data());
-  for(uint32_t code = 0; code < cubeCells; ++code) {
-    glm::ivec3 c = mortonDecode(code);
-    if(uint32_t(c.x) >= realRes.x || uint32_t(c.y) >= realRes.y || uint32_t(c.z) >= realRes.z) continue; // パディングセルをスキップ
-    size_t lin = size_t(c.x) + size_t(c.y) * realRes.x + size_t(c.z) * realRes.x * realRes.y;
-    for(uint32_t k = 0; k < components; ++k) out[lin * components + k] = src[size_t(code) * (components == 1 ? 1u : 4u) + k];
-  }
+// 線形配置の生データから xyz (components=3 は vec4 の w を捨てる) だけを詰め直す。
+void appendChannelLinear(const std::vector<uint8_t>& raw, uint32_t components, std::vector<float>& out) {
+  const float* src = reinterpret_cast<const float*>(raw.data());
+  const size_t n   = raw.size() / (components == 1 ? sizeof(float) : sizeof(glm::vec4));
+  out.resize(n * components);
+  for(size_t i = 0; i < n; ++i)
+    for(uint32_t k = 0; k < components; ++k) out[i * components + k] = src[i * (components == 1 ? 1u : 4u) + k];
 }
 
 } // namespace
@@ -485,7 +466,7 @@ void PyroEngine::dumpFrame(const std::string& path, float simTime) const {
     const VkDeviceSize elemBytes = ch.components == 1 ? sizeof(float) : sizeof(glm::vec4);
     std::vector<uint8_t> raw(size_t(cubeCells) * elemBytes);
     readBufferToCPU(ch.buf, raw.data(), raw.size());
-    appendChannelLinear(raw, realRes, cubeCells, ch.components, linearData[i]);
+    appendChannelLinear(raw, ch.components, linearData[i]);
   }
 
   std::ofstream f(path, std::ios::binary);

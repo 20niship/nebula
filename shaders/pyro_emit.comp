@@ -16,7 +16,7 @@ void main() {
     if (gid >= totalCells) return;
     if (pc.emitterCount == 0u) return;
 
-    ivec3 ijk = pyroMortonDecodeI(gid);
+    ivec3 ijk = pyroCellCoord(gid);
     vec3  xi  = (vec3(ijk) + 0.5) * pc.cellSize + pc.worldMin;
 
     float densityAdd     = 0.0;

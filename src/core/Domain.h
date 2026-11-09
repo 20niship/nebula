@@ -103,6 +103,10 @@ inline uint32_t hashCellsMorton(const glm::uvec3& res) {
   return (expand(m.x) | (expand(m.y) << 1u) | (expand(m.z) << 2u)) + 1u;
 }
 
+// Pyro の線形配置 (x 最速) の添字。穴が無いので確保セル数 = nx*ny*nz。
+inline uint32_t linearIndex(const glm::uvec3& res, uint32_t x, uint32_t y, uint32_t z) { return x + res.x * (y + res.y * z); }
+inline uint32_t linearCells(const glm::uvec3& res) { return res.x * res.y * res.z; }
+
 inline uint32_t nGroups(uint32_t cells) { return (cells + 255u) / 256u; }
 
 } // namespace domain

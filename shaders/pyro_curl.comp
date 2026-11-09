@@ -14,7 +14,7 @@ void main() {
     if (gid >= totalCells) return;
     if (pc.curlIdx == 0u) return;
 
-    ivec3 ijk = pyroMortonDecodeI(gid);
+    ivec3 ijk = pyroCellCoord(gid);
     float invH2 = 0.5 / pc.cellSize;
 
     vec3 vXp = SAMPLE_VEC3_CLAMPED(pc.velIdxA, ijk.x + 1, ijk.y, ijk.z);

@@ -24,7 +24,7 @@ static const std::string ASSET_DIR_STR  = ASSET_DIR;
 
 struct PyroBasicArgs : public argparse::Args {
   // issue #46フォローアップ: ドメインは domainSize(XYZ物理サイズ)+cellSize(全軸共通セルサイズ)
-  // で指定する。Morton dispatch用の立方体解像度(2^n)は自動導出される (PyroEngine::cubeRes())。
+  // で指定する。バッファは線形配置 (x 最速)。
   float& domain_size_x = kwarg("domain-size-x", "ドメイン物理サイズ X [m]").set_default(10.0f);
   float& domain_size_y = kwarg("domain-size-y", "ドメイン物理サイズ Y [m]").set_default(10.0f);
   float& domain_size_z = kwarg("domain-size-z", "ドメイン物理サイズ Z [m]").set_default(10.0f);

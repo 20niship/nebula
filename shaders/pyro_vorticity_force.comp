@@ -14,7 +14,7 @@ void main() {
     if (gid >= totalCells) return;
     if (pc.curlIdx == 0u || pc.vorticityEps <= 0.0) return;
 
-    ivec3 ijk = pyroMortonDecodeI(gid);
+    ivec3 ijk = pyroCellCoord(gid);
     vec3  curlSelf = readVec4(pc.curlIdx, gid).xyz;
 
     float magXp = length(SAMPLE_VEC3_CLAMPED(pc.curlIdx, ijk.x + 1, ijk.y, ijk.z));

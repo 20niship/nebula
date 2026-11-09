@@ -21,9 +21,9 @@ layout(push_constant) uniform PC {
     uint  pressureIdxA;    // 36  float×CELLS (Red-Black Gauss-Seidel、in-place更新)
     uint  gsColor;         // 40  Red-Black反復の色 (0=red/1=black、旧pressureIdxBを転用)
     uint  divergenceIdx;   // 44  float×CELLS
-    uint  colliderSDFIdx;  // 48  float×CELLS (Morton SDF, 0=無効)
+    uint  colliderSDFIdx;  // 48  float×CELLS (線形 SDF, 0=無効)
     uint  emittersIdx;     // 52  EmitterGPU×emitterCount (0=無効)
-    uint  hashCells;       // 56  Morton dispatch用の稠密グリッド総セル数 (= cubeRes^3)
+    uint  hashCells;       // 56  dispatch 用の総セル数 (= nx*ny*nz)
     uint  emitterCount;    // 60
     uvec3 gridRes;         // 64  各軸の実セル数 (nx,ny,nz)
     float dt;              // 76
@@ -91,50 +91,34 @@ layout(push_constant) uniform PC {
 #define EMITTER_SHAPE_SPHERE  1u
 #define EMITTER_SHAPE_ELLIPSE 2u
 
-// ── Morton 符号 (Z-order curve, mpm_common.glsl と同一ロジック) ────────────
-uint pyroMortonExpand(uint v) {
-    v = (v | (v << 16u)) & 0x030000FFu;
-    v = (v | (v <<  8u)) & 0x0300F00Fu;
-    v = (v | (v <<  4u)) & 0x030C30C3u;
-    v = (v | (v <<  2u)) & 0x09249249u;
-    return v;
+// ── セル添字: 線形 (x 最速) = x + nx*(y + ny*z)。Morton の穴 (確保セル>実セル) を無くすため線形配置 ──
+uint pyroCellIndex(ivec3 c) {
+    return uint(c.x) + pc.gridRes.x * (uint(c.y) + pc.gridRes.y * uint(c.z));
 }
-uint pyroMortonCompact(uint v) {
-    v &= 0x09249249u;
-    v = (v | (v >>  2u)) & 0x030C30C3u;
-    v = (v | (v >>  4u)) & 0x0300F00Fu;
-    v = (v | (v >>  8u)) & 0x030000FFu;
-    v = (v | (v >> 16u)) & 0x000003FFu;
-    return v;
-}
-uint pyroMortonEncodeI(ivec3 c) {
-    return pyroMortonExpand(uint(c.x)) | (pyroMortonExpand(uint(c.y)) << 1u)
-                                        | (pyroMortonExpand(uint(c.z)) << 2u);
-}
-ivec3 pyroMortonDecodeI(uint code) {
-    return ivec3(pyroMortonCompact(code),
-                 pyroMortonCompact(code >> 1u),
-                 pyroMortonCompact(code >> 2u));
+ivec3 pyroCellCoord(uint id) {
+    uint x = id % pc.gridRes.x;
+    uint t = id / pc.gridRes.x;
+    return ivec3(x, t % pc.gridRes.y, t / pc.gridRes.y);
 }
 
 // セル中心グリッド座標 (ix,iy,iz) の境界クランプ付き読み取り
 // グリッド外は最近傍セルへクランプ (Neumann/clamp-to-edge 境界)。
 // 各軸独立の pc.gridRes(実セル数) でクランプすることで、直方体ドメインの短い軸が
-// Morton cube のパディング領域 (未定義値) へ漏れ出さないようにする。
+// バッファ外へ漏れ出さないようにする。
 #define CLAMP_CELL(ix_, iy_, iz_) ivec3( \
     clamp((ix_), 0, int(pc.gridRes.x) - 1), \
     clamp((iy_), 0, int(pc.gridRes.y) - 1), \
     clamp((iz_), 0, int(pc.gridRes.z) - 1))
 
 #define SAMPLE_FLOAT_CLAMPED(bufIdx, ix_, iy_, iz_) \
-    readFloat((bufIdx), pyroMortonEncodeI(CLAMP_CELL((ix_), (iy_), (iz_))))
+    readFloat((bufIdx), pyroCellIndex(CLAMP_CELL((ix_), (iy_), (iz_))))
 
 #define SAMPLE_VEC3_CLAMPED(bufIdx, ix_, iy_, iz_) \
-    readVec4((bufIdx), pyroMortonEncodeI(CLAMP_CELL((ix_), (iy_), (iz_)))).xyz
+    readVec4((bufIdx), pyroCellIndex(CLAMP_CELL((ix_), (iy_), (iz_)))).xyz
 
 // セル (ix,iy,iz) (クランプ後) が障害物内部 (SDF<0) かどうか。SDF 未設定なら常に false。
 #define CELL_IS_SOLID(ix_, iy_, iz_) ( pc.colliderSDFIdx != 0u && \
-    readFloat(pc.colliderSDFIdx, pyroMortonEncodeI(CLAMP_CELL((ix_), (iy_), (iz_)))) < 0.0 )
+    readFloat(pc.colliderSDFIdx, pyroCellIndex(CLAMP_CELL((ix_), (iy_), (iz_)))) < 0.0 )
 
 #define CH_DENSITY 1u
 #define CH_TEMPERATURE 2u

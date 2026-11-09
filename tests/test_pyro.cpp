@@ -1,7 +1,7 @@
 // Pyro (グリッドベース煙・火炎) 単体テスト
 // PyroEngine の公開 API (init/step/addEmitter/setColliderSDF/getXxxBuffer) が
 // HeadlessCtx 上でそのままテストハーネスとして使えるため、専用 Harness は作らない。
-#include "core/MeshSDF.h" // meshSdfMortonEncode を Morton インデックス計算に再利用
+#include "core/MeshSDF.h" 
 #include "engine/PyroEngine.h"
 #include "helpers/HeadlessCtx.h"
 #include <doctest/doctest.h>
@@ -89,14 +89,14 @@ TEST_CASE("Pyro GPU - 2-1: Pressure projection keeps interior divergence small")
 
   const uint32_t G  = engine.gridRes().x;
   const uint32_t NC = engine.totalCells();
-  std::vector<glm::vec4> velMorton(NC);
-  ctx.readBuffer(engine.getVelocityBuffer(), 0, velMorton.data(), NC * sizeof(glm::vec4));
+  std::vector<glm::vec4> velLinear(NC);
+  ctx.readBuffer(engine.getVelocityBuffer(), 0, velLinear.data(), NC * sizeof(glm::vec4));
 
   auto sampleVel = [&](int x, int y, int z) -> glm::vec3 {
     x = std::clamp(x, 0, int(G) - 1);
     y = std::clamp(y, 0, int(G) - 1);
     z = std::clamp(z, 0, int(G) - 1);
-    return glm::vec3(velMorton[meshSdfMortonEncode(uint32_t(x), uint32_t(y), uint32_t(z))]);
+    return glm::vec3(velLinear[engine.cellIndex(uint32_t(x), uint32_t(y), uint32_t(z))]);
   };
 
   const float h = engine.cellSize;
@@ -139,7 +139,7 @@ TEST_CASE("Pyro GPU - 3-1: Obstacle SDF zeroes velocity inside solid") {
     for(uint32_t y = 0; y < G; y++)
       for(uint32_t x = 0; x < G; x++) {
         glm::vec3 p                       = (glm::vec3(x, y, z) + 0.5f) * h;
-        sdf[meshSdfMortonEncode(x, y, z)] = glm::length(p - center) - radius;
+        sdf[engine.cellIndex(x, y, z)] = glm::length(p - center) - radius;
       }
   engine.setColliderSDF(sdf);
 
@@ -161,7 +161,7 @@ TEST_CASE("Pyro GPU - 3-1: Obstacle SDF zeroes velocity inside solid") {
 
   // 障害物中心セルの速度は常にゼロ化されているはず
   glm::vec4 v{};
-  ctx.readBuffer(engine.getVelocityBuffer(), meshSdfMortonEncode(G / 2, G / 2, G / 2) * sizeof(glm::vec4), &v, sizeof(v));
+  ctx.readBuffer(engine.getVelocityBuffer(), engine.cellIndex(G / 2, G / 2, G / 2) * sizeof(glm::vec4), &v, sizeof(v));
   CHECK(glm::length(glm::vec3(v)) == doctest::Approx(0.0f).epsilon(1e-5));
 
   engine.cleanup();
@@ -195,8 +195,8 @@ TEST_CASE("Pyro GPU - 4-1: Emitter emission increases density only near emitter"
   ctx.submitCmd(cmd);
 
   float densNear = 0.0f, densFar = 0.0f;
-  ctx.readBuffer(engine.getDensityBuffer(), meshSdfMortonEncode(3, 3, 3) * sizeof(float), &densNear, sizeof(float));
-  ctx.readBuffer(engine.getDensityBuffer(), meshSdfMortonEncode(14, 14, 14) * sizeof(float), &densFar, sizeof(float));
+  ctx.readBuffer(engine.getDensityBuffer(), engine.cellIndex(3, 3, 3) * sizeof(float), &densNear, sizeof(float));
+  ctx.readBuffer(engine.getDensityBuffer(), engine.cellIndex(14, 14, 14) * sizeof(float), &densFar, sizeof(float));
 
   CHECK(densNear > 0.0f);
   CHECK(densFar == doctest::Approx(0.0f).epsilon(1e-6));
@@ -236,7 +236,7 @@ TEST_CASE("Pyro GPU - 5-1: Combustion consumes fuel, raises temperature, emits f
   engine.addEmitter(src);
 
   const uint32_t G    = engine.gridRes().x;
-  const uint32_t code = meshSdfMortonEncode(G / 2, G / 2, G / 2);
+  const uint32_t code = engine.cellIndex(G / 2, G / 2, G / 2);
   const float dt      = 1.0f / 60.0f;
 
   for(int i = 0; i < 3; i++) {
@@ -269,8 +269,8 @@ TEST_CASE("Pyro GPU - 5-1: Combustion consumes fuel, raises temperature, emits f
 // ═══════════════════════════════════════════════════════════════════════════
 // 6: 直方体(非立方体)ドメイン — 解像度導出とGPUシミュレーションの安定性
 // ═══════════════════════════════════════════════════════════════════════════
-TEST_CASE("Pyro CPU - 6-1: Non-cubic domain derives per-axis gridRes and cubeRes correctly") {
-  // gridRes()/cubeRes()/totalCells() はホスト側計算のみで init() 不要
+TEST_CASE("Pyro CPU - 6-1: Non-cubic domain derives per-axis gridRes correctly") {
+  // gridRes()/totalCells() はホスト側計算のみで init() 不要
   PyroEngine engine;
   engine.domainSize = {20.0f, 4.0f, 20.0f};
   engine.cellSize   = 20.0f / 32.0f; // = 0.625
@@ -279,11 +279,8 @@ TEST_CASE("Pyro CPU - 6-1: Non-cubic domain derives per-axis gridRes and cubeRes
   CHECK(res.x == 32);
   CHECK(res.y == 7); // ceil(4/0.625) = ceil(6.4) = 7
   CHECK(res.z == 32);
-  CHECK(engine.cubeRes() == 32); // 最大軸(32)が既に2^nなのでそのまま
-  // バッファ数は立方体 (32^3) ではなく Morton 符号の最大値+1。短い y 軸 (7 セル) の分だけ小さい
-  CHECK(engine.totalCells() == domain::hashCellsMorton(res));
-  CHECK(engine.totalCells() < 32u * 32u * 32u);
-  CHECK(engine.totalCells() >= res.x * res.y * res.z);
+  // 線形配置: バッファ数 = 実セル数 (穴なし)
+  CHECK(engine.totalCells() == res.x * res.y * res.z);
 }
 
 TEST_CASE("Pyro GPU - 6-2: Non-cubic domain simulation stays finite inside the real cell bounds") {
@@ -323,7 +320,7 @@ TEST_CASE("Pyro GPU - 6-2: Non-cubic domain simulation stays finite inside the r
   for(uint32_t z = 0; z < realRes.z; z++)
     for(uint32_t y = 0; y < realRes.y; y++)
       for(uint32_t x = 0; x < realRes.x; x++) {
-        glm::vec4 v = vel[meshSdfMortonEncode(x, y, z)];
+        glm::vec4 v = vel[engine.cellIndex(x, y, z)];
         if(!std::isfinite(v.x) || !std::isfinite(v.y) || !std::isfinite(v.z)) allFinite = false;
         maxAbsV = std::max({maxAbsV, std::abs(v.x), std::abs(v.y), std::abs(v.z)});
       }
@@ -376,15 +373,15 @@ TEST_CASE("Pyro GPU - 7-1: Rotating collider moves with the angle and imposes wa
   const glm::ivec3 c = glm::ivec3(center / engine.cellSize);
 
   float sdfHere = 0.0f, sdfOld = 0.0f;
-  ctx.readBuffer(engine.getColliderSDFBuffer(), meshSdfMortonEncode(c.x, c.y, c.z) * sizeof(float), &sdfHere, sizeof(float));
+  ctx.readBuffer(engine.getColliderSDFBuffer(), engine.cellIndex(c.x, c.y, c.z) * sizeof(float), &sdfHere, sizeof(float));
   // 角度 0 の球 (中心 (10,3,8)) の内側 (中心から 0.9) だが、0.4 rad 回った球 (中心から 1.3) の外側になる点
   const glm::ivec3 c0 = glm::ivec3(glm::vec3(10.9f, 3.0f, 8.0f) / engine.cellSize);
-  ctx.readBuffer(engine.getColliderSDFBuffer(), meshSdfMortonEncode(c0.x, c0.y, c0.z) * sizeof(float), &sdfOld, sizeof(float));
+  ctx.readBuffer(engine.getColliderSDFBuffer(), engine.cellIndex(c0.x, c0.y, c0.z) * sizeof(float), &sdfOld, sizeof(float));
   CHECK(sdfHere < -0.5f); // 球の中心付近 (半径 1)
   CHECK(sdfOld > 0.0f);   // 回転前の位置は外側になっている
 
   glm::vec4 v{};
-  ctx.readBuffer(engine.getVelocityBuffer(), meshSdfMortonEncode(c.x, c.y, c.z) * sizeof(glm::vec4), &v, sizeof(v));
+  ctx.readBuffer(engine.getVelocityBuffer(), engine.cellIndex(c.x, c.y, c.z) * sizeof(glm::vec4), &v, sizeof(v));
   // 壁面速度 omega * (r.z, 0, -r.x)。r は回転軸からの水平変位 (2cos th, -2 sin th)
   CHECK(v.x == doctest::Approx(omega * (-2.0f * std::sin(th))).epsilon(0.2));
   CHECK(v.z == doctest::Approx(omega * (-2.0f * std::cos(th))).epsilon(0.2));
@@ -479,12 +476,12 @@ TEST_CASE("Pyro GPU - 7-2: Moving collider with arbitrary rotation axis and tran
   const glm::ivec3 c = glm::ivec3(center / engine.cellSize);
 
   float sdfHere = 0.0f;
-  ctx.readBuffer(engine.getColliderSDFBuffer(), meshSdfMortonEncode(c.x, c.y, c.z) * sizeof(float), &sdfHere, sizeof(float));
+  ctx.readBuffer(engine.getColliderSDFBuffer(), engine.cellIndex(c.x, c.y, c.z) * sizeof(float), &sdfHere, sizeof(float));
   CHECK(sdfHere < -0.4f);
 
   // 壁面速度 = linVel + omega x (p - pos)。セル中心での値と比べる
   glm::vec4 v{};
-  ctx.readBuffer(engine.getVelocityBuffer(), meshSdfMortonEncode(c.x, c.y, c.z) * sizeof(glm::vec4), &v, sizeof(v));
+  ctx.readBuffer(engine.getVelocityBuffer(), engine.cellIndex(c.x, c.y, c.z) * sizeof(glm::vec4), &v, sizeof(v));
   const glm::vec3 pc = (glm::vec3(c) + 0.5f) * engine.cellSize;
   const glm::vec3 expect = s.linearVelocity + glm::cross(s.angularVelocity, pc - pos);
   CHECK(v.x == doctest::Approx(expect.x).epsilon(0.05).scale(1.0));

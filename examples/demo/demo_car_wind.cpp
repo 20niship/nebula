@@ -2,7 +2,7 @@
 // (PyroEngine::setMovingCollider: 位置・姿勢・線速度・角速度を持つ剛体コライダー。壁面速度つき) で車を回し、毎ステップ流れに乗せたトレーサ粒子の軌跡を tracers.bin に書き出す
 // ("TRC1" 形式: ヘッダ + steps x M x {xyz, gen})。車 (SDF) は car/make_car.py が手続き生成する。Blender 側は car/render_car.py。
 // 格子は既定 1024x256x512 (風下 x 高さ x 幅)。車は高さ方向に薄く、自転すると幅方向に約 4.8m 掃くので、高さに 256・幅に 512 を割り当てる
-// (高さに 512 を割り当てるとセルは 2cm 止まり)。Pyro のバッファは Morton 符号の最大値+1 セル (この格子では約 2.35 億セル) で、速度場しか使わないので
+// (高さに 512 を割り当てるとセルは 2cm 止まり)。Pyro のバッファは線形配置 (nx*ny*nz = 約 1.34 億セル) で、速度場しか使わないので
 // 密度・温度・燃料・炎・渦度のバッファを持たず (PyroEngine::kChVelocityOnly) 1 セル約 44 byte、合計約 10.3GB で 12GB GPU に載る (全チャンネルだと約 20.7GB)。
 #include "core/MeshSDF.h"
 #include "engine/PyroEngine.h"
@@ -54,7 +54,7 @@ static uint32_t writeQvox(const std::string& path, const std::vector<glm::vec4>&
   };
   std::vector<std::vector<Cell>> out(nt);
   auto work = [&](unsigned t) {
-    auto V = [&](int x, int y, int z) { return glm::vec3(vel[meshSdfMortonEncode(uint32_t(x), uint32_t(y), uint32_t(z))]); };
+    auto V = [&](int x, int y, int z) { return glm::vec3(vel[uint32_t(x) + res.x * (uint32_t(y) + res.y * uint32_t(z))]); };
     const float inv = 0.5f / cell;
     for(uint32_t z = 2 + t; z + 2 < res.z; z += nt)
       for(uint32_t y = 2; y + 2 < res.y; y++)
@@ -190,7 +190,7 @@ int main(int argc, char* argv[]) {
       for(int k = 0; k < 8; k++) {
         const uint32_t dx = k & 1, dy = (k >> 1) & 1, dz = (k >> 2) & 1;
         const float w     = (dx ? f.x : 1.0f - f.x) * (dy ? f.y : 1.0f - f.y) * (dz ? f.z : 1.0f - f.z);
-        v += w * glm::vec3(vel[meshSdfMortonEncode(i.x + dx, i.y + dy, i.z + dz)]);
+        v += w * glm::vec3(vel[(i.x + dx) + res.x * ((i.y + dy) + res.y * (i.z + dz))]);
       }
       return v;
     };

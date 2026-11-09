@@ -18,14 +18,14 @@
 // Houdini Pyro 的なグリッド(オイラー)ソルバー。PyroConfigは廃止済み(issue #98相当): 設定値はinit()前にpublicメンバへ直接設定し、GPU側状態はPyroSimPC pc_一箇所で管理する。
 class PyroEngine : public EngineBase {
 public:
-  // Pyroは「スレッドID=Morton符号」の稠密グリッド設計のため、GPU dispatch/バッファ確保は Morton 符号の最大値+1 (domain::hashCellsMorton) 単位で行う。軸が x>=y>=z の順に長い 2^n 直方体 (512x256x256 など) なら立方体 (512^3) の 1/4 で済む。
+  // Pyro のバッファは線形配置 (x 最速, 添字 = x + nx*(y + ny*z))。確保セル数 = nx*ny*nz で穴が無く、軸あたり 1024 の上限も無い。
   glm::vec3 domainSize{10.0f, 10.0f, 10.0f}; // ドメイン物理サイズ [m] (旧 world_size)
   float cellSize       = 10.0f / 64.0f;      // 全軸共通のセルサイズ [m] (旧 grid_res の逆算値)
   uint32_t maxEmitters = 32;                 // 同時に登録できる Emitter の上限 (SSBO 固定容量)
 
   glm::uvec3 gridRes() const { return domain::gridRes(domainSize, cellSize); } // 各軸の実セル数 (nx,ny,nz)。2^n不要
-  uint32_t cubeRes() const { return domain::mortonCubeRes(gridRes()); }        // Morton dispatch用の立方体解像度 (自動的に2^n、CPU限定)
-  uint32_t totalCells() const { return domain::hashCellsMorton(gridRes()); }   // Morton 符号の最大値+1 (立方体以下)。GPUバッファ確保数/dispatch数
+  uint32_t totalCells() const { return domain::linearCells(gridRes()); }  // GPU バッファ確保数/dispatch 数 (= nx*ny*nz)
+  uint32_t cellIndex(uint32_t x, uint32_t y, uint32_t z) const { return domain::linearIndex(gridRes(), x, y, z); }
   uint32_t nGroups() const { return domain::nGroups(totalCells()); }
 
   void init(VkDevice device, VmaAllocator allocator, VkDescriptorPool descriptorPool, VkCommandPool cmdPool, VkQueue queue, const std::string& shaderDir);
@@ -53,8 +53,8 @@ public:
   PyroSimPC pc_{};
 
   // ── 障害物 SDF (任意形状、mpm_stl_drop.cpp 由来の MeshSDF.h で構築) ──────
-  // Morton 順に並んだ float SDF 配列 (totalCells() 要素)。負値=障害物内部。
-  void setColliderSDF(const std::vector<float>& mortonSDF);
+  // 線形順 (x 最速) に並んだ float SDF 配列 (totalCells() 要素)。負値=障害物内部。
+  void setColliderSDF(const std::vector<float>& linearSDF);
   void clearCollider();
 
   // ── 移動する剛体コライダー (任意の位置・姿勢・線速度・角速度。回転する車の風洞、動く物体など) ──────────
@@ -89,7 +89,7 @@ public:
   bool hasCollider() const { return colliderSDFIdx_ != 0; }
 
   // ── ボクセルダンプ (.pvox) ───────────────────────────────────────────────
-  // density/temperature/fuel/flame/velocity/sdf を GPU→CPU readback し、Morton→線形
+  // density/temperature/fuel/flame/velocity/sdf を GPU→CPU readback し、線形
   // (x + y*nx + z*nx*ny) に並べ替えてから独自バイナリ形式で書き出す。
   // sdf チャンネルは障害物未設定時、全セル背景値 (1e6, 障害物なし) で埋める。
   void dumpFrame(const std::string& path, float simTime) const;

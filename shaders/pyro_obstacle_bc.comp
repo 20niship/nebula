@@ -14,7 +14,7 @@ layout(local_size_x = 256) in;
     ( ((ix_) < 0 || (iy_) < 0 || (iz_) < 0 || \
        (ix_) >= int(pc.gridRes.x) || (iy_) >= int(pc.gridRes.y) || (iz_) >= int(pc.gridRes.z)) \
       ? 1e6 \
-      : readFloat(pc.colliderSDFIdx, pyroMortonEncodeI(ivec3((ix_), (iy_), (iz_)))) )
+      : readFloat(pc.colliderSDFIdx, pyroCellIndex(ivec3((ix_), (iy_), (iz_)))) )
 
 void main() {
     if (pc.colliderSDFIdx == 0u) return;
@@ -23,7 +23,7 @@ void main() {
     uint totalCells = pc.hashCells;
     if (gid >= totalCells) return;
 
-    ivec3 ijk = pyroMortonDecodeI(gid);
+    ivec3 ijk = pyroCellCoord(gid);
     float sdf = SAMPLE_SDF(ijk.x, ijk.y, ijk.z);
 
     // 回転コライダーなら固体の速度は ω×r (地面は 0)。静止コライダーなら 0。

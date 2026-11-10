@@ -138,6 +138,7 @@ private:
 
   PyroSimPC buildPC(float dt) const;
   void dispatchPyro(VkCommandBuffer cmd, ComputePipeline& k, const PyroSimPC& pc);
+  void dispatchPressureGS(VkCommandBuffer cmd, const PyroSimPC& pc);
   void computeBarrier(VkCommandBuffer cmd);
   void dispatchAndBarrier(VkCommandBuffer cmd, ComputePipeline& k, const PyroSimPC& pc, const char* label);
   void updateEmitters(float dt); // CPU側でアクティブな Emitter を選別・アップロード

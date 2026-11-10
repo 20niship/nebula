@@ -10,17 +10,20 @@
 // p_new = ( div + p(i-1)+p(i+1)+p(j-1)+p(j+1)+p(k-1)+p(k+1) ) / 6
 // 障害物内部の近傍セルは自セルの圧力で代用する (Neumann 境界近似)。
 // 障害物内部セル自体の圧力は常に 0。
-// dispatch: (totalCells + 255) / 256 (1色あたり; red/black で2回呼ぶ)
+// dispatch: 3D (ceil(ceil(nx/2)/16), ceil(ny/4), ceil(nz/4)) (1色あたり; red/black で2回呼ぶ)。
+// x 方向は同色のセルだけ (1 行おきに 2 セル間隔) を担当するので、全スレッドが有効で、
+// 添字の除算・剰余 (pyroCellCoord) も不要。
 
-layout(local_size_x = 256) in;
+layout(local_size_x = 16, local_size_y = 4, local_size_z = 4) in;
 
 void main() {
-    uint gid = gl_GlobalInvocationID.x;
-    uint totalCells = pc.hashCells;
-    if (gid >= totalCells) return;
+    uvec3 g = gl_GlobalInvocationID;
+    if (g.y >= pc.gridRes.y || g.z >= pc.gridRes.z) return;
+    uint ix = 2u * g.x + ((pc.gsColor + g.y + g.z) & 1u);
+    if (ix >= pc.gridRes.x) return;
 
-    ivec3 ijk = pyroCellCoord(gid);
-    if (uint(ijk.x + ijk.y + ijk.z) % 2u != pc.gsColor) return;
+    ivec3 ijk = ivec3(ix, g.y, g.z);
+    uint gid = pyroCellIndex(ijk);
 
     if (CELL_IS_SOLID(ijk.x, ijk.y, ijk.z)) {
         writeFloat(pc.pressureIdxA, gid, 0.0);

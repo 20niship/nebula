@@ -18,9 +18,9 @@ layout(push_constant) uniform PC {
     uint  fuelIdxA;        // 24  float×CELLS
     uint  fuelIdxB;        // 28
     uint  flameIdx;        // 32  float×CELLS
-    uint  pressureIdxA;    // 36  float×CELLS (Red-Black Gauss-Seidel、in-place更新)
+    uint  pressureIdxA;    // 36  float×2·ny·nz·ceil(nx/2) (色優先レイアウト pyroRBIndex。Red-Black Gauss-Seidel、in-place更新)
     uint  gsColor;         // 40  Red-Black反復の色 (0=red/1=black、旧pressureIdxBを転用)
-    uint  divergenceIdx;   // 44  float×CELLS
+    uint  divergenceIdx;   // 44  float×2·ny·nz·ceil(nx/2) (色優先レイアウト pyroRBIndex)
     uint  colliderSDFIdx;  // 48  float×CELLS (線形 SDF, 0=無効)
     uint  emittersIdx;     // 52  EmitterGPU×emitterCount (0=無効)
     uint  hashCells;       // 56  dispatch 用の総セル数 (= nx*ny*nz)
@@ -101,6 +101,19 @@ ivec3 pyroCellCoord(uint id) {
     return ivec3(x, t % pc.gridRes.y, t / pc.gridRes.y);
 }
 
+// ── 圧力・発散の色優先レイアウト ─────────────────────────────────────────────
+// Red-Black GS は 1 色分を更新するとき、自色の圧力・発散と反対色の圧力しか触らない。線形配置では 2 色が 1 セルおきに混在し、
+// 1 本おきの読み書きでキャッシュ行/セクタの半分が無駄になっていた。そこで [色 0 の全セル | 色 1 の全セル] に分けて持つ:
+//   色 c = (x + y + z) & 1、行 = y + ny * z、行内の位置 = x >> 1 (その色のセルは行内で x が 1 つおき)。
+//   添字 = c * (行数 * ((nx+1)/2)) + 行 * ((nx+1)/2) + (x >> 1)
+uint pyroRBHalf()   { return (pc.gridRes.x + 1u) >> 1u; }
+uint pyroRBStride() { return pyroRBHalf() * pc.gridRes.y * pc.gridRes.z; }
+uint pyroRBIndex(ivec3 c) {
+    uint color = uint(c.x + c.y + c.z) & 1u;
+    uint row   = uint(c.y) + pc.gridRes.y * uint(c.z);
+    return color * pyroRBStride() + row * pyroRBHalf() + (uint(c.x) >> 1u);
+}
+
 // セル中心グリッド座標 (ix,iy,iz) の境界クランプ付き読み取り
 // グリッド外は最近傍セルへクランプ (Neumann/clamp-to-edge 境界)。
 // 各軸独立の pc.gridRes(実セル数) でクランプすることで、直方体ドメインの短い軸が
@@ -151,7 +164,7 @@ vec3 pyroSolidVel(vec3 p) {
     (((iz_) < 0)                    && ((m_) & 16u) != 0u) || (((iz_) >= int(pc.gridRes.z)) && ((m_) & 32u) != 0u) )
 #define PRESSURE_NEIGHBOR(ix_, iy_, iz_, pSelf_) \
     ( PRESSURE_OPEN_OUT((ix_), (iy_), (iz_), pc.openBoundaryMask) ? 0.0 : \
-      ( CELL_IS_SOLID((ix_), (iy_), (iz_)) ? (pSelf_) : SAMPLE_FLOAT_CLAMPED(pc.pressureIdxA, (ix_), (iy_), (iz_)) ) )
+      ( CELL_IS_SOLID((ix_), (iy_), (iz_)) ? (pSelf_) : readFloat(pc.pressureIdxA, pyroRBIndex(CLAMP_CELL((ix_), (iy_), (iz_)))) ) )
 
 // セル中心グリッド座標 (float) へのワールド座標変換
 // セル (ix,iy,iz) の中心はワールド座標 worldMin + (ix+0.5, iy+0.5, iz+0.5)*cellSize

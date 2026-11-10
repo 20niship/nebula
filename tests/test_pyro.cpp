@@ -497,3 +497,69 @@ TEST_CASE("Pyro GPU - 7-2: Moving collider with arbitrary rotation axis and tran
   engine.cleanup();
   ctx.cleanup();
 }
+
+// 圧力・発散は赤黒の色ごとに連続した配列 (色優先レイアウト、shaders/pyro_common.glsl の pyroRBIndex) に置く。
+// GPU の圧力場を、CPU で同じ赤黒 Gauss-Seidel を実行した結果と全セルで比較する (幅が奇数でも偶数でも、添字が 1 つでも違えば一致しない)。
+// 障害物なし・開境界なし・初期圧力 0 の 1 ステップなので、CPU 側は div (GPU が計算したもの) と赤黒 GS だけで再現できる。
+namespace {
+void checkPressureMatchesCpuRedBlack(glm::uvec3 res, int iters) {
+  HeadlessCtx ctx;
+  ctx.init();
+  PyroEngine engine;
+  const float h     = 0.25f;
+  engine.domainSize = glm::vec3(res) * h - glm::vec3(1e-3f); // gridRes() = ceil(domainSize / cellSize) = res
+  engine.cellSize   = h;
+  engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS);
+  REQUIRE(engine.gridRes() == res);
+  engine.pc_.buoyancyAlpha = 3.0f;
+  engine.numPressureIters  = iters;
+
+  auto heat             = std::make_shared<SphereEmitter>();
+  heat->center          = glm::vec3(res) * h * 0.5f;
+  heat->radius          = 0.8f;
+  heat->temperatureRate = 8.0f;
+  heat->step_count      = 0;
+  engine.addEmitter(heat);
+  VkCommandBuffer cmd = ctx.beginCmd();
+  engine.step(cmd, 1.0f / 60.0f);
+  ctx.submitCmd(cmd);
+
+  const uint32_t half   = (res.x + 1) / 2;
+  const uint32_t stride = half * res.y * res.z; // 色ごとの要素数
+  auto rb = [&](uint32_t x, uint32_t y, uint32_t z) { return ((x + y + z) & 1u) * stride + (y + res.y * z) * half + (x >> 1); };
+  std::vector<float> pGpu(2 * stride), divRb(2 * stride);
+  ctx.readBuffer(engine.getPressureBuffer(), 0, pGpu.data(), pGpu.size() * sizeof(float));
+  ctx.readBuffer(engine.getDivergenceBuffer(), 0, divRb.data(), divRb.size() * sizeof(float));
+
+  // CPU 参照: 線形配置の赤黒 GS (近傍は範囲外ならクランプ = 自セル、pyro_pressure_gs.comp と同じ式・同じ加算順)
+  std::vector<float> p(size_t(res.x) * res.y * res.z, 0.0f);
+  auto lin = [&](uint32_t x, uint32_t y, uint32_t z) { return size_t(x) + size_t(res.x) * (y + size_t(res.y) * z); };
+  auto at  = [&](int x, int y, int z) { return p[lin(uint32_t(std::clamp(x, 0, int(res.x) - 1)), uint32_t(std::clamp(y, 0, int(res.y) - 1)), uint32_t(std::clamp(z, 0, int(res.z) - 1)))]; };
+  for(int it = 0; it < iters; ++it)
+    for(uint32_t color = 0; color < 2; ++color)
+      for(uint32_t z = 0; z < res.z; ++z)
+        for(uint32_t y = 0; y < res.y; ++y)
+          for(uint32_t x = 0; x < res.x; ++x) {
+            if(((x + y + z) & 1u) != color) continue;
+            const int ix = int(x), iy = int(y), iz = int(z);
+            p[lin(x, y, z)] = (divRb[rb(x, y, z)] + at(ix + 1, iy, iz) + at(ix - 1, iy, iz) + at(ix, iy + 1, iz) + at(ix, iy - 1, iz) + at(ix, iy, iz + 1) + at(ix, iy, iz - 1)) / 6.0f;
+          }
+
+  float maxAbs = 0.0f, maxErr = 0.0f;
+  for(uint32_t z = 0; z < res.z; ++z)
+    for(uint32_t y = 0; y < res.y; ++y)
+      for(uint32_t x = 0; x < res.x; ++x) {
+        maxAbs = std::max(maxAbs, std::abs(p[lin(x, y, z)]));
+        maxErr = std::max(maxErr, std::abs(p[lin(x, y, z)] - pGpu[rb(x, y, z)]));
+      }
+  engine.cleanup();
+  ctx.cleanup();
+  INFO("grid " << res.x << "x" << res.y << "x" << res.z << " max|p|=" << maxAbs << " max err=" << maxErr);
+  CHECK(maxAbs > 0.0f);
+  CHECK(maxErr <= 1e-5f * maxAbs);
+}
+} // namespace
+
+TEST_CASE("Pyro GPU - 9-1: red-black GS in the colour-major pressure layout matches a CPU reference (odd and even widths)") {
+  for(glm::uvec3 res : {glm::uvec3(32, 16, 16), glm::uvec3(31, 16, 17), glm::uvec3(33, 15, 16), glm::uvec3(8, 8, 8)}) checkPressureMatchesCpuRedBlack(res, 12);
+}

@@ -2,9 +2,9 @@
 #include <cstdint>
 #include <glm/glm.hpp>
 
-// MPM 専用 Push Constants — 184 bytes。各vec3系フィールド直前のスカラー数を4の倍数に揃え16byte境界に一致させている(要再検証)。hashCellsは空間ハッシュ/MPMグリッドバッファの実要素数(cubeRes^3)。worldMinは廃止(ワールド座標=ローカル座標)。colliderForceIdx/colliderTorqueIdxは末尾に追加。
+// MPM 専用 Push Constants — 196 bytes。各vec3系フィールド直前のスカラー数を4の倍数に揃え16byte境界に一致させている(要再検証)。hashCellsは空間ハッシュ/MPMグリッドバッファの実要素数(cubeRes^3)。worldMinは廃止(ワールド座標=ローカル座標)。colliderForceIdx/colliderTorqueIdxは末尾に追加。
 // mpm_p2g.comp の local_size_x (P2G_WG)。dispatch のグループ数計算に使う
-static constexpr uint32_t kMpmP2GGroupSize = 64u;
+static constexpr uint32_t kMpmP2GGroupSize = 128u;
 
 struct MPMSimPC {
   // ── Bindless バッファインデックス (48 bytes、12個のスカラー) ──────────
@@ -63,5 +63,10 @@ struct MPMSimPC {
 
   // ── アクティブ領域 (4 bytes) ─────────────────────────────────────────
   uint32_t boxIdx; // 180 uint×32: 粒子が触れる格子ノードの AABB (mpm_bounds*.comp が毎サブステップ更新)。0=無効(全セルを処理)
+
+  // ── 粒子の処理順 (12 bytes) ───────────────────────────────────────────
+  uint32_t sortIdx;     // 184 uint×(B + 3·cap): [0,B)=ブロックごとの粒子数->開始位置, [B,B+cap)=粒子のブロック, [B+cap,B+2cap)=ブロック内の順位, [B+2cap,B+3cap)=処理順 (粒子番号)。0=無効
+  uint32_t sortBuckets; // 188 ブロック数 B
+  uint32_t sortCap;     // 192 粒子数の上限 cap
 };
-static_assert(sizeof(MPMSimPC) == 184, "MPMSimPC must be 184 bytes");
+static_assert(sizeof(MPMSimPC) == 196, "MPMSimPC must be 196 bytes");

@@ -134,6 +134,15 @@ void ParticleGridEngine::init(VkDevice device, VmaAllocator allocator, VkDescrip
     attrBuf_.upload("activeBox", init, sizeof(init), cmdPool_, queue_);
   }
 
+  pc_.sortIdx = pc_.sortBuckets = pc_.sortCap = 0;
+  if(sortParticles) {
+    // 粒子の処理順 (4x4x4 セルのブロック順)。[0,B)=ブロックの粒子数/開始位置, 続く 3·cap = 粒子のブロック/順位/処理順
+    const uint32_t B = ((gr.x + 3u) / 4u) * ((gr.y + 3u) / 4u) * ((gr.z + 3u) / 4u);
+    pc_.sortBuckets  = B;
+    pc_.sortCap      = maxParticles_;
+    pc_.sortIdx      = attrBuf_.addAttribute("pSort", sizeof(uint32_t), B + 3u * maxParticles_);
+  }
+
   extraForceDefines_ = userDefines_;
   extraForceDefines_.emplace_back("P2G_WG", std::to_string(p2gGroupSize));
   for(auto& d : shaderDefines()) extraForceDefines_.push_back(d);
@@ -141,6 +150,11 @@ void ParticleGridEngine::init(VkDevice device, VmaAllocator allocator, VkDescrip
 
   auto load = [&](ComputePipeline& k, const char* name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
   load(kZeroGrid_, "mpm_zero_grid.comp");
+  if(sortParticles) {
+    load(kSortHist_, "mpm_sort_hist.comp");
+    load(kSortScan_, "mpm_sort_scan.comp");
+    load(kSortScatter_, "mpm_sort_scatter.comp");
+  }
   if(activeGridBox) {
     load(kBounds_, "mpm_bounds.comp");
     load(kBoundsFinish_, "mpm_bounds_finish.comp");
@@ -157,6 +171,11 @@ void ParticleGridEngine::init(VkDevice device, VmaAllocator allocator, VkDescrip
 void ParticleGridEngine::cleanup() {
   cleanupDerived();
   for(auto* k : {&kZeroGrid_, &kP2G_, &kGridUpdate_, &kG2P_}) k->cleanup();
+  if(pc_.sortIdx != 0) {
+    kSortHist_.cleanup();
+    kSortScan_.cleanup();
+    kSortScatter_.cleanup();
+  }
   if(pc_.boxIdx != 0) {
     kBounds_.cleanup();
     kBoundsFinish_.cleanup();
@@ -405,6 +424,24 @@ void ParticleGridEngine::step(VkCommandBuffer cmd, float dt) {
     b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &b, 0, nullptr, 0, nullptr);
+  }
+
+  // 粒子の処理順 (空間ブロック順) を作る: 粒子数の集計 -> 前置和 -> 処理順の書き出し
+  if(pc_.sortIdx != 0 && N > 0) {
+    ZoneScopedN("SortParticles");
+    MPMSimPC spc = buildPC(subDt);
+    vkCmdFillBuffer(cmd, attrBuf_.getBuffer("pSort"), 0, VkDeviceSize(pc_.sortBuckets) * sizeof(uint32_t), 0u);
+    VkMemoryBarrier tb{};
+    tb.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    tb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    tb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &tb, 0, nullptr, 0, nullptr);
+    dispatchMPM(cmd, kSortHist_, spc, N);
+    computeBarrier(cmd);
+    dispatchMPM(cmd, kSortScan_, spc, 1024u, 1024u);
+    computeBarrier(cmd);
+    dispatchMPM(cmd, kSortScatter_, spc, N);
+    computeBarrier(cmd);
   }
 
   for(int sub = 0; sub < numSubsteps; ++sub) {

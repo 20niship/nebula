@@ -33,6 +33,8 @@ shared int sBMax[3];
 void main() {
     uint p = gl_GlobalInvocationID.x;
     bool alive = p < pc.particleCount;
+    // 処理順 (空間ブロック順) があればその順に処理する。粒子バッファ自体は並べ替えない (粒子番号は不変)
+    if (alive && pc.sortIdx != 0u) p = readUint(pc.sortIdx, pc.sortBuckets + 2u * pc.sortCap + p);
 
     if (gl_LocalInvocationIndex < 3u) {
         sBMin[gl_LocalInvocationIndex] = 0x7FFFFFFF;

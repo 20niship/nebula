@@ -49,7 +49,11 @@ public:
   bool activeGridBox = true;
   // P2G の local_size_x (共有メモリタイル集約の粒度)。粒子の並びが空間的にまとまっているほどタイルが効く。
   // 小さいほどタイルが小さくて済むが、グループ数が増える。MPM(雪崩) は 64、FLIP は 256 が最速だった。init() 前に設定する
-  uint32_t p2gGroupSize = 64;
+  uint32_t p2gGroupSize = 128;
+  // true なら step() の先頭で粒子の処理順 (4x4x4 セルのブロック順) を作り、P2G/G2P はその順に処理する。
+  // 同じブロックの粒子が連続して処理されるので、共有メモリタイルが小さく済みグローバル atomic が減る。
+  // 粒子バッファは並べ替えないので粒子番号は変わらず、P2G は整数加算なので結果も変わらない。
+  bool sortParticles = true;
 
   float restitution   = 0.3f;
   float wall_friction = 0.0f;
@@ -133,6 +137,7 @@ protected:
   ComputePipeline kP2G_;
   ComputePipeline kGridUpdate_;
   ComputePipeline kG2P_;
+  ComputePipeline kSortHist_, kSortScan_, kSortScatter_; // 粒子の処理順 (mpm_sort_*.comp)
   ComputePipeline kBounds_;       // 粒子が触れるノードの AABB (mpm_bounds.comp)
   ComputePipeline kBoundsFinish_; // AABB から範囲と indirect 引数を確定 (mpm_bounds_finish.comp)
 

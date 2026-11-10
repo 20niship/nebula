@@ -4,7 +4,7 @@
 // ── Bindless バッファ配列 ──────────────────────────────────────────────────
 layout(set = 0, binding = 0) buffer StorageBuffers { uint data[]; } buffers[];
 
-// ── MPMSimPC Push Constants (196 bytes) ───────────────────────
+// ── MPMSimPC Push Constants (200 bytes) ───────────────────────
 // C++側 src/core/MPMSimPC.h と同一オフセット順であること。vec3系フィールド直前のスカラー数を
 // 4の倍数に揃えてパディングなしで16byte境界に一致させている(順序変更時は要再検証)。
 // ドメイン下限は常に原点固定 (worldMinは廃止、ワールド座標=ローカル座標)。
@@ -63,6 +63,8 @@ layout(push_constant) uniform PC {
     uint  sortIdx;           // 184 粒子の処理順 (空間ブロック順)。0=無効 (src/core/MPMSimPC.h 参照)
     uint  sortBuckets;       // 188 ブロック数 B
     uint  sortCap;           // 192 粒子数の上限 cap
+
+    uint  gridLinear;        // 196 0=Morton、1=線形 (src/core/MPMSimPC.h 参照)
 } pc;
 
 // ── Buffer read/write マクロ ──────────────────────────────────────────────
@@ -188,12 +190,21 @@ uint mortonCompact(uint v) {
     return v;
 }
 
+// セル添字: 格子が 2 のべき乗の立方体に近ければ Morton (3 次元の局所性が良い)、そうでなければ線形 (x 最速) = x + nx*(y + ny*z)。
+// Morton は軸長が 2^n に揃わないと立方体まで確保・走査するため、400x92x246 のような格子では実セルの約 15 倍を回してしまう。
+// どちらを使うかは pc.gridLinear (ParticleGridEngine::init が決める、全カーネル共通の実行時フラグ)。
 uint mortonEncodeI(ivec3 c) {
+    if (pc.gridLinear != 0u) return uint(c.x) + pc.gridRes.x * (uint(c.y) + pc.gridRes.y * uint(c.z));
     return mortonExpand(uint(c.x)) | (mortonExpand(uint(c.y)) << 1u)
                                    | (mortonExpand(uint(c.z)) << 2u);
 }
 
 ivec3 mortonDecodeI(uint code) {
+    if (pc.gridLinear != 0u) {
+        uint x = code % pc.gridRes.x;
+        uint t = code / pc.gridRes.x;
+        return ivec3(x, t % pc.gridRes.y, t / pc.gridRes.y);
+    }
     return ivec3(mortonCompact(code),
                  mortonCompact(code >> 1u),
                  mortonCompact(code >> 2u));
@@ -210,8 +221,7 @@ uint sortBucketOf(vec3 xp) {
 uint cellIdFromPos(vec3 p) {
     vec3 local = clamp(p / pc.cellSize,
                        vec3(0.0), vec3(pc.gridRes) - vec3(1.0));
-    uvec3 g = uvec3(local);
-    return mortonExpand(g.x) | (mortonExpand(g.y) << 1u) | (mortonExpand(g.z) << 2u);
+    return mortonEncodeI(ivec3(local));
 }
 
 // ── 2次 B-spline 重みと勾配 ───────────────────────────────────────────────

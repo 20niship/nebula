@@ -84,7 +84,12 @@ void ParticleGridEngine::init(VkDevice device, VmaAllocator allocator, VkDescrip
   initEngineBase(device, allocator, descriptorPool, cmdPool, queue);
 
   const glm::uvec3 gr = domain::gridRes(domainSize, cellSize);
-  const uint32_t NC   = domain::hashCellsCube(gr);
+  // セル配置: Morton は軸長が 2^n に揃わないと立方体 (最大軸の次の 2 のべき乗の 3 乗) まで確保・走査する。
+  // それが実セルの 2 倍を超えるなら線形配置 (nx*ny*nz) にする。2 のべき乗の立方体は Morton のまま (P2G/G2P の局所性が良い)。
+  const uint32_t cubeCells = domain::hashCellsCube(gr);
+  const uint32_t linCells  = gr.x * gr.y * gr.z;
+  const bool linearGrid    = forceGridLayout == 1 || (forceGridLayout == 0 && cubeCells > 2u * linCells);
+  const uint32_t NC        = linearGrid ? linCells : cubeCells;
 
   // maxParticles を明示指定した場合は自動シードを行わない (appendParticles/emitter で後から追加する用途)
   const uint32_t seedCount = maxParticles > 0 ? 0 : defaultSeedCount(gr);
@@ -103,6 +108,7 @@ void ParticleGridEngine::init(VkDevice device, VmaAllocator allocator, VkDescrip
   pc_.gridMomIdx  = attrBuf_.addAttribute("gridMom", sizeof(glm::vec4), NC * 2);
   pc_.gridMassIdx = attrBuf_.addAttribute("gridMass", sizeof(float), NC);
   pc_.hashCells   = NC;
+  pc_.gridLinear  = linearGrid ? 1u : 0u;
   pc_.gridRes     = gr;
   pc_.cellSize    = cellSize;
   pc_.worldMax    = domainSize; // ドメイン下限は常に原点固定 (worldMin は廃止)

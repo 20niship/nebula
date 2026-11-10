@@ -1021,7 +1021,7 @@ TEST_CASE("MPM GPU - 9-5: Native Cylinder collider applies rotation (lying on it
 // ── アクティブ領域 (粒子が触れるノードの AABB だけをゼロクリア/更新) と P2G の共有メモリタイル集約は、
 // 従来の全セル処理/直接 atomicAdd と厳密に同じ結果になる (固定小数点の整数加算なので順序に依存しない) ────────────────
 namespace {
-std::vector<glm::vec4> runFixedScene(bool activeBox, uint32_t p2gGroup, bool shuffled, bool sortParticles = true) {
+std::vector<glm::vec4> runFixedScene(bool activeBox, uint32_t p2gGroup, bool shuffled, bool sortParticles = true, int gridLayout = 0) {
   HeadlessCtx ctx;
   ctx.init();
   MPMEngine engine;
@@ -1031,6 +1031,7 @@ std::vector<glm::vec4> runFixedScene(bool activeBox, uint32_t p2gGroup, bool shu
   engine.activeGridBox = activeBox;
   engine.p2gGroupSize  = p2gGroup;
   engine.sortParticles = sortParticles;
+  engine.forceGridLayout = gridLayout;
   engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS);
   engine.numSubsteps = 10;
   engine.addForce(GravityForce::FromDirection({0.0f, -1.0f, 0.0f}, 9.8f));
@@ -1070,12 +1071,12 @@ std::vector<glm::vec4> runFixedScene(bool activeBox, uint32_t p2gGroup, bool shu
 }
 } // namespace
 
-TEST_CASE("MPM GPU - 10-1: active grid box + P2G tile aggregation + particle ordering are bit-identical to the full-grid / direct-atomic path") {
+TEST_CASE("MPM GPU - 10-1: active grid box + P2G tile aggregation + particle ordering and Morton/linear grid layouts are bit-identical to the full-grid / direct-atomic path") {
   for(bool shuffled : {false, true}) {
     const auto ref = runFixedScene(/*activeBox=*/false, /*p2gGroup=*/256, shuffled, /*sortParticles=*/false); // 全セル処理・並べ替えなし
-    struct Cfg { bool box; uint32_t wg; bool sort; };
-    for(const Cfg& cfg : {Cfg{true, 64, false}, Cfg{true, 128, true}, Cfg{false, 128, true}, Cfg{true, 256, true}, Cfg{true, 32, true}}) {
-      const auto got = runFixedScene(cfg.box, cfg.wg, shuffled, cfg.sort);
+    struct Cfg { bool box; uint32_t wg; bool sort; int layout; }; // layout: 0=自動 (この 40^3 格子は Morton の確保が実セルの 4 倍なので線形)、1=線形、2=Morton
+    for(const Cfg& cfg : {Cfg{true, 64, false, 0}, Cfg{true, 128, true, 0}, Cfg{false, 128, true, 0}, Cfg{true, 256, true, 0}, Cfg{true, 32, true, 0}, Cfg{true, 128, true, 1}, Cfg{true, 128, true, 2}, Cfg{false, 256, false, 2}}) {
+      const auto got = runFixedScene(cfg.box, cfg.wg, shuffled, cfg.sort, cfg.layout);
       REQUIRE(got.size() == ref.size());
       size_t diff = 0;
       for(size_t i = 0; i < ref.size(); ++i)

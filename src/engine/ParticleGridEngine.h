@@ -54,6 +54,8 @@ public:
   // 同じブロックの粒子が連続して処理されるので、共有メモリタイルが小さく済みグローバル atomic が減る。
   // 粒子バッファは並べ替えないので粒子番号は変わらず、P2G は整数加算なので結果も変わらない。
   bool sortParticles = true;
+  // 格子のセル配置: 0=自動 (Morton の確保が実セルの 2 倍を超えるなら線形)、1=常に線形、2=常に Morton
+  int forceGridLayout = 0;
 
   float restitution   = 0.3f;
   float wall_friction = 0.0f;

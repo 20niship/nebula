@@ -27,13 +27,23 @@ void PyroEngine::dispatchPyro(VkCommandBuffer cmd, ComputePipeline& k, const Pyr
   vkCmdDispatch(cmd, nGroups(), 1, 1);
 }
 
+// 圧力 Red-Black GS 専用: 1 色 = 全セルの半分。x 方向を 2 セル間隔で担当する 3D dispatch (shaders/pyro_pressure_gs.comp)
+void PyroEngine::dispatchPressureGS(VkCommandBuffer cmd, const PyroSimPC& pc) {
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kPressureGS_.pipeline);
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, kPressureGS_.pipelineLayout, 0, 1, &attrBuf_.descriptorSet, 0, nullptr);
+  vkCmdPushConstants(cmd, kPressureGS_.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PyroSimPC), &pc);
+  const glm::uvec3 r = gridRes();
+  vkCmdDispatch(cmd, ((r.x + 1u) / 2u + 15u) / 16u, (r.y + 3u) / 4u, (r.z + 3u) / 4u);
+}
+
 void PyroEngine::dispatchAndBarrier(VkCommandBuffer cmd, ComputePipeline& k, const PyroSimPC& pc, const char* label) {
 #ifdef NEBULA_GPU_PROFILING
   if(profEnabled_ && profQueryIndex_ + 1 < kProfMaxQueries) vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, profPool_, profQueryIndex_);
 #else
   (void)label;
 #endif
-  dispatchPyro(cmd, k, pc);
+  if(&k == &kPressureGS_) dispatchPressureGS(cmd, pc);
+  else dispatchPyro(cmd, k, pc);
   computeBarrier(cmd);
 #ifdef NEBULA_GPU_PROFILING
   if(profEnabled_ && profQueryIndex_ + 1 < kProfMaxQueries) {

@@ -73,8 +73,11 @@ void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool 
   fuelIdx_[0]        = attrBuf_.addAttribute("fuelA", sizeof(float), nFuel);
   fuelIdx_[1]        = attrBuf_.addAttribute("fuelB", sizeof(float), nFuel);
   flameIdx_          = attrBuf_.addAttribute("flame", sizeof(float), nFlame);
-  pressureIdx_       = attrBuf_.addAttribute("pres", sizeof(float), NC);
-  divergenceIdx_     = attrBuf_.addAttribute("div", sizeof(float), NC);
+  // 圧力・発散は赤黒の色ごとに連続した配列 (色優先レイアウト: shaders/pyro_common.glsl の pyroRBIndex)。行ごとに色あたり ceil(nx/2) 個
+  const glm::uvec3 rbRes = gridRes();
+  const uint32_t NRB     = 2u * ((rbRes.x + 1u) / 2u) * rbRes.y * rbRes.z;
+  pressureIdx_       = attrBuf_.addAttribute("pres", sizeof(float), NRB);
+  divergenceIdx_     = attrBuf_.addAttribute("div", sizeof(float), NRB);
   curlIdx_           = attrBuf_.addAttribute("curl", sizeof(glm::vec4), nCurl);
   emittersIdx_       = attrBuf_.addAttribute("pyroEmitters", sizeof(EmitterGPU), maxEmitters);
   cur_               = 0;
@@ -112,8 +115,8 @@ void PyroEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool 
       up("fuelB", zeroFloat.data(), NC * sizeof(float));
     }
     if(channels & kChFlame) up("flame", zeroFloat.data(), NC * sizeof(float));
-    up("pres", std::vector<float>(NC, 0.0f).data(), NC * sizeof(float));
-    up("div", std::vector<float>(NC, 0.0f).data(), NC * sizeof(float));
+    up("pres", std::vector<float>(NRB, 0.0f).data(), NRB * sizeof(float));
+    up("div", std::vector<float>(NRB, 0.0f).data(), NRB * sizeof(float));
     if(channels & kChCurl) up("curl", zeroVec4.data(), NC * sizeof(glm::vec4));
   }
 

@@ -21,7 +21,7 @@ void main() {
         return;
     }
 
-    float pSelf = readFloat(pc.pressureIdxA, gid);
+    float pSelf = readFloat(pc.pressureIdxA, pyroRBIndex(ijk));
     float pXp = PRESSURE_NEIGHBOR(ijk.x + 1, ijk.y, ijk.z, pSelf);
     float pXm = PRESSURE_NEIGHBOR(ijk.x - 1, ijk.y, ijk.z, pSelf);
     float pYp = PRESSURE_NEIGHBOR(ijk.x, ijk.y + 1, ijk.z, pSelf);

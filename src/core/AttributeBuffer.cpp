@@ -53,7 +53,7 @@ uint32_t AttributeBuffer::addAttribute(const std::string& name, VkDeviceSize ele
   VkBufferCreateInfo bufInfo{};
   bufInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
   bufInfo.size  = elementSize * count;
-  bufInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+  bufInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
 
   VmaAllocationCreateInfo allocInfo{};
   allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
@@ -290,7 +290,7 @@ void AttributeBuffer::resizeAttribute(const std::string& name, uint32_t newCount
   VkBufferCreateInfo bufInfo{};
   bufInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
   bufInfo.size  = attr.elementSize * newCount;
-  bufInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+  bufInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
 
   VmaAllocationCreateInfo allocInfo{};
   allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;

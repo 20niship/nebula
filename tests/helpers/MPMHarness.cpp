@@ -33,11 +33,11 @@ void MPMHarness::barrier(VkCommandBuffer cmd) {
   vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &b, 0, nullptr, 0, nullptr);
 }
 
-void MPMHarness::dispatchMPM(VkCommandBuffer cmd, ComputePipeline& k, const MPMSimPC& pc, uint32_t count) {
+void MPMHarness::dispatchMPM(VkCommandBuffer cmd, ComputePipeline& k, const MPMSimPC& pc, uint32_t count, uint32_t groupSize) {
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, k.pipeline);
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, k.pipelineLayout, 0, 1, &attrBuf_.descriptorSet, 0, nullptr);
   vkCmdPushConstants(cmd, k.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(MPMSimPC), &pc);
-  uint32_t groups = (count + 255u) / 256u;
+  uint32_t groups = (count + groupSize - 1u) / groupSize;
   vkCmdDispatch(cmd, groups, 1, 1);
 }
 
@@ -219,7 +219,7 @@ void MPMHarness::runZeroGrid(const MPMSimPC& pc) {
 
 void MPMHarness::runP2G(const MPMSimPC& pc) {
   VkCommandBuffer cmd = ctx_->beginCmd();
-  dispatchMPM(cmd, kP2G_, pc, maxParticles_);
+  dispatchMPM(cmd, kP2G_, pc, maxParticles_, kMpmP2GGroupSize);
   ctx_->submitCmd(cmd);
 }
 
@@ -246,7 +246,7 @@ void MPMHarness::runFullStep(const MPMSimPC& pc) {
   barrier(cmd);
 
   // ② P2G (MLS-MPM scatter、空間ハッシュ不要)
-  dispatchMPM(cmd, kP2G_, pc, N);
+  dispatchMPM(cmd, kP2G_, pc, N, kMpmP2GGroupSize);
   barrier(cmd);
 
   // ③ GridUpdate

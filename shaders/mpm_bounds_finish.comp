@@ -1,0 +1,23 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "mpm_common.glsl"
+
+// mpm_bounds.comp の結果から、ゼロクリア/グリッド更新が処理する範囲 (アクティブ領域) を確定する。
+// activeBox バッファの語: [0..5]=最小/最大ノード (消費後に初期値へ戻す), [8..10]=原点, [11..13]=各軸の個数, [14]=総セル数,
+//                         [16..18]=VkDispatchIndirectCommand (16x4x4 ブロックで箱を覆う 3D)。
+// 粒子が 0 個なら総セル数 0。dispatch: 1 スレッド
+
+layout(local_size_x = 1) in;
+
+void main() {
+    uvec3 mn = uvec3(buffers[pc.boxIdx].data[0], buffers[pc.boxIdx].data[1], buffers[pc.boxIdx].data[2]);
+    uvec3 mx = uvec3(buffers[pc.boxIdx].data[3], buffers[pc.boxIdx].data[4], buffers[pc.boxIdx].data[5]);
+    uvec3 ext = (mn.x == 0xFFFFFFFFu) ? uvec3(0u) : (mx - mn + uvec3(1u));
+    uint vol = ext.x * ext.y * ext.z;
+    buffers[pc.boxIdx].data[8]  = mn.x; buffers[pc.boxIdx].data[9]  = mn.y; buffers[pc.boxIdx].data[10] = mn.z;
+    buffers[pc.boxIdx].data[11] = ext.x; buffers[pc.boxIdx].data[12] = ext.y; buffers[pc.boxIdx].data[13] = ext.z;
+    buffers[pc.boxIdx].data[14] = vol;
+    // ゼロクリア/グリッド更新は 16x4x4 のブロックで箱を覆う 3D dispatch (添字の除算が不要)。空なら 0 グループ
+    buffers[pc.boxIdx].data[16] = (ext.x + 15u) / 16u; buffers[pc.boxIdx].data[17] = (ext.y + 3u) / 4u; buffers[pc.boxIdx].data[18] = (ext.z + 3u) / 4u;
+    for (uint i = 0u; i < 3u; ++i) { buffers[pc.boxIdx].data[i] = 0xFFFFFFFFu; buffers[pc.boxIdx].data[3u + i] = 0u; }
+}

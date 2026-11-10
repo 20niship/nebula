@@ -109,6 +109,6 @@ private:
   ComputePipeline kG2P_;         // mpm_g2p.comp
 
   // MPMSimPCを使って直接dispatch (ComputePipeline::dispatchはSimPCを取るため使わない)
-  void dispatchMPM(VkCommandBuffer cmd, ComputePipeline& k, const MPMSimPC& pc, uint32_t count);
+  void dispatchMPM(VkCommandBuffer cmd, ComputePipeline& k, const MPMSimPC& pc, uint32_t count, uint32_t groupSize = 256u);
   void barrier(VkCommandBuffer cmd);
 };

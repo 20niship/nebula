@@ -7,13 +7,25 @@
 //   [0, totalCells)           ← v_i_new (P2G で蓄積)
 //   [totalCells, 2*totalCells) ← v_i_old (FLIP 用: grid_update が退避)
 
-layout(local_size_x = 256) in;
+layout(local_size_x = 16, local_size_y = 4, local_size_z = 4) in;
 
 void main() {
-    uint i = gl_GlobalInvocationID.x;
+    // pc.boxIdx != 0: アクティブ領域を 16x4x4 ブロックで覆う 3D dispatch (領域内のセルだけを処理)。
+    // 0: 1D dispatch で全セルを処理 (FLIP、テストのハーネス)
+    uint i;
     uint totalCells = pc.hashCells;
-    if (i >= totalCells) return;
-    writeVec4(pc.gridMomIdx, i,             vec4(0.0));  // v_new をクリア
-    writeVec4(pc.gridMomIdx, i + totalCells, vec4(0.0)); // v_old をクリア
+    if (pc.boxIdx != 0u) {
+        uvec3 e = uvec3(readUint(pc.boxIdx, 11u), readUint(pc.boxIdx, 12u), readUint(pc.boxIdx, 13u));
+        uvec3 g = gl_GlobalInvocationID;
+        if (any(greaterThanEqual(g, e))) return;
+        uvec3 o = uvec3(readUint(pc.boxIdx, 8u), readUint(pc.boxIdx, 9u), readUint(pc.boxIdx, 10u));
+        i = mortonEncodeI(ivec3(o + g));
+    } else {
+        i = (gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x) * 256u + gl_LocalInvocationIndex;
+        if (i >= totalCells) return;
+    }
+    writeVec4(pc.gridMomIdx, i, vec4(0.0));  // v_new をクリア
+    // v_old は FLIP ブレンド時 (flip_ratio > 0.01、G2P が読む条件と同じ) だけ必要
+    if (pc.flip_ratio > 0.01) writeVec4(pc.gridMomIdx, i + totalCells, vec4(0.0));
     writeFloat(pc.gridMassIdx, i, 0.0);
 }

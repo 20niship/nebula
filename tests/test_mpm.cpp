@@ -6,6 +6,7 @@
 #include "helpers/HeadlessCtx.h"
 #include "helpers/MPMHarness.h"
 #include <cmath>
+#include <cstring>
 #include <doctest/doctest.h>
 #include <glm/glm.hpp>
 #include <random>
@@ -1015,4 +1016,74 @@ TEST_CASE("MPM GPU - 9-5: Native Cylinder collider applies rotation (lying on it
   }
 
   ctx.cleanup();
+}
+
+// ── アクティブ領域 (粒子が触れるノードの AABB だけをゼロクリア/更新) と P2G の共有メモリタイル集約は、
+// 従来の全セル処理/直接 atomicAdd と厳密に同じ結果になる (固定小数点の整数加算なので順序に依存しない) ────────────────
+namespace {
+std::vector<glm::vec4> runFixedScene(bool activeBox, uint32_t p2gGroup, bool shuffled) {
+  HeadlessCtx ctx;
+  ctx.init();
+  MPMEngine engine;
+  engine.domainSize    = glm::vec3(8.0f); // 40^3 セル (2 のべき乗でない: Morton の立方体は 64^3)
+  engine.cellSize      = 0.2f;
+  engine.maxParticles  = 4096;
+  engine.activeGridBox = activeBox;
+  engine.p2gGroupSize  = p2gGroup;
+  engine.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADERS);
+  engine.numSubsteps = 10;
+  engine.addForce(GravityForce::FromDirection({0.0f, -1.0f, 0.0f}, 9.8f));
+  ColliderSet cols;
+  cols.addPlane({4.0f, 0.0f, 4.0f}, {0, 1, 0}, 0.0f, 0.3f);
+  engine.setColliders(cols);
+
+  const float h  = 0.1f;
+  const float Vp = h * h * h;
+  std::vector<glm::vec4> pos, vel;
+  for(int iz = 0; iz < 20; ++iz)
+    for(int iy = 0; iy < 10; ++iy)
+      for(int ix = 0; ix < 20; ++ix) {
+        const float jx = 0.013f * float((ix * 7 + iy * 3 + iz) % 5);
+        pos.push_back(glm::vec4(3.0f + ix * h + jx, 1.0f + iy * h, 3.0f + iz * h, Vp));
+        vel.push_back(glm::vec4(0.3f, 0.0f, -0.2f, 0.0f));
+      }
+  if(shuffled) { // 並びが空間的にばらける場合 (共有タイルが使えず直接加算に落ちる経路)
+    for(size_t i = 0; i < pos.size(); ++i) {
+      const size_t j = (i * 2654435761u) % pos.size();
+      std::swap(pos[i], pos[j]);
+      std::swap(vel[i], vel[j]);
+    }
+  }
+  engine.appendParticles(pos, vel);
+  for(int f = 0; f < 20; ++f) {
+    VkCommandBuffer cmd = ctx.beginCmd();
+    engine.step(cmd, 1.0f / 60.0f);
+    ctx.submitCmd(cmd);
+  }
+  std::vector<glm::vec4> out(pos.size() * 2);
+  ctx.readBuffer(engine.getPositionBuffer(), 0, out.data(), pos.size() * sizeof(glm::vec4));
+  ctx.readBuffer(engine.getVelocityBuffer(), 0, out.data() + pos.size(), pos.size() * sizeof(glm::vec4));
+  engine.cleanup();
+  ctx.cleanup();
+  return out;
+}
+} // namespace
+
+TEST_CASE("MPM GPU - 10-1: active grid box + P2G tile aggregation are bit-identical to the full-grid / direct-atomic path") {
+  for(bool shuffled : {false, true}) {
+    const auto ref = runFixedScene(/*activeBox=*/false, /*p2gGroup=*/256, shuffled); // 全セル処理 + 256 スレッドのタイル (広い AABB は直接加算に落ちる)
+    for(const auto& cfg : {std::pair<bool, uint32_t>{true, 64}, {true, 256}, {false, 64}, {true, 128}}) {
+      const auto got = runFixedScene(cfg.first, cfg.second, shuffled);
+      REQUIRE(got.size() == ref.size());
+      size_t diff = 0;
+      for(size_t i = 0; i < ref.size(); ++i)
+        if(std::memcmp(&ref[i], &got[i], sizeof(glm::vec4)) != 0) ++diff;
+      CHECK(diff == 0);
+    }
+    // 重力で落下・床で停止していること (自明な結果ではない)
+    float minY = 1e9f;
+    for(size_t i = 0; i < ref.size() / 2; ++i) minY = std::min(minY, ref[i].y);
+    CHECK(std::isfinite(minY));
+    CHECK(minY < 1.0f);
+  }
 }

@@ -86,6 +86,9 @@ public:
   VkBuffer getFuelBuffer() const;
   VkBuffer getFlameBuffer() const;
   VkBuffer getVelocityBuffer() const;
+  // 圧力・発散 (色優先レイアウト: shaders/pyro_common.glsl の pyroRBIndex。テスト・デバッグ用)
+  VkBuffer getPressureBuffer() const { return attrBuf_.getBuffer("pres"); }
+  VkBuffer getDivergenceBuffer() const { return attrBuf_.getBuffer("div"); }
   bool hasCollider() const { return colliderSDFIdx_ != 0; }
 
   // ── ボクセルダンプ (.pvox) ───────────────────────────────────────────────
@@ -138,6 +141,7 @@ private:
 
   PyroSimPC buildPC(float dt) const;
   void dispatchPyro(VkCommandBuffer cmd, ComputePipeline& k, const PyroSimPC& pc);
+  void dispatchPressureGS(VkCommandBuffer cmd, const PyroSimPC& pc);
   void computeBarrier(VkCommandBuffer cmd);
   void dispatchAndBarrier(VkCommandBuffer cmd, ComputePipeline& k, const PyroSimPC& pc, const char* label);
   void updateEmitters(float dt); // CPU側でアクティブな Emitter を選別・アップロード

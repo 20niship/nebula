@@ -10,32 +10,67 @@
 // p_new = ( div + p(i-1)+p(i+1)+p(j-1)+p(j+1)+p(k-1)+p(k+1) ) / 6
 // 障害物内部の近傍セルは自セルの圧力で代用する (Neumann 境界近似)。
 // 障害物内部セル自体の圧力は常に 0。
-// dispatch: (totalCells + 255) / 256 (1色あたり; red/black で2回呼ぶ)
+// dispatch: 3D (ceil(ceil(nx/2)/16), ceil(ny/4), ceil(nz/4)) (1色あたり; red/black で2回呼ぶ)。
+// x 方向は同色のセルだけ (1 行おきに 2 セル間隔) を担当するので、全スレッドが有効で、
+// 添字の除算・剰余 (pyroCellCoord) も不要。
 
-layout(local_size_x = 256) in;
+layout(local_size_x = 16, local_size_y = 4, local_size_z = 4) in;
 
 void main() {
-    uint gid = gl_GlobalInvocationID.x;
-    uint totalCells = pc.hashCells;
-    if (gid >= totalCells) return;
+    uvec3 g = gl_GlobalInvocationID;
+    if (g.y >= pc.gridRes.y || g.z >= pc.gridRes.z) return;
+    uint ix = 2u * g.x + ((pc.gsColor + g.y + g.z) & 1u);
+    if (ix >= pc.gridRes.x) return;
 
-    ivec3 ijk = pyroCellCoord(gid);
-    if (uint(ijk.x + ijk.y + ijk.z) % 2u != pc.gsColor) return;
+    ivec3 ijk = ivec3(ix, g.y, g.z);
+    // 自色の添字: 色優先レイアウト (pyroRBIndex) の 1 セルぶん。x 方向のスレッドが連続した j = x>>1 を担当するので連続アクセスになる
+    const uint halfN  = pyroRBHalf();
+    const uint S     = pyroRBStride();
+    const uint row   = g.y + pc.gridRes.y * g.z;
+    const uint own   = pc.gsColor * S + row * halfN + g.x;      // 色 = gsColor (ix の偶奇は gsColor, y, z から決まる)
+    const uint other = (pc.gsColor ^ 1u) * S;                   // 反対色の配列の先頭
 
     if (CELL_IS_SOLID(ijk.x, ijk.y, ijk.z)) {
-        writeFloat(pc.pressureIdxA, gid, 0.0);
+        writeFloat(pc.pressureIdxA, own, 0.0);
         return;
     }
 
-    float pSelf = readFloat(pc.pressureIdxA, gid);
-    float pXp = PRESSURE_NEIGHBOR(ijk.x + 1, ijk.y, ijk.z, pSelf);
-    float pXm = PRESSURE_NEIGHBOR(ijk.x - 1, ijk.y, ijk.z, pSelf);
-    float pYp = PRESSURE_NEIGHBOR(ijk.x, ijk.y + 1, ijk.z, pSelf);
-    float pYm = PRESSURE_NEIGHBOR(ijk.x, ijk.y - 1, ijk.z, pSelf);
-    float pZp = PRESSURE_NEIGHBOR(ijk.x, ijk.y, ijk.z + 1, pSelf);
-    float pZm = PRESSURE_NEIGHBOR(ijk.x, ijk.y, ijk.z - 1, pSelf);
+    float pSelf = readFloat(pc.pressureIdxA, own);
+    float pXp, pXm, pYp, pYm, pZp, pZm;
+    // 内部のセルは近傍がすべて範囲内で開境界の外側にもならないので、添字を直接引く。障害物のセルは自セルの圧力で代用 (Neumann)。
+    // 選ばれる値は一般経路 (PRESSURE_NEIGHBOR) と同一。
+    const bool interior = ijk.x > 0 && ijk.y > 0 && ijk.z > 0 &&
+                          ijk.x < int(pc.gridRes.x) - 1 && ijk.y < int(pc.gridRes.y) - 1 && ijk.z < int(pc.gridRes.z) - 1;
+    if (interior) {
+        const uint rowBase = other + row * halfN;
+        const uint jXp = uint(ijk.x + 1) >> 1u, jXm = uint(ijk.x - 1) >> 1u;
+        pXp = readFloat(pc.pressureIdxA, rowBase + jXp);
+        pXm = readFloat(pc.pressureIdxA, rowBase + jXm);
+        pYp = readFloat(pc.pressureIdxA, rowBase + halfN + g.x);
+        pYm = readFloat(pc.pressureIdxA, rowBase - halfN + g.x);
+        const uint zs = halfN * pc.gridRes.y;
+        pZp = readFloat(pc.pressureIdxA, rowBase + zs + g.x);
+        pZm = readFloat(pc.pressureIdxA, rowBase - zs + g.x);
+        if (pc.colliderSDFIdx != 0u) {
+            const uint gid = pyroCellIndex(ijk);
+            const uint sy = pc.gridRes.x, sz = pc.gridRes.x * pc.gridRes.y;
+            if (readFloat(pc.colliderSDFIdx, gid + 1u) < 0.0) pXp = pSelf;
+            if (readFloat(pc.colliderSDFIdx, gid - 1u) < 0.0) pXm = pSelf;
+            if (readFloat(pc.colliderSDFIdx, gid + sy) < 0.0) pYp = pSelf;
+            if (readFloat(pc.colliderSDFIdx, gid - sy) < 0.0) pYm = pSelf;
+            if (readFloat(pc.colliderSDFIdx, gid + sz) < 0.0) pZp = pSelf;
+            if (readFloat(pc.colliderSDFIdx, gid - sz) < 0.0) pZm = pSelf;
+        }
+    } else {
+        pXp = PRESSURE_NEIGHBOR(ijk.x + 1, ijk.y, ijk.z, pSelf);
+        pXm = PRESSURE_NEIGHBOR(ijk.x - 1, ijk.y, ijk.z, pSelf);
+        pYp = PRESSURE_NEIGHBOR(ijk.x, ijk.y + 1, ijk.z, pSelf);
+        pYm = PRESSURE_NEIGHBOR(ijk.x, ijk.y - 1, ijk.z, pSelf);
+        pZp = PRESSURE_NEIGHBOR(ijk.x, ijk.y, ijk.z + 1, pSelf);
+        pZm = PRESSURE_NEIGHBOR(ijk.x, ijk.y, ijk.z - 1, pSelf);
+    }
 
-    float div = readFloat(pc.divergenceIdx, gid);
+    float div = readFloat(pc.divergenceIdx, own);
     float pNew = (div + pXp + pXm + pYp + pYm + pZp + pZm) / 6.0;
-    writeFloat(pc.pressureIdxA, gid, pNew);
+    writeFloat(pc.pressureIdxA, own, pNew);
 }

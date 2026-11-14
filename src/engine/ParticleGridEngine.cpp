@@ -38,12 +38,28 @@ void ParticleGridEngine::computeBarrier(VkCommandBuffer cmd) {
   vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &b, 0, nullptr, 0, nullptr);
 }
 
-// ComputePipeline::dispatch は SimPC を取るため、MPMSimPC は生バイトで渡す
-void ParticleGridEngine::dispatchMPM(VkCommandBuffer cmd, ComputePipeline& k, const MPMSimPC& pc, uint32_t count) {
+void ParticleGridEngine::indirectBarrier(VkCommandBuffer cmd) {
+  VkMemoryBarrier b{};
+  b.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+  b.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+  b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, 0, 1, &b, 0, nullptr, 0, nullptr);
+}
+
+// activeBox の語 [16..18] (VkDispatchIndirectCommand) でグループ数を決める
+void ParticleGridEngine::dispatchMPMIndirect(VkCommandBuffer cmd, ComputePipeline& k, const MPMSimPC& pc) {
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, k.pipeline);
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, k.pipelineLayout, 0, 1, &attrBuf_.descriptorSet, 0, nullptr);
   vkCmdPushConstants(cmd, k.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(MPMSimPC), &pc);
-  uint32_t groups = (count + 255u) / 256u;
+  vkCmdDispatchIndirect(cmd, attrBuf_.getBuffer("activeBox"), 16 * sizeof(uint32_t));
+}
+
+// ComputePipeline::dispatch は SimPC を取るため、MPMSimPC は生バイトで渡す
+void ParticleGridEngine::dispatchMPM(VkCommandBuffer cmd, ComputePipeline& k, const MPMSimPC& pc, uint32_t count, uint32_t groupSize) {
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, k.pipeline);
+  vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, k.pipelineLayout, 0, 1, &attrBuf_.descriptorSet, 0, nullptr);
+  vkCmdPushConstants(cmd, k.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(MPMSimPC), &pc);
+  uint32_t groups = (count + groupSize - 1u) / groupSize;
   vkCmdDispatch(cmd, groups, 1, 1);
 }
 
@@ -68,7 +84,12 @@ void ParticleGridEngine::init(VkDevice device, VmaAllocator allocator, VkDescrip
   initEngineBase(device, allocator, descriptorPool, cmdPool, queue);
 
   const glm::uvec3 gr = domain::gridRes(domainSize, cellSize);
-  const uint32_t NC   = domain::hashCellsCube(gr);
+  // セル配置: Morton は軸長が 2^n に揃わないと立方体 (最大軸の次の 2 のべき乗の 3 乗) まで確保・走査する。
+  // それが実セルの 2 倍を超えるなら線形配置 (nx*ny*nz) にする。2 のべき乗の立方体は Morton のまま (P2G/G2P の局所性が良い)。
+  const uint32_t cubeCells = domain::hashCellsCube(gr);
+  const uint32_t linCells  = gr.x * gr.y * gr.z;
+  const bool linearGrid    = forceGridLayout == 1 || (forceGridLayout == 0 && cubeCells > 2u * linCells);
+  const uint32_t NC        = linearGrid ? linCells : cubeCells;
 
   // maxParticles を明示指定した場合は自動シードを行わない (appendParticles/emitter で後から追加する用途)
   const uint32_t seedCount = maxParticles > 0 ? 0 : defaultSeedCount(gr);
@@ -87,6 +108,7 @@ void ParticleGridEngine::init(VkDevice device, VmaAllocator allocator, VkDescrip
   pc_.gridMomIdx  = attrBuf_.addAttribute("gridMom", sizeof(glm::vec4), NC * 2);
   pc_.gridMassIdx = attrBuf_.addAttribute("gridMass", sizeof(float), NC);
   pc_.hashCells   = NC;
+  pc_.gridLinear  = linearGrid ? 1u : 0u;
   pc_.gridRes     = gr;
   pc_.cellSize    = cellSize;
   pc_.worldMax    = domainSize; // ドメイン下限は常に原点固定 (worldMin は廃止)
@@ -109,12 +131,40 @@ void ParticleGridEngine::init(VkDevice device, VmaAllocator allocator, VkDescrip
 
   allocParticleExtras(N, gr);
 
+  pc_.boxIdx = 0;
+  if(activeGridBox) {
+    // [0..2]=最小ノード (0xFFFFFFFF), [3..5]=最大ノード (0) の初期値。以降は mpm_bounds_finish.comp が毎サブステップ初期値に戻す
+    pc_.boxIdx = attrBuf_.addAttribute("activeBox", sizeof(uint32_t), 32);
+    uint32_t init[32] = {};
+    for(int i = 0; i < 3; ++i) init[i] = 0xFFFFFFFFu;
+    attrBuf_.upload("activeBox", init, sizeof(init), cmdPool_, queue_);
+  }
+
+  pc_.sortIdx = pc_.sortBuckets = pc_.sortCap = 0;
+  if(sortParticles) {
+    // 粒子の処理順 (4x4x4 セルのブロック順)。[0,B)=ブロックの粒子数/開始位置, 続く 3·cap = 粒子のブロック/順位/処理順
+    const uint32_t B = ((gr.x + 3u) / 4u) * ((gr.y + 3u) / 4u) * ((gr.z + 3u) / 4u);
+    pc_.sortBuckets  = B;
+    pc_.sortCap      = maxParticles_;
+    pc_.sortIdx      = attrBuf_.addAttribute("pSort", sizeof(uint32_t), B + 3u * maxParticles_);
+  }
+
   extraForceDefines_ = userDefines_;
+  extraForceDefines_.emplace_back("P2G_WG", std::to_string(p2gGroupSize));
   for(auto& d : shaderDefines()) extraForceDefines_.push_back(d);
   initForces();
 
   auto load = [&](ComputePipeline& k, const char* name) { k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv"); };
   load(kZeroGrid_, "mpm_zero_grid.comp");
+  if(sortParticles) {
+    load(kSortHist_, "mpm_sort_hist.comp");
+    load(kSortScan_, "mpm_sort_scan.comp");
+    load(kSortScatter_, "mpm_sort_scatter.comp");
+  }
+  if(activeGridBox) {
+    load(kBounds_, "mpm_bounds.comp");
+    load(kBoundsFinish_, "mpm_bounds_finish.comp");
+  }
   kP2G_.initFromSpirv(device_, attrBuf_.descriptorSetLayout, DefineShaderCompiler::compile("mpm_p2g.comp", extraForceDefines_));
   kG2P_.initFromSpirv(device_, attrBuf_.descriptorSetLayout, DefineShaderCompiler::compile("mpm_g2p.comp", extraForceDefines_));
 
@@ -127,6 +177,15 @@ void ParticleGridEngine::init(VkDevice device, VmaAllocator allocator, VkDescrip
 void ParticleGridEngine::cleanup() {
   cleanupDerived();
   for(auto* k : {&kZeroGrid_, &kP2G_, &kGridUpdate_, &kG2P_}) k->cleanup();
+  if(pc_.sortIdx != 0) {
+    kSortHist_.cleanup();
+    kSortScan_.cleanup();
+    kSortScatter_.cleanup();
+  }
+  if(pc_.boxIdx != 0) {
+    kBounds_.cleanup();
+    kBoundsFinish_.cleanup();
+  }
   cleanupEngineBase();
 }
 
@@ -373,12 +432,39 @@ void ParticleGridEngine::step(VkCommandBuffer cmd, float dt) {
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &b, 0, nullptr, 0, nullptr);
   }
 
+  // 粒子の処理順 (空間ブロック順) を作る: 粒子数の集計 -> 前置和 -> 処理順の書き出し
+  if(pc_.sortIdx != 0 && N > 0) {
+    ZoneScopedN("SortParticles");
+    MPMSimPC spc = buildPC(subDt);
+    vkCmdFillBuffer(cmd, attrBuf_.getBuffer("pSort"), 0, VkDeviceSize(pc_.sortBuckets) * sizeof(uint32_t), 0u);
+    VkMemoryBarrier tb{};
+    tb.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    tb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    tb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &tb, 0, nullptr, 0, nullptr);
+    dispatchMPM(cmd, kSortHist_, spc, N);
+    computeBarrier(cmd);
+    dispatchMPM(cmd, kSortScan_, spc, 1024u, 1024u);
+    computeBarrier(cmd);
+    dispatchMPM(cmd, kSortScatter_, spc, N);
+    computeBarrier(cmd);
+  }
+
   for(int sub = 0; sub < numSubsteps; ++sub) {
     MPMSimPC pc = buildPC(subDt);
 
+    if(pc.boxIdx != 0) {
+      // 粒子が触れるノードの AABB を求め、ゼロクリア/グリッド更新はその範囲だけを処理する
+      ZoneScopedN("ActiveBox");
+      dispatchMPM(cmd, kBounds_, pc, N);
+      computeBarrier(cmd);
+      dispatchMPM(cmd, kBoundsFinish_, pc, 1);
+      indirectBarrier(cmd);
+    }
     {
       ZoneScopedN("ZeroGrid");
-      dispatchMPM(cmd, kZeroGrid_, pc, NC);
+      if(pc.boxIdx != 0) dispatchMPMIndirect(cmd, kZeroGrid_, pc);
+      else dispatchMPM(cmd, kZeroGrid_, pc, NC);
       computeBarrier(cmd);
       syncGpuForProfiling(cmd);
     }
@@ -386,7 +472,7 @@ void ParticleGridEngine::step(VkCommandBuffer cmd, float dt) {
     // P2G (MLS-MPM: パーティクル並列scatter、固定小数点atomicAdd。空間ハッシュ不要)
     {
       ZoneScopedN("P2G");
-      dispatchMPM(cmd, kP2G_, pc, N);
+      dispatchMPM(cmd, kP2G_, pc, N, p2gGroupSize);
       computeBarrier(cmd);
       syncGpuForProfiling(cmd);
     }
@@ -394,7 +480,8 @@ void ParticleGridEngine::step(VkCommandBuffer cmd, float dt) {
     // グリッド速度更新 (正規化 + Force + 壁BC + コライダーBC)
     {
       ZoneScopedN("GridUpdate");
-      dispatchMPM(cmd, kGridUpdate_, pc, NC);
+      if(pc.boxIdx != 0) dispatchMPMIndirect(cmd, kGridUpdate_, pc);
+      else dispatchMPM(cmd, kGridUpdate_, pc, NC);
       computeBarrier(cmd);
       syncGpuForProfiling(cmd);
     }

@@ -10,6 +10,8 @@ class FLIPEngine : public ParticleGridEngine {
 public:
   FLIPEngine() {
     numSubsteps = 4;
+    p2gGroupSize  = 256;
+    activeGridBox = false; // 圧力投影 (classify/divergence/pressure/project) が全セルを走査する
     flip_ratio  = 0.95f;
   }
 

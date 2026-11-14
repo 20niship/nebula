@@ -1,0 +1,35 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "mpm_common.glsl"
+
+// 粒子の処理順の作成 ② ブロックごとの粒子数を排他的前置和にして、各ブロックの開始位置にする (1 ワークグループ、各スレッドが連続した区間を担当)。
+// dispatch: 1 グループ
+
+layout(local_size_x = 1024) in;
+
+shared uint sPart[1024];
+
+void main() {
+    uint t     = gl_LocalInvocationIndex;
+    uint B     = pc.sortBuckets;
+    uint chunk = (B + 1023u) / 1024u;
+    uint beg   = min(t * chunk, B);
+    uint end   = min(beg + chunk, B);
+
+    uint sum = 0u;
+    for (uint i = beg; i < end; ++i) sum += buffers[pc.sortIdx].data[i];
+    sPart[t] = sum;
+    barrier();
+    for (uint off = 1u; off < 1024u; off <<= 1u) {
+        uint v = (t >= off) ? sPart[t - off] : 0u;
+        barrier();
+        sPart[t] += v;
+        barrier();
+    }
+    uint run = sPart[t] - sum;
+    for (uint i = beg; i < end; ++i) {
+        uint c = buffers[pc.sortIdx].data[i];
+        buffers[pc.sortIdx].data[i] = run;
+        run += c;
+    }
+}

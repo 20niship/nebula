@@ -4,7 +4,7 @@
 // ── Bindless バッファ配列 ──────────────────────────────────────────────────
 layout(set = 0, binding = 0) buffer StorageBuffers { uint data[]; } buffers[];
 
-// ── MPMSimPC Push Constants (180 bytes) ───────────────────────
+// ── MPMSimPC Push Constants (200 bytes) ───────────────────────
 // C++側 src/core/MPMSimPC.h と同一オフセット順であること。vec3系フィールド直前のスカラー数を
 // 4の倍数に揃えてパディングなしで16byte境界に一致させている(順序変更時は要再検証)。
 // ドメイン下限は常に原点固定 (worldMinは廃止、ワールド座標=ローカル座標)。
@@ -57,6 +57,14 @@ layout(push_constant) uniform PC {
 
     uint  flipGridIdx;       // 172 float×3·CELLS: [0,C)=圧力, [C,2C)=右辺 b, [2C,3C)=ノード種別
     uint  pass;              // 176 赤黒 Gauss-Seidel の色
+
+    uint  boxIdx;            // 180 アクティブ領域 (粒子が触れるノードの AABB)。0=無効
+
+    uint  sortIdx;           // 184 粒子の処理順 (空間ブロック順)。0=無効 (src/core/MPMSimPC.h 参照)
+    uint  sortBuckets;       // 188 ブロック数 B
+    uint  sortCap;           // 192 粒子数の上限 cap
+
+    uint  gridLinear;        // 196 0=Morton、1=線形 (src/core/MPMSimPC.h 参照)
 } pc;
 
 // ── Buffer read/write マクロ ──────────────────────────────────────────────
@@ -182,23 +190,38 @@ uint mortonCompact(uint v) {
     return v;
 }
 
+// セル添字: 格子が 2 のべき乗の立方体に近ければ Morton (3 次元の局所性が良い)、そうでなければ線形 (x 最速) = x + nx*(y + ny*z)。
+// Morton は軸長が 2^n に揃わないと立方体まで確保・走査するため、400x92x246 のような格子では実セルの約 15 倍を回してしまう。
+// どちらを使うかは pc.gridLinear (ParticleGridEngine::init が決める、全カーネル共通の実行時フラグ)。
 uint mortonEncodeI(ivec3 c) {
+    if (pc.gridLinear != 0u) return uint(c.x) + pc.gridRes.x * (uint(c.y) + pc.gridRes.y * uint(c.z));
     return mortonExpand(uint(c.x)) | (mortonExpand(uint(c.y)) << 1u)
                                    | (mortonExpand(uint(c.z)) << 2u);
 }
 
 ivec3 mortonDecodeI(uint code) {
+    if (pc.gridLinear != 0u) {
+        uint x = code % pc.gridRes.x;
+        uint t = code / pc.gridRes.x;
+        return ivec3(x, t % pc.gridRes.y, t / pc.gridRes.y);
+    }
     return ivec3(mortonCompact(code),
                  mortonCompact(code >> 1u),
                  mortonCompact(code >> 2u));
+}
+
+// 粒子の処理順 (空間ブロック順): 4x4x4 セルのブロックごとに粒子をまとめる。ブロックは線形 (x 最速)
+uint sortBucketOf(vec3 xp) {
+    ivec3 c  = clamp(ivec3(floor(xp / pc.cellSize)), ivec3(0), ivec3(pc.gridRes) - ivec3(1)) >> 2;
+    uvec3 nb = (pc.gridRes + uvec3(3u)) >> 2;
+    return uint(c.x) + nb.x * (uint(c.y) + nb.y * uint(c.z));
 }
 
 // パーティクル位置 → Morton cell ID
 uint cellIdFromPos(vec3 p) {
     vec3 local = clamp(p / pc.cellSize,
                        vec3(0.0), vec3(pc.gridRes) - vec3(1.0));
-    uvec3 g = uvec3(local);
-    return mortonExpand(g.x) | (mortonExpand(g.y) << 1u) | (mortonExpand(g.z) << 2u);
+    return mortonEncodeI(ivec3(local));
 }
 
 // ── 2次 B-spline 重みと勾配 ───────────────────────────────────────────────
@@ -222,39 +245,40 @@ float bspline2g(float d) {
 #define encodeFixed(v) uint(int((v) * FIXED_POINT_SCALE))
 #define decodeFixed(u) (float(int(u)) / FIXED_POINT_SCALE)
 
-// ── 3×3 対称 Jacobi 固有値分解 ───────────────────────────────────────────
+// ── 3×3 対称 Jacobi 固有値分解 (循環法) ──────────────────────────────────
+// 回転の組 (p,q) を (0,1) -> (0,2) -> (1,2) の順に固定した掃引を、非対角成分が trace に対して十分小さくなるまで繰り返す。
+// 組が定数なので行列がレジスタに載る (旧実装は「最大の非対角要素」を探して実行時の添字で引いており、ローカルメモリに落ちて遅かった)。
+// 回転自体 (tau, t, c, s と A/V の更新) は旧実装と同一。収束判定は対角成分の和 (F^T F では非負) に対する相対値。
+#define JACOBI_ROT(P, Q, R) { \
+    float apq = A[P][Q]; \
+    if (apq != 0.0) { \
+        float app = A[P][P], aqq = A[Q][Q]; \
+        float tau = (aqq - app) / (2.0 * apq); \
+        float t   = sign(tau) / (abs(tau) + sqrt(1.0 + tau*tau)); \
+        float c   = inversesqrt(1.0 + t*t); \
+        float s   = t * c; \
+        A[P][P] = app - t*apq; \
+        A[Q][Q] = aqq + t*apq; \
+        A[P][Q] = 0.0; A[Q][P] = 0.0; \
+        float arp = A[R][P], arq = A[R][Q]; \
+        A[R][P] = c*arp - s*arq; A[P][R] = A[R][P]; \
+        A[R][Q] = s*arp + c*arq; A[Q][R] = A[R][Q]; \
+        for (int r = 0; r < 3; r++) { \
+            float vrp = V[r][P], vrq = V[r][Q]; \
+            V[r][P] = c*vrp - s*vrq; \
+            V[r][Q] = s*vrp + c*vrq; \
+        } \
+    } \
+}
+
 void jacobiEigen3(mat3 A, out vec3 D, out mat3 V) {
     V = mat3(1.0);
-    for (int iter = 0; iter < 20; iter++) {
-        float a01 = A[0][1], a02 = A[0][2], a12 = A[1][2];
-        if (max(abs(a01), max(abs(a02), abs(a12))) < 1e-8) break;
-
-        int p0, p1; float apq;
-        if (abs(a01) >= max(abs(a02), abs(a12))) { p0=0; p1=1; apq=a01; }
-        else if (abs(a02) >= abs(a12))            { p0=0; p1=2; apq=a02; }
-        else                                       { p0=1; p1=2; apq=a12; }
-
-        float app = A[p0][p0], aqq = A[p1][p1];
-        float tau = (aqq - app) / (2.0 * apq);
-        float t   = sign(tau) / (abs(tau) + sqrt(1.0 + tau*tau));
-        float c   = inversesqrt(1.0 + t*t);
-        float s   = t * c;
-
-        A[p0][p0] = app - t*apq;
-        A[p1][p1] = aqq + t*apq;
-        A[p0][p1] = 0.0; A[p1][p0] = 0.0;
-
-        for (int r = 0; r < 3; r++) {
-            if (r == p0 || r == p1) continue;
-            float arp = A[r][p0], arq = A[r][p1];
-            A[r][p0] = c*arp - s*arq; A[p0][r] = A[r][p0];
-            A[r][p1] = s*arp + c*arq; A[p1][r] = A[r][p1];
-        }
-        for (int r = 0; r < 3; r++) {
-            float vrp = V[r][p0], vrq = V[r][p1];
-            V[r][p0] = c*vrp - s*vrq;
-            V[r][p1] = s*vrp + c*vrq;
-        }
+    for (int sweep = 0; sweep < 8; sweep++) {
+        float off = max(abs(A[0][1]), max(abs(A[0][2]), abs(A[1][2])));
+        if (off <= 1e-7 * (A[0][0] + A[1][1] + A[2][2])) break;
+        JACOBI_ROT(0, 1, 2)
+        JACOBI_ROT(0, 2, 1)
+        JACOBI_ROT(1, 2, 0)
     }
     D = vec3(A[0][0], A[1][1], A[2][2]);
 }

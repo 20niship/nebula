@@ -12,12 +12,26 @@
 //    ColliderPrimitive 読み取りは MoltenVK 制約に従い main() でインライン展開
 // dispatch: (totalCells + 255) / 256
 
-layout(local_size_x = 256) in;
+layout(local_size_x = 16, local_size_y = 4, local_size_z = 4) in;
 
 void main() {
-  uint gid        = gl_GlobalInvocationID.x;
+  // pc.boxIdx != 0: アクティブ領域を 16x4x4 ブロックで覆う 3D dispatch (領域内のセルだけを処理、添字の除算なし)。
+  // 0: 1D dispatch で全セルを処理 (FLIP、テストのハーネス)
+  uint gid;
+  ivec3 ijk;
   uint totalCells = pc.hashCells;
-  if(gid >= totalCells) return;
+  if(pc.boxIdx != 0u) {
+    uvec3 e = uvec3(readUint(pc.boxIdx, 11u), readUint(pc.boxIdx, 12u), readUint(pc.boxIdx, 13u));
+    uvec3 g = gl_GlobalInvocationID;
+    if(any(greaterThanEqual(g, e))) return;
+    uvec3 o = uvec3(readUint(pc.boxIdx, 8u), readUint(pc.boxIdx, 9u), readUint(pc.boxIdx, 10u));
+    ijk     = ivec3(o + g);
+    gid     = mortonEncodeI(ijk);
+  } else {
+    gid = (gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x) * 256u + gl_LocalInvocationIndex;
+    if(gid >= totalCells) return;
+    ijk = mortonDecodeI(gid);
+  }
 
   // P2G(scatter)はgridMass/gridMomを固定小数点整数atomicAddで蓄積している。ここで最初に通常floatへデコードする
   float mass = decodeFixed(readUint(pc.gridMassIdx, gid));
@@ -38,10 +52,9 @@ void main() {
   }
 
   // FLIP: 物理適用前の速度を後半バッファへ退避 (G2P が v_i_old として参照)
-  writeVec4(pc.gridMomIdx, gid + totalCells, vec4(v, 0.0));
+  if(pc.flip_ratio > 0.01) writeVec4(pc.gridMomIdx, gid + totalCells, vec4(v, 0.0)); // G2P が読むのは FLIP ブレンド時だけ
 
   // Force(空間ノイズ用の位置)より前倒しで計算 (issue #30)
-  ivec3 ijk          = mortonDecodeI(gid);
   vec3 forcePos      = (vec3(ijk) + 0.5) * pc.cellSize;
   uint forceTypeFlag = 0u; // MPMグリッドセルにtypeFlagはないため常時全Force適用
 

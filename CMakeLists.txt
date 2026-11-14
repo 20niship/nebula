@@ -81,6 +81,11 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/sb_wire.frag
     # ── MPM シェーダー ────────────────────────────────────────────────────
     ${SHADER_SRC_DIR}/mpm_zero_grid.comp
+    ${SHADER_SRC_DIR}/mpm_bounds.comp
+    ${SHADER_SRC_DIR}/mpm_bounds_finish.comp
+    ${SHADER_SRC_DIR}/mpm_sort_hist.comp
+    ${SHADER_SRC_DIR}/mpm_sort_scan.comp
+    ${SHADER_SRC_DIR}/mpm_sort_scatter.comp
     ${SHADER_SRC_DIR}/mpm_p2g.comp
     ${SHADER_SRC_DIR}/mpm_grid_update.comp
     ${SHADER_SRC_DIR}/mpm_g2p.comp

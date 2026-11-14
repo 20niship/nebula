@@ -1,0 +1,17 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "mpm_common.glsl"
+
+// 粒子の処理順の作成 ① ブロックごとの粒子数を数える。atomicAdd の戻り値をブロック内の順位として保存する。
+// sortIdx バッファ: [0,B)=粒子数, [B,B+cap)=粒子のブロック, [B+cap,B+2cap)=ブロック内の順位, [B+2cap,B+3cap)=処理順。dispatch: (particleCount + 255) / 256
+
+layout(local_size_x = 256) in;
+
+void main() {
+    uint p = gl_GlobalInvocationID.x;
+    if (p >= pc.particleCount) return;
+    uint b    = sortBucketOf(readVec4(pc.posIdx, p).xyz);
+    uint rank = atomicAdd(buffers[pc.sortIdx].data[b], 1u);
+    buffers[pc.sortIdx].data[pc.sortBuckets + p]                = b;
+    buffers[pc.sortIdx].data[pc.sortBuckets + pc.sortCap + p]   = rank;
+}

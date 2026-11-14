@@ -78,6 +78,7 @@ mat3 projectDruckerPrager(mat3 F, float mu, float lam, float M, float q_c, out m
 void main() {
     uint p = gl_GlobalInvocationID.x;
     if (p >= pc.particleCount) return;
+    if (pc.sortIdx != 0u) p = readUint(pc.sortIdx, pc.sortBuckets + 2u * pc.sortCap + p);
 
     vec4  pp = readVec4(pc.posIdx, p);
     vec3  xp = pp.xyz;

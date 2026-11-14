@@ -44,6 +44,18 @@ public:
   uint32_t colliderForceCount() const { return pc_.colliderCount; }
   // trueならmpm_grid_update.compのatomicAdd集計とstep()冒頭のゼロクリアdispatchを毎フレーム発行する。falseなら両方とも一切発行されずGPU負荷は増えない(既定false)。
   bool enableColliderForceFeedback = false;
+  // true なら粒子が触れる格子ノードの AABB (アクティブ領域) だけをゼロクリア/グリッド更新する (結果は全セル処理と同一)。
+  // FLIP は圧力投影が全セルを走査するので使えない (FLIPEngine が false にする)。
+  bool activeGridBox = true;
+  // P2G の local_size_x (共有メモリタイル集約の粒度)。粒子の並びが空間的にまとまっているほどタイルが効く。
+  // 小さいほどタイルが小さくて済むが、グループ数が増える。MPM(雪崩) は 64、FLIP は 256 が最速だった。init() 前に設定する
+  uint32_t p2gGroupSize = 128;
+  // true なら step() の先頭で粒子の処理順 (4x4x4 セルのブロック順) を作り、P2G/G2P はその順に処理する。
+  // 同じブロックの粒子が連続して処理されるので、共有メモリタイルが小さく済みグローバル atomic が減る。
+  // 粒子バッファは並べ替えないので粒子番号は変わらず、P2G は整数加算なので結果も変わらない。
+  bool sortParticles = true;
+  // 格子のセル配置: 0=自動 (Morton の確保が実セルの 2 倍を超えるなら線形)、1=常に線形、2=常に Morton
+  int forceGridLayout = 0;
 
   float restitution   = 0.3f;
   float wall_friction = 0.0f;
@@ -103,8 +115,12 @@ protected:
 
   void uploadNewParticles_(const glm::vec4* pos, const glm::vec4* vel, uint32_t count, uint32_t first);
   MPMSimPC buildPC(float subDt) const;
-  void dispatchMPM(VkCommandBuffer cmd, ComputePipeline& k, const MPMSimPC& pc, uint32_t count);
+  // groupSize: シェーダの local_size_x (既定 256)
+  void dispatchMPM(VkCommandBuffer cmd, ComputePipeline& k, const MPMSimPC& pc, uint32_t count, uint32_t groupSize = 256u);
   void computeBarrier(VkCommandBuffer cmd);
+  // アクティブ領域 (activeBox) を記録した後の indirect dispatch 用: compute 書き込み -> DRAW_INDIRECT 読み取り
+  void indirectBarrier(VkCommandBuffer cmd);
+  void dispatchMPMIndirect(VkCommandBuffer cmd, ComputePipeline& k, const MPMSimPC& pc);
   // NEBULA_TRACY時のみ有効: submit+queueWaitIdleしてZoneScopedN区間に実GPU時間を含める計測専用パス(通常ビルドではno-op)
   void syncGpuForProfiling(VkCommandBuffer cmd);
 
@@ -123,6 +139,9 @@ protected:
   ComputePipeline kP2G_;
   ComputePipeline kGridUpdate_;
   ComputePipeline kG2P_;
+  ComputePipeline kSortHist_, kSortScan_, kSortScatter_; // 粒子の処理順 (mpm_sort_*.comp)
+  ComputePipeline kBounds_;       // 粒子が触れるノードの AABB (mpm_bounds.comp)
+  ComputePipeline kBoundsFinish_; // AABB から範囲と indirect 引数を確定 (mpm_bounds_finish.comp)
 
 private:
   std::vector<std::shared_ptr<Emitter>> emitters_;

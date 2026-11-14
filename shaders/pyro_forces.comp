@@ -26,7 +26,7 @@ void main() {
         v.y += pc.dt * (pc.buoyancyAlpha * (T - pc.ambientTemp) - pc.buoyancyBeta * rho);
     }
 
-    ivec3 ijk = pyroMortonDecodeI(gid);
+    ivec3 ijk = pyroCellCoord(gid);
     vec3 forcePos = (vec3(ijk) + 0.5) * pc.cellSize + pc.worldMin;
     uint forceTypeFlag = 0u; // Pyroグリッドセルにtypeflagはないため常時全Force適用
 

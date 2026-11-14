@@ -2,7 +2,7 @@
 #extension GL_EXT_nonuniform_qualifier : enable
 #include "pyro_common.glsl"
 
-// 移動コライダー: ローカル SDF (線形配置の節点値) を剛体の位置・姿勢 (pc.bodyPos / pc.bodyQuat) に合わせ、トリリニア補間で colliderSDF (Morton) へ焼き直す。
+// 移動コライダー: ローカル SDF (線形配置の節点値) を剛体の位置・姿勢 (pc.bodyPos / pc.bodyQuat) に合わせ、トリリニア補間で colliderSDF (線形) へ焼き直す。
 // ついでに地面 (最下段セルを固体) も合成する。ローカル SDF の外側は境界へのクランプ値 + 境界からの距離で延長する。
 // dispatch: (totalCells + 255) / 256
 
@@ -14,7 +14,7 @@ void main() {
     if (gid >= totalCells) return;
     if (pc.colliderSDFIdx == 0u || pc.rotSdfIdx == 0u) return;
 
-    ivec3 ijk = pyroMortonDecodeI(gid);
+    ivec3 ijk = pyroCellCoord(gid);
     if (ijk.x >= int(pc.gridRes.x) || ijk.y >= int(pc.gridRes.y) || ijk.z >= int(pc.gridRes.z)) {
         writeFloat(pc.colliderSDFIdx, gid, 1e6);
         return;

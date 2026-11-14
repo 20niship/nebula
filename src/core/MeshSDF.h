@@ -88,7 +88,7 @@ inline uint32_t meshSdfMortonEncode(uint32_t x, uint32_t y, uint32_t z) { return
 // 三角形数・解像度が大きいと重いため、動的障害物として毎フレーム呼ぶ場合は
 // 低ポリメッシュ + 適度な解像度 + 再構築間隔 (interval) で実用速度に収めること。
 //
-// 出力バッファは常にtotalCells(cubeRes^3)要素確保し、realRes範囲外はパディングとして1e9f(無衝突)で埋める。PyroEngine::setColliderSDF()のサイズ契約と一致させるため。
+// 出力は線形配置 (x 最速) の realRes.x*y*z 要素 (PyroEngine::setColliderSDF() のサイズ契約と一致)。totalCells は互換のため残している。
 
 inline std::vector<float> buildMeshSDF(const std::vector<MeshTriangle>& tris, const glm::uvec3& realRes, uint32_t totalCells, float cellSize, bool verbose = true) {
   const float cs = cellSize;
@@ -117,7 +117,7 @@ inline std::vector<float> buildMeshSDF(const std::vector<MeshTriangle>& tris, co
             outer = glm::dot(p - cp, tri.n) >= 0.0f;
           }
         }
-        sdf[meshSdfMortonEncode(ix, iy, iz)] = outer ? minD : -minD;
+        sdf[size_t(ix) + size_t(realRes.x) * (iy + size_t(realRes.y) * iz)] = outer ? minD : -minD;
       }
   }
   if(verbose) std::printf("  SDF 完了                    \n");

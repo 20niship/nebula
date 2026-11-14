@@ -15,7 +15,7 @@ void main() {
     uint totalCells = pc.hashCells;
     if (gid >= totalCells) return;
 
-    ivec3 ijk = pyroMortonDecodeI(gid);
+    ivec3 ijk = pyroCellCoord(gid);
 
     if (CELL_IS_SOLID(ijk.x, ijk.y, ijk.z)) {
         writeFloat(pc.divergenceIdx, gid, 0.0);

@@ -1,5 +1,4 @@
 #include "App.h"
-#include "core/DefineShaderCompiler.h"
 #include "core/Emitter.h"
 #include "core/Force.h"
 #include "engine/FluidEngine.h"
@@ -117,7 +116,7 @@ private:
 
     if(large_) {
       // cfg.halfVec4==trueだとバッファがpackHalf2x16詰め(8 bytes/vec4)になり静的.spv(FP32想定)のまま読むとストライド不一致で範囲外読み出しになるためHALF_VEC4注入の実行時コンパイルに切り替える
-      std::vector<uint32_t> vertSpirv = DefineShaderCompiler::compile("fluid_particle.vert", {{"HALF_VEC4", "1"}}, /*isVertexShader=*/true);
+      std::vector<uint32_t> vertSpirv = ComputePipeline::compileShader("fluid_particle.vert", {{"HALF_VEC4", "1"}}, /*isVertexShader=*/true);
       graphicsPipe_.initVertFromSpirv(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, vertSpirv, SHADER_DIR_STR + "/fluid.frag.spv");
     } else {
       graphicsPipe_.init(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, SHADER_DIR_STR + "/fluid_particle.vert.spv", SHADER_DIR_STR + "/fluid.frag.spv");

@@ -1,5 +1,4 @@
 #include "PBFHarness.h"
-#include "DefineShaderCompiler.h"
 #include "Domain.h"
 #include "ForceShaderCompiler.h"
 #include <algorithm>
@@ -108,8 +107,7 @@ void PBFHarness::init(const HeadlessCtx& ctx, const Config& cfg, const std::stri
     {"ADAPTIVE_SHIFT_Y", std::to_string(morton.shiftY) + "u"}, {"ADAPTIVE_SHIFT_Z", std::to_string(morton.shiftZ) + "u"},
   };
   auto loadAdaptive = [&](ComputePipeline& k, const std::string& name) {
-    std::vector<uint32_t> spirv = DefineShaderCompiler::compile(name, mortonDefines);
-    k.initFromSpirv(ctx.device, attrBuf_.descriptorSetLayout, spirv);
+    k.init(ctx.device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv", mortonDefines);
   };
   loadAdaptive(kHashCnt_, "hash_count.comp");
   loadAdaptive(kSort_, "hash_sort.comp");

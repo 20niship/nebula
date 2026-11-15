@@ -3,7 +3,6 @@
 // メッシュへ波が衝突して泡を生成する。海面のリアルなレンダリング検証を想定。
 #include "App.h"
 #include "FluidStats.h"
-#include "core/DefineShaderCompiler.h"
 #include "core/Emitter.h"
 #include "core/Force.h"
 #include "engine/BoundaryParticles.h"
@@ -227,8 +226,8 @@ private:
     if(cfg.halfVec4 || cfg.halfVec4Vel) {
       // vがpackHalf2x16詰めのため、静的SPV(FP32想定)のままだとストライド不一致でゴミ値を読む。FluidEngine::init()のextraForceDefines_と同じ判定。
       const std::vector<std::pair<std::string, std::string>> halfDefines = cfg.halfVec4 ? std::vector<std::pair<std::string, std::string>>{{"HALF_VEC4", "1"}, {"HALF_VEC4_V", "1"}} : std::vector<std::pair<std::string, std::string>>{{"HALF_VEC4_V", "1"}};
-      auto fluidVert                                                     = DefineShaderCompiler::compile("fluid_particle_wave.vert", halfDefines, /*isVertexShader=*/true);
-      auto foamVert                                                      = DefineShaderCompiler::compile("foam_particle_wave.vert", halfDefines, /*isVertexShader=*/true);
+      auto fluidVert                                                     = ComputePipeline::compileShader("fluid_particle_wave.vert", halfDefines, /*isVertexShader=*/true);
+      auto foamVert                                                      = ComputePipeline::compileShader("foam_particle_wave.vert", halfDefines, /*isVertexShader=*/true);
       graphicsPipe_.initVertFromSpirv(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, fluidVert, SHADER_DIR_STR + "/fluid.frag.spv");
       foamGraphicsPipe_.initVertFromSpirv(base_.ctx.device, base_.ctx.renderPass, engine_.descriptorSetLayout, foamVert, SHADER_DIR_STR + "/foam.frag.spv", VK_PRIMITIVE_TOPOLOGY_POINT_LIST, /*enableBlend=*/true);
     } else {

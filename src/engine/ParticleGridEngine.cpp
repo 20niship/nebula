@@ -1,5 +1,4 @@
 #include "ParticleGridEngine.h"
-#include "../core/DefineShaderCompiler.h"
 #include "../core/Profiling.h"
 #include "BoundaryParticles.h"
 
@@ -165,8 +164,8 @@ void ParticleGridEngine::init(VkDevice device, VmaAllocator allocator, VkDescrip
     load(kBounds_, "mpm_bounds.comp");
     load(kBoundsFinish_, "mpm_bounds_finish.comp");
   }
-  kP2G_.initFromSpirv(device_, attrBuf_.descriptorSetLayout, DefineShaderCompiler::compile("mpm_p2g.comp", extraForceDefines_));
-  kG2P_.initFromSpirv(device_, attrBuf_.descriptorSetLayout, DefineShaderCompiler::compile("mpm_g2p.comp", extraForceDefines_));
+  kP2G_.init(device_, attrBuf_.descriptorSetLayout, shaderDir + "/mpm_p2g.comp.spv", extraForceDefines_);
+  kG2P_.init(device_, attrBuf_.descriptorSetLayout, shaderDir + "/mpm_g2p.comp.spv", extraForceDefines_);
 
   descriptorSetLayout = attrBuf_.descriptorSetLayout;
   descriptorSet       = attrBuf_.descriptorSet;

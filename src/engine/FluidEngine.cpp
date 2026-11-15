@@ -1,6 +1,5 @@
 #include "FluidEngine.h"
 #include "BoundaryParticles.h"
-#include "../core/DefineShaderCompiler.h"
 #include "../core/Profiling.h"
 
 #include <algorithm>
@@ -126,8 +125,7 @@ void FluidEngine::init(VkDevice device, VmaAllocator allocator, VkDescriptorPool
   // ソート済みバッファ共有shaderをFluidEngine以外(PBFHarness等)が呼ぶとbindless index 0を破壊するため、FluidEngineのみ注入
   mortonDefines.emplace_back("NBR_SORTED_BUFFERS", "1");
   auto loadAdaptive = [&](ComputePipeline& k, const std::string& name) {
-    std::vector<uint32_t> spirv = DefineShaderCompiler::compile(name, mortonDefines);
-    k.initFromSpirv(device, attrBuf_.descriptorSetLayout, spirv);
+    k.init(device, attrBuf_.descriptorSetLayout, shaderDir + "/" + name + ".spv", mortonDefines);
   };
   // sdf_collision_velocity/absorb/lifetime もハーフフロート対応のため loadAdaptive 経由でコンパイル
   loadAdaptive(kSdfVelocity_, "sdf_collision_velocity.comp"); // issue #66: kSdfCollision_+kUpdateVelocity_ 統合

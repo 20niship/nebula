@@ -22,16 +22,20 @@ struct Args : public argparse::Args {
   int& frames            = kwarg("frames", "output frames").set_default(288);
   float& fps             = kwarg("fps", "output frame rate").set_default(24.0f);
   float& spacing         = kwarg("spacing", "particle spacing [m] (0.004 = about 0.9M particles, 0.0018 = about 10M)").set_default(0.004f);
-  float& cfl             = kwarg("cfl", "CFL number used to pick the substep count").set_default(0.25f);
-  float& blade_speed     = kwarg("blade-speed", "blender blade angular speed [rad/s]").set_default(10.0f);
+  float& cfl             = kwarg("cfl", "CFL number used to pick the substep count (APIC/FLIP aside, PIC is stable for the elastic cookie only below about 0.03 in c*dt/dx)").set_default(0.04f);
+  float& blade_speed     = kwarg("blade-speed", "blender blade angular speed [rad/s]").set_default(24.0f);
   float& blade_start     = kwarg("blade-start", "time [s] at which the blade starts (ramps up over 1s)").set_default(0.6f);
-  float& milk_bulk       = kwarg("milk-bulk", "milk bulk modulus K [Pa] (larger = less compressible but more substeps)").set_default(6e4f);
-  float& cookie_E        = kwarg("cookie-E", "cookie Young's modulus [Pa]").set_default(1.5e5f);
-  float& cookie_yield    = kwarg("cookie-yield", "cookie Von Mises yield stress [Pa] (smaller = crumbles easier)").set_default(3e3f);
-  int& cookies           = kwarg("cookies", "number of cookies").set_default(10);
+  float& milk_bulk       = kwarg("milk-bulk", "milk bulk modulus K [Pa] (larger = less compressible but more substeps)").set_default(4e4f);
+  float& cookie_E        = kwarg("cookie-E", "cookie Young's modulus [Pa]").set_default(3e5f);
+  float& cookie_cohesion = kwarg("cookie-cohesion", "cookie Drucker-Prager cohesion [Pa] (holds the disc together; smaller = crumbles easier)").set_default(2e4f);
+  float& cookie_friction = kwarg("cookie-friction", "cookie Drucker-Prager M (tan of the friction angle)").set_default(0.8f);
+  int& cookies           = kwarg("cookies", "number of cookies").set_default(6);
   float& fp_scale        = kwarg("fp-scale", "MPM fixed-point scale (0 = auto from the particle mass)").set_default(0.0f);
   float& drop_slowmo     = kwarg("drop-slowmo", "slow-motion factor while the cookies fall (the first --drop-seconds of simulated time)").set_default(4.0f);
   float& drop_seconds    = kwarg("drop-seconds", "simulated seconds that are played in slow motion").set_default(0.6f);
+  float& cookie_radius   = kwarg("cookie-radius", "cookie disc radius [m]").set_default(0.065f);
+  float& cookie_thick    = kwarg("cookie-thickness", "cookie disc thickness [m] (needs several cells: a surface layer of about 2 cells is sheared by the shared grid velocity at the milk interface)").set_default(0.04f);
+  float& cookie_density  = kwarg("cookie-density", "cookie density [kg/m^3] (denser than the milk so that the cookies sink to the blade)").set_default(2200.0f);
   int& seed              = kwarg("seed", "random seed (cookie placement)").set_default(3);
 };
 
@@ -39,11 +43,12 @@ struct Args : public argparse::Args {
 static constexpr float kCx = 0.5f, kCz = 0.5f;
 static constexpr float kJarR = 0.25f;      // 内半径
 static constexpr float kFloorY = 0.05f;    // 底面
-static constexpr float kRimY = 0.45f;      // ジャーの縁 (これより上は壁なし)
+static constexpr float kRimY = 0.62f;      // ジャーの縁 (これより上は壁なし)
 static constexpr float kMilkTop = 0.33f;   // ミルクの初期液面
 
 static constexpr float kShaftR = 0.014f;
-static constexpr float kBladeHalf[3] = {0.17f, 0.03f, 0.008f};
+static constexpr float kBladeHalf[3] = {0.17f, 0.17f, 0.008f}; // 底から液面の上まで届く縦長のパドル (クッキーは液面に浮いて底の刃に届かない)
+static constexpr float kBladeY = 0.23f;
 
 static float matW(uint32_t id) {
   float f;
@@ -67,7 +72,7 @@ int main(int argc, char* argv[]) {
     auto insideBlade = [&](float x, float y, float z) {
       const float m = spacing, dx = x - kCx, dz = z - kCz;
       if(std::hypot(dx, dz) < kShaftR + m) return true;
-      if(std::fabs(y - (kFloorY + 0.045f)) > kBladeHalf[1] + m) return false;
+      if(std::fabs(y - (kBladeY)) > kBladeHalf[1] + m) return false;
       return (std::fabs(dx) < kBladeHalf[0] + m && std::fabs(dz) < kBladeHalf[2] + m) || (std::fabs(dz) < kBladeHalf[0] + m && std::fabs(dx) < kBladeHalf[2] + m);
     };
     for(float y = kFloorY + 0.5f * spacing; y < kMilkTop; y += spacing)
@@ -79,15 +84,15 @@ int main(int argc, char* argv[]) {
           }
     const size_t nMilk = pos.size();
 
-    // クッキー: 円盤 (半径6cm, 厚さ2.2cm) を軸まわりの円周上に、高さを散らして置く。初速なしで自由落下させ、液面に順に着水する
+    // クッキー: 円盤 を軸まわりの円周上に、高さを散らして置く。初速なしで自由落下させ、液面に順に着水する
     std::mt19937 rng(uint32_t(a.seed));
     std::uniform_real_distribution<float> U(0.0f, 1.0f);
-    const float cr = 0.06f, ch = 0.011f; // 半径, 半厚
+    const float cr = a.cookie_radius, ch = 0.5f * a.cookie_thick; // 半径, 半厚
     for(int i = 0; i < a.cookies; i++) {
-      const float ang = 6.2831853f * (float(i) / float(a.cookies)) + 0.4f;
-      const float rad = 0.14f + 0.02f * U(rng);
-      const glm::vec3 c(kCx + rad * std::cos(ang), 0.40f + 0.055f * float(i), kCz + rad * std::sin(ang));
-      const glm::quat q = glm::angleAxis(0.5f * (U(rng) - 0.5f) * 2.0f, glm::normalize(glm::vec3(U(rng) - 0.5f, 0.2f, U(rng) - 0.5f) + glm::vec3(1e-3f)));
+      const float ang = 2.3999632f * float(i); // 黄金角のらせん: 近い高さの隣同士が水平に離れ、初期に重ならない (重なると過圧縮で降伏する)
+      const float rad = 0.15f;
+      const glm::vec3 c(kCx + rad * std::cos(ang), 0.38f + 0.06f * float(i), kCz + rad * std::sin(ang));
+      const glm::quat q = glm::angleAxis(0.6f * (U(rng) - 0.5f), glm::normalize(glm::vec3(U(rng) - 0.5f, 0.2f, U(rng) - 0.5f) + glm::vec3(1e-3f)));
       for(float ly = -ch; ly < ch; ly += spacing)
         for(float lz = -cr; lz < cr; lz += spacing)
           for(float lx = -cr; lx < cr; lx += spacing)
@@ -99,14 +104,16 @@ int main(int argc, char* argv[]) {
     std::printf("particles: %zu (milk %zu, cookie %zu)  grid: %ux%ux%u  cell %.4f m\n", pos.size(), nMilk, pos.size() - nMilk, G.x, G.y, G.z, cell);
 
     // ── 材料とサブステップ ──────────────────────────────────────────────────
-    const float rhoMilk = 1030.0f, rhoCookie = 850.0f, nuCookie = 0.25f;
+    const float rhoMilk = 1030.0f, rhoCookie = a.cookie_density, nuCookie = 0.25f;
     MaterialParams milk = presetWater(rhoMilk, a.milk_bulk);
     MaterialParams cookie = presetJelly(a.cookie_E, nuCookie, rhoCookie);
-    cookie.model  = uint32_t(MaterialModel::VON_MISES);
-    cookie.q_max  = a.cookie_yield;
+    // クッキーは Drucker-Prager (粘着力つき): Von Mises の弾性体は空気との境界の軽い格子点で自由落下でも発散した (実測)
+    cookie.model      = uint32_t(MaterialModel::DRUCKER_PRAGER);
+    cookie.M_friction = a.cookie_friction;
+    cookie.q_cohesion = a.cookie_cohesion;
     const float cMilk   = std::sqrt(a.milk_bulk / rhoMilk);
     const float cCookie = std::sqrt((cookie.lambda + 2.0f * cookie.mu) / rhoCookie);
-    const float vFlow   = 6.0f; // 想定最大流速 [m/s] (刃の先端速度 + 落下)
+    const float vFlow   = 3.0f; // 想定最大流速 [m/s] (刃の先端速度 + 落下)
     const float dtFrame = 1.0f / a.fps;
     const float cMax    = std::max(cMilk, cCookie) + vFlow;
     // 刃を 1 ブロックあたり 0.1rad 以下しか回さないよう、フレームをブロックに分けて刃の姿勢を更新する (落下区間は dt が小さいのでブロックも少ない)
@@ -130,7 +137,7 @@ int main(int argc, char* argv[]) {
     e.setFixedPointScale(fp);
     e.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR);
     e.numSubsteps = sub0;
-    e.flip_ratio  = -1.0f; // APIC: 角運動量を保存して撹拌の渦を保つ
+    e.flip_ratio  = 0.0f; // PIC: APICは弾性体の自由落下でも発散し (サブステップを増やしても)、FLIPはミルクの体積が潰れる (実測)
     e.addForce(GravityForce::FromDirection({0.0f, -1.0f, 0.0f}, 9.8f));
     e.setMaterials({milk, cookie});
 
@@ -165,7 +172,7 @@ int main(int argc, char* argv[]) {
       cols.addCylinder({kCx, 0.5f * (kFloorY + 0.95f), kCz}, kShaftR, 0.5f * (0.95f - kFloorY), 0.0f, 0.4f, {0, 0, 0}, glm::quat(1, 0, 0, 0), w);
       for(int k = 0; k < 2; k++) {
         const glm::quat q = glm::angleAxis(bladeAngle + float(k) * 1.5707963f, glm::vec3(0, 1, 0));
-        cols.addBox({kCx, kFloorY + 0.045f, kCz}, {kBladeHalf[0], kBladeHalf[1], kBladeHalf[2]}, 0.0f, 0.4f, {0, 0, 0}, q, w);
+        cols.addBox({kCx, kBladeY, kCz}, {kBladeHalf[0], kBladeHalf[1], kBladeHalf[2]}, 0.0f, 0.4f, {0, 0, 0}, q, w);
       }
       e.setColliders(cols);
     };

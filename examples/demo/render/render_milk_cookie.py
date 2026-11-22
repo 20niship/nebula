@@ -26,7 +26,7 @@ a = ap.parse_args()
 os.makedirs(a.out, exist_ok=True)
 
 # demo_milk_cookie.cpp と同じジャー寸法 [m]
-CX, CZ, JAR_R, FLOOR_Y, RIM_Y, GLASS = 0.5, 0.5, 0.25, 0.05, 0.45, 0.012
+CX, CZ, JAR_R, FLOOR_Y, RIM_Y, GLASS = 0.5, 0.5, 0.25, 0.05, 0.62, 0.012
 MILK_VOLUME = math.pi * JAR_R**2 * (0.33 - FLOOR_Y)  # 初期ミルクの体積から粒子間隔を逆算する
 
 sc = C.reset_scene(tuple(a.res), a.samples)
@@ -96,8 +96,8 @@ steel = C.material("steel", (0.75, 0.75, 0.78, 1), 0.18, Metallic=1.0)
 shaft_v, shaft_f = revolve([(0.014, FLOOR_Y), (0.014, 0.95), (0.0, 0.95)], 48, cx=0.0, cz=0.0)
 shaft = C.mesh_object("shaft", shaft_v, shaft_f, steel)
 shaft.location = C.sim_to_blender((CX, 0.0, CZ))  # 原点を軸に置かないと回転で軸が振れる
-BLADE = (0.17, 0.03, 0.008)  # 半長, 半高, 半厚 (demo_milk_cookie.cpp の BOX と同じ)
-blades = [C.box(f"blade{k}", (CX, FLOOR_Y + 0.045, CZ), (BLADE[0], BLADE[1], BLADE[2]), steel) for k in range(2)]
+BLADE = (0.17, 0.17, 0.008)  # 半長, 半高, 半厚 (demo_milk_cookie.cpp の BOX と同じ)
+blades = [C.box(f"blade{k}", (CX, 0.23, CZ), (BLADE[0], BLADE[1], BLADE[2]), steel) for k in range(2)]
 for o in [shaft, *blades]:
     o.rotation_mode = "XYZ"
 

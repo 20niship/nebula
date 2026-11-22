@@ -19,6 +19,7 @@ ap.add_argument("--frames", type=int, nargs=2, default=[0, 0], metavar=("START",
 ap.add_argument("--step", type=int, default=1)
 ap.add_argument("--res", type=int, nargs=2, default=[1920, 1080])
 ap.add_argument("--samples", type=int, default=128)
+ap.add_argument("--close", action="store_true", help="液面のクローズアップ (既定はクッキーの落下も入る引き)")
 ap.add_argument("--jar", action="store_true", help="ガラスのジャーも描く (既定は液体と刃だけ)")
 ap.add_argument("--voxel", type=float, default=0.0, help="surface reconstruction voxel [m] (0 = 1.4 x particle spacing, auto)")
 a = ap.parse_args()
@@ -36,9 +37,12 @@ w.use_nodes = True
 w.node_tree.nodes["Background"].inputs["Color"].default_value = (0.012, 0.012, 0.016, 1)
 w.node_tree.nodes["Background"].inputs["Strength"].default_value = 1.0
 
-cam = C.camera(C.sim_to_blender((CX + 0.55, 0.95, CZ + 1.45)), C.sim_to_blender((CX, 0.2, CZ)), lens=58)
+if a.close:
+    cam = C.camera(C.sim_to_blender((CX + 0.55, 0.95, CZ + 1.45)), C.sim_to_blender((CX, 0.2, CZ)), lens=58)
+else:
+    cam = C.camera(C.sim_to_blender((CX + 0.6, 0.75, CZ + 2.1)), C.sim_to_blender((CX, 0.5, CZ)), lens=40)
 cam.data.dof.use_dof = True
-cam.data.dof.focus_distance = 1.8
+cam.data.dof.focus_distance = 2.2
 cam.data.dof.aperture_fstop = 8.0
 
 # 天板 (暗い光沢面) と、ジャーを縁取る照明

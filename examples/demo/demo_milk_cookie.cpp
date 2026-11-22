@@ -30,6 +30,8 @@ struct Args : public argparse::Args {
   float& cookie_yield    = kwarg("cookie-yield", "cookie Von Mises yield stress [Pa] (smaller = crumbles easier)").set_default(3e3f);
   int& cookies           = kwarg("cookies", "number of cookies").set_default(10);
   float& fp_scale        = kwarg("fp-scale", "MPM fixed-point scale (0 = auto from the particle mass)").set_default(0.0f);
+  float& drop_slowmo     = kwarg("drop-slowmo", "slow-motion factor while the cookies fall (the first --drop-seconds of simulated time)").set_default(4.0f);
+  float& drop_seconds    = kwarg("drop-seconds", "simulated seconds that are played in slow motion").set_default(0.6f);
   int& seed              = kwarg("seed", "random seed (cookie placement)").set_default(3);
 };
 
@@ -39,6 +41,9 @@ static constexpr float kJarR = 0.25f;      // 内半径
 static constexpr float kFloorY = 0.05f;    // 底面
 static constexpr float kRimY = 0.45f;      // ジャーの縁 (これより上は壁なし)
 static constexpr float kMilkTop = 0.33f;   // ミルクの初期液面
+
+static constexpr float kShaftR = 0.014f;
+static constexpr float kBladeHalf[3] = {0.17f, 0.03f, 0.008f};
 
 static float matW(uint32_t id) {
   float f;
@@ -58,31 +63,37 @@ int main(int argc, char* argv[]) {
 
     // ── 粒子の初期配置 ─────────────────────────────────────────────────────
     std::vector<glm::vec4> pos, vel;
-    // ミルク: ジャーの内側を液面まで格子状に満たす (壁・底から半粒子分空ける)
+    // ミルク: ジャーの内側を液面まで格子状に満たす (壁・底から半粒子分空ける)。刃と軸の体積には入れない (初期の重なりで粒子が弾き出されるため)
+    auto insideBlade = [&](float x, float y, float z) {
+      const float m = spacing, dx = x - kCx, dz = z - kCz;
+      if(std::hypot(dx, dz) < kShaftR + m) return true;
+      if(std::fabs(y - (kFloorY + 0.045f)) > kBladeHalf[1] + m) return false;
+      return (std::fabs(dx) < kBladeHalf[0] + m && std::fabs(dz) < kBladeHalf[2] + m) || (std::fabs(dz) < kBladeHalf[0] + m && std::fabs(dx) < kBladeHalf[2] + m);
+    };
     for(float y = kFloorY + 0.5f * spacing; y < kMilkTop; y += spacing)
       for(float z = kCz - kJarR; z < kCz + kJarR; z += spacing)
         for(float x = kCx - kJarR; x < kCx + kJarR; x += spacing)
-          if(std::hypot(x - kCx, z - kCz) < kJarR - 0.5f * spacing) {
+          if(std::hypot(x - kCx, z - kCz) < kJarR - 0.5f * spacing && !insideBlade(x, y, z)) {
             pos.emplace_back(x, y, z, Vp);
             vel.emplace_back(0.0f, 0.0f, 0.0f, matW(0u));
           }
     const size_t nMilk = pos.size();
 
-    // クッキー: 円盤 (半径 5.5cm, 厚さ 1.8cm) を軸まわりの円周上に高さを散らして置き、初速で液面へ突入させる
+    // クッキー: 円盤 (半径6cm, 厚さ2.2cm) を軸まわりの円周上に、高さを散らして置く。初速なしで自由落下させ、液面に順に着水する
     std::mt19937 rng(uint32_t(a.seed));
     std::uniform_real_distribution<float> U(0.0f, 1.0f);
     const float cr = 0.06f, ch = 0.011f; // 半径, 半厚
     for(int i = 0; i < a.cookies; i++) {
       const float ang = 6.2831853f * (float(i) / float(a.cookies)) + 0.4f;
-      const float rad = 0.115f + 0.03f * U(rng);
-      const glm::vec3 c(kCx + rad * std::cos(ang), 0.46f + 0.075f * float(i), kCz + rad * std::sin(ang));
+      const float rad = 0.14f + 0.02f * U(rng);
+      const glm::vec3 c(kCx + rad * std::cos(ang), 0.40f + 0.055f * float(i), kCz + rad * std::sin(ang));
       const glm::quat q = glm::angleAxis(0.5f * (U(rng) - 0.5f) * 2.0f, glm::normalize(glm::vec3(U(rng) - 0.5f, 0.2f, U(rng) - 0.5f) + glm::vec3(1e-3f)));
       for(float ly = -ch; ly < ch; ly += spacing)
         for(float lz = -cr; lz < cr; lz += spacing)
           for(float lx = -cr; lx < cr; lx += spacing)
             if(std::hypot(lx, lz) < cr) {
               pos.emplace_back(c + q * glm::vec3(lx, ly + 0.5f * spacing, lz), Vp);
-              vel.emplace_back(0.0f, -3.0f, 0.0f, matW(1u));
+              vel.emplace_back(0.0f, 0.0f, 0.0f, matW(1u));
             }
     }
     std::printf("particles: %zu (milk %zu, cookie %zu)  grid: %ux%ux%u  cell %.4f m\n", pos.size(), nMilk, pos.size() - nMilk, G.x, G.y, G.z, cell);
@@ -97,11 +108,15 @@ int main(int argc, char* argv[]) {
     const float cCookie = std::sqrt((cookie.lambda + 2.0f * cookie.mu) / rhoCookie);
     const float vFlow   = 6.0f; // 想定最大流速 [m/s] (刃の先端速度 + 落下)
     const float dtFrame = 1.0f / a.fps;
-    // 刃を 1 フレームで回しすぎない (1 ブロックあたり 0.1rad 以下) よう、フレームをブロックに分けて刃の姿勢を更新する
-    const int blocks      = std::max(1, int(std::ceil(a.blade_speed * dtFrame / 0.1f)));
-    const int subTotal    = std::max(blocks, int(std::ceil(dtFrame * (std::max(cMilk, cCookie) + vFlow) / (a.cfl * cell))));
-    const int subPerBlock = (subTotal + blocks - 1) / blocks;
-    std::printf("c_milk %.1f m/s, c_cookie %.1f m/s -> %d substeps/frame (%d blocks x %d)\n", cMilk, cCookie, subPerBlock * blocks, blocks, subPerBlock);
+    const float cMax    = std::max(cMilk, cCookie) + vFlow;
+    // 刃を 1 ブロックあたり 0.1rad 以下しか回さないよう、フレームをブロックに分けて刃の姿勢を更新する (落下区間は dt が小さいのでブロックも少ない)
+    auto stepPlan = [&](float dtF, int& blocks, int& subPerBlock) {
+      blocks      = std::max(1, int(std::ceil(a.blade_speed * dtF / 0.1f)));
+      subPerBlock = (std::max(blocks, int(std::ceil(dtF * cMax / (a.cfl * cell)))) + blocks - 1) / blocks;
+    };
+    int blocks0, sub0;
+    stepPlan(dtFrame, blocks0, sub0);
+    std::printf("c_milk %.1f m/s, c_cookie %.1f m/s -> %d substeps/frame (%d blocks x %d)\n", cMilk, cCookie, blocks0 * sub0, blocks0, sub0);
 
     // 固定小数点スケール: 粒子質量が小さいと P2G の運動量が丸められる。雪崩デモ (質量 0.13kg, 2e7) と同じ比になるよう質量から決める
     const float fp = a.fp_scale > 0.0f ? a.fp_scale : 2e7f * 0.13f / (rhoMilk * Vp);
@@ -114,7 +129,7 @@ int main(int argc, char* argv[]) {
     e.maxParticles = uint32_t(pos.size());
     e.setFixedPointScale(fp);
     e.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR);
-    e.numSubsteps = subPerBlock;
+    e.numSubsteps = sub0;
     e.flip_ratio  = -1.0f; // APIC: 角運動量を保存して撹拌の渦を保つ
     e.addForce(GravityForce::FromDirection({0.0f, -1.0f, 0.0f}, 9.8f));
     e.setMaterials({milk, cookie});
@@ -147,31 +162,36 @@ int main(int argc, char* argv[]) {
       cols.addPlane({DOMAIN.x * 0.5f, DOMAIN.y * 0.5f, DOMAIN.z}, {0, 0, -1}, 0.0f, 0.1f);
       // ブレンダー: 軸 (円柱) と底近くの十字の刃 (薄い BOX 2 枚)。Y 軸まわりに回転
       const glm::vec3 w(0.0f, omega, 0.0f);
-      cols.addCylinder({kCx, 0.5f * (kFloorY + 0.95f), kCz}, 0.014f, 0.5f * (0.95f - kFloorY), 0.0f, 0.4f, {0, 0, 0}, glm::quat(1, 0, 0, 0), w);
+      cols.addCylinder({kCx, 0.5f * (kFloorY + 0.95f), kCz}, kShaftR, 0.5f * (0.95f - kFloorY), 0.0f, 0.4f, {0, 0, 0}, glm::quat(1, 0, 0, 0), w);
       for(int k = 0; k < 2; k++) {
         const glm::quat q = glm::angleAxis(bladeAngle + float(k) * 1.5707963f, glm::vec3(0, 1, 0));
-        cols.addBox({kCx, kFloorY + 0.045f, kCz}, {0.17f, 0.03f, 0.008f}, 0.0f, 0.4f, {0, 0, 0}, q, w);
+        cols.addBox({kCx, kFloorY + 0.045f, kCz}, {kBladeHalf[0], kBladeHalf[1], kBladeHalf[2]}, 0.0f, 0.4f, {0, 0, 0}, q, w);
       }
       e.setColliders(cols);
     };
 
     const uint32_t N = e.liveParticleCount();
     std::vector<glm::vec4> mp, mv, cp, cv;
-    float angle = 0.0f;
+    float angle = 0.0f, simT = 0.0f;
     FILE* bladeLog = std::fopen((a.out + "/blade.txt").c_str(), "w");
     auto t0     = std::chrono::steady_clock::now();
     for(int f = 0; f <= a.frames; f++) {
       if(f > 0) {
+        const float dtF = simT < a.drop_seconds ? dtFrame / a.drop_slowmo : dtFrame;
+        int blocks, sub;
+        stepPlan(dtF, blocks, sub);
+        e.numSubsteps = sub;
         for(int b = 0; b < blocks; b++) {
-          const float t     = (float(f - 1) + float(b) / float(blocks)) * dtFrame;
+          const float t     = simT + dtF * float(b) / float(blocks);
           const float ramp  = std::clamp((t - a.blade_start) / 1.0f, 0.0f, 1.0f);
           const float omega = a.blade_speed * ramp;
           buildColliders(angle, omega);
           VkCommandBuffer cmd = ctx.beginCmd();
-          e.step(cmd, dtFrame / float(blocks));
+          e.step(cmd, dtF / float(blocks));
           ctx.submitCmd(cmd);
-          angle += omega * dtFrame / float(blocks);
+          angle += omega * dtF / float(blocks);
         }
+        simT += dtF;
       }
       ctx.readBuffer(e.getPositionBuffer(), 0, pos.data(), size_t(N) * sizeof(glm::vec4));
       ctx.readBuffer(e.getVelocityBuffer(), 0, vel.data(), size_t(N) * sizeof(glm::vec4));

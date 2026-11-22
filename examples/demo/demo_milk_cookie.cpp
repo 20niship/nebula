@@ -36,6 +36,8 @@ struct Args : public argparse::Args {
   float& cookie_radius   = kwarg("cookie-radius", "cookie disc radius [m]").set_default(0.065f);
   float& cookie_thick    = kwarg("cookie-thickness", "cookie disc thickness [m] (needs several cells: a surface layer of about 2 cells is sheared by the shared grid velocity at the milk interface)").set_default(0.04f);
   float& cookie_density  = kwarg("cookie-density", "cookie density [kg/m^3] (denser than the milk so that the cookies sink to the blade)").set_default(2200.0f);
+  float& break_strain    = kwarg("break-strain", "plastic deformation per step above which a cookie particle turns into crumb (smaller = crumbles easier, 0 = never)").set_default(0.001f);
+  float& crumb_cohesion  = kwarg("crumb-cohesion", "Drucker-Prager cohesion [Pa] of the crumbs").set_default(500.0f);
   int& seed              = kwarg("seed", "random seed (cookie placement)").set_default(3);
 };
 
@@ -139,7 +141,14 @@ int main(int argc, char* argv[]) {
     e.numSubsteps = sub0;
     e.flip_ratio  = 0.0f; // PIC: APICは弾性体の自由落下でも発散し (サブステップを増やしても)、FLIPはミルクの体積が潰れる (実測)
     e.addForce(GravityForce::FromDirection({0.0f, -1.0f, 0.0f}, 9.8f));
-    e.setMaterials({milk, cookie});
+    // slot 2: 砕けた破片 (粘着力の低い DP)。cookie が降伏すると遷移する
+    MaterialParams crumb = cookie;
+    crumb.q_cohesion     = a.crumb_cohesion;
+    if(a.break_strain > 0.0f) {
+      cookie.breakMaterial = 3u; // slot 2 + 1
+      cookie.breakStrain   = a.break_strain;
+    }
+    e.setMaterials({milk, cookie, crumb});
 
     // ジャーの SDF (内側が自由空間): 底面と円筒壁。縁より上は壁なし
     LocalMeshSDF grid;
@@ -203,9 +212,11 @@ int main(int argc, char* argv[]) {
       ctx.readBuffer(e.getPositionBuffer(), 0, pos.data(), size_t(N) * sizeof(glm::vec4));
       ctx.readBuffer(e.getVelocityBuffer(), 0, vel.data(), size_t(N) * sizeof(glm::vec4));
       mp.clear(); mv.clear(); cp.clear(); cv.clear();
+      uint32_t nCrumb = 0;
       for(uint32_t i = 0; i < N; i++) {
         uint32_t id;
         std::memcpy(&id, &vel[i].w, 4);
+        nCrumb += id == 2u;
         (id == 0u ? mp : cp).push_back(pos[i]);
         (id == 0u ? mv : cv).push_back(vel[i]);
       }
@@ -214,7 +225,7 @@ int main(int argc, char* argv[]) {
       writeNbp(path, mp, mv, glm::vec3(0.0f), DOMAIN, 4.0f);
       std::snprintf(path, sizeof path, "%s/cookie_%05d.nbp", a.out.c_str(), f);
       writeNbp(path, cp, cv, glm::vec3(0.0f), DOMAIN, 4.0f);
-      std::printf("frame %d/%d  %.1fs elapsed\n", f, a.frames, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+      std::printf("frame %d/%d  %.1fs elapsed  crumb %u/%zu\n", f, a.frames, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), nCrumb, cp.size());
       std::fprintf(bladeLog, "%d %.6f\n", f, angle);
       std::fflush(bladeLog);
       std::fflush(stdout);

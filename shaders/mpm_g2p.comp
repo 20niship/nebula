@@ -132,11 +132,14 @@ void main() {
     // ── per-particle material パラメータ読み込み ─────────────────────────
     // MoltenVK: buffers[] は main() でのみアクセス可（関数内不可）
     vec4 velWrd = readVec4(pc.velIdx, p);
+    float wOut  = velWrd.w; // 書き戻す material id (破砕遷移で書き換わる)
 #ifndef NO_DEFORMATION
     uint matId  = floatBitsToUint(velWrd.w);
 
     float mat_mu, mat_lam, mat_bulkK, mat_M, mat_qc, mat_qmax, mat_visc;
     uint  mat_model;
+    uint  mat_brk = 0u;   // 破砕先スロット+1 (0=遷移なし)
+    float mat_brkStrain = 0.0;
 
     if (pc.materialCount > 0u) {
         matId  = min(matId, pc.materialCount - 1u);
@@ -149,6 +152,8 @@ void main() {
         mat_qmax  = uintBitsToFloat(buffers[pc.materialsIdx].data[mbase + 6u]);
         mat_bulkK = uintBitsToFloat(buffers[pc.materialsIdx].data[mbase + 7u]);
         mat_visc  = uintBitsToFloat(buffers[pc.materialsIdx].data[mbase + 9u]);
+        mat_brk       = buffers[pc.materialsIdx].data[mbase + 12u];
+        mat_brkStrain = uintBitsToFloat(buffers[pc.materialsIdx].data[mbase + 13u]);
     } else {
         // materialCount==0: グローバルパラメータにフォールバック (Phase 0 互換)
         mat_mu    = pc.mu_lame;
@@ -180,7 +185,15 @@ void main() {
         tau_new = henckyStressFromEigen(U_e, eps_e, mat_mu, mat_lam);
     } else if (mat_model == MAT_DRUCKER_PRAGER || mat_model == MAT_GRANULAR_POWDER) {
         mat3 U_e; vec3 eps_e;
+        mat3 F_pre = F_new;
         F_new   = projectDruckerPrager(F_new, mat_mu, mat_lam, mat_M, mat_qc, U_e, eps_e);
+        // 破砕遷移: 射影前後の対数特異値の差 (塑性ひずみの増分) が閾値を超えた粒子は破砕先材料へ切り替える。
+        // F の差で測ると、特異値が縮退した F=I で svd3 の符号 (反射) が揺れて静止粒子でも大きく変わるので使わない。
+        if (mat_brk > 0u) {
+            mat3 U_o; vec3 s_o; mat3 V_o;
+            svd3(F_pre, U_o, s_o, V_o);
+            if (length(log(max(abs(s_o), vec3(1e-6))) - eps_e) > mat_brkStrain) wOut = uintBitsToFloat(mat_brk - 1u);
+        }
         tau_new = henckyStressFromEigen(U_e, eps_e, mat_mu, mat_lam);
     } else if (mat_model == MAT_VISCOPLASTIC_MUD) {
         mat3 U_e; vec3 eps_e;
@@ -312,7 +325,7 @@ void main() {
 
     // ── 書き戻し ─────────────────────────────────────────────────────────
     writeVec4(pc.posIdx, p, vec4(x_new, Vp));
-    writeVec4(pc.velIdx, p, vec4(v_new, velWrd.w));  // w=material id を保持
+    writeVec4(pc.velIdx, p, vec4(v_new, wOut));  // w=material id (破砕遷移した粒子は新しい id)
 #ifndef NO_DEFORMATION
     writeMat3xyz(p, F_new, pc.F0Idx, pc.F1Idx, pc.F2Idx);
     writeStressW(p, tau_new);

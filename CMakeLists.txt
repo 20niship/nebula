@@ -58,6 +58,8 @@ set(SHADER_SOURCES
     ${SHADER_SRC_DIR}/solve_stretch.comp
     ${SHADER_SRC_DIR}/particle.vert
     ${SHADER_SRC_DIR}/particle.frag
+    ${SHADER_SRC_DIR}/particle_mat.vert
+    ${SHADER_SRC_DIR}/particle_mat.frag
     ${SHADER_SRC_DIR}/cloth.vert
     ${SHADER_SRC_DIR}/cloth.frag
     ${SHADER_SRC_DIR}/string2d.vert
@@ -242,6 +244,9 @@ add_sim_example(mpm_snow_impact examples/mpm_snow_impact.cpp)
 # ── mpm_tire_sand: 転がるタイヤ(円柱MESH_SDF)による砂の巻き上げ ───────────────
 add_sim_example(mpm_tire_sand examples/mpm_tire_sand.cpp)
 
+# ── mpm_milk_cookie: ミルク(流体) + クッキー(脆性固体) をブレンダーの刃で撹拌 ──────
+add_sim_example(mpm_milk_cookie examples/mpm_milk_cookie.cpp)
+
 # ── fluid_spume: spume README の FLIP 液体シーン集 (geyser/outfall/culvert/slab/dual)。既定 MPM、--flip で FLIPEngine ──
 add_sim_example(fluid_spume examples/fluid_spume.cpp)
 
@@ -287,5 +292,5 @@ endif()
 add_custom_target(capture_all DEPENDS
     fluid_pbf cloth_3d cloth_scene smoke fluid_absorb xpbd_softbody
     screw_fluid fluid_wave_foam mpm_elastic mpm_avalanche mpm_multimaterial
-    mpm_snow_impact mpm_geolayer mpm_tire_sand fluid_spume pyro_cow_blast pyro_explosion
+    mpm_snow_impact mpm_geolayer mpm_tire_sand mpm_milk_cookie fluid_spume pyro_cow_blast pyro_explosion
 )

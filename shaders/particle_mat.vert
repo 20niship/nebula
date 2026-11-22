@@ -1,0 +1,49 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : enable
+#include "common.glsl"
+
+layout(location = 0) flat out uint vMat;
+layout(location = 1) out vec3 vWorld;
+layout(location = 2) out float vSpeed;
+
+void main() {
+    uint i = uint(gl_VertexIndex);
+    vec4 p = readVec4(pc.posIdx, i);
+    vWorld = p.xyz;
+    vec4 vel = readVec4(pc.velIdx, i);
+    vSpeed = length(vel.xyz);
+    vMat   = floatBitsToUint(vel.w); // MPM: velのw = material id
+
+    // Z-up 座標系 (重力 = -Z)。斜め前方 45° から俯瞰するカメラ。
+    // Vulkan NDC は Y+ が画面下のため Y を反転し、Z 減少 = 画面下になるよう補正。
+    vec3  mid  = (pc.worldMin + pc.worldMax) * 0.5;
+    vec3  span = pc.worldMax - pc.worldMin;
+    float maxSpan = max(span.x, max(span.y, span.z));
+
+    // 斜め前上方: Y 方向に 1.3 span 離れ、Z 方向に 0.8 span 上にある位置から
+    // シミュレーション空間の中心 (mid) を見る (直方体ドメインでも全体が収まるよう最大軸長を使用)
+    vec3 camPos  = vec3(mid.x, mid.y - maxSpan * 2.0, mid.z + maxSpan * 1.2);
+    vec3 target  = mid;
+    vec3 worldUp = vec3(0.0, 0.0, 1.0);
+
+    vec3 fwd = normalize(target - camPos);
+    vec3 rgt = normalize(cross(fwd, worldUp));
+    vec3 up  = cross(rgt, fwd);
+
+    vec3  d  = p.xyz - camPos;
+    float vx = dot(d, rgt);
+    float vy = dot(d, up);
+    float vz = dot(d, fwd);
+
+    float fovY   = radians(45.0);
+    float aspect  = 1280.0 / 720.0;
+    float f       = 1.0 / tan(fovY * 0.5);
+    float near    = 0.1;
+    float far     = maxSpan * 5.0;
+
+    float ndc_z = ((far + near) * vz - 2.0 * far * near) / ((far - near) * vz);
+
+    // Y 反転: Vulkan Y+ 下 → Z-up world で Z 大 = 画面上、Z 小 = 画面下
+    gl_Position  = vec4(f * vx / (aspect * vz), -f * vy / vz, ndc_z, 1.0);
+    gl_PointSize = 3.0;
+}

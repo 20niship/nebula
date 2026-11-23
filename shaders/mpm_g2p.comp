@@ -140,6 +140,7 @@ void main() {
     uint  mat_model;
     uint  mat_brk = 0u;   // 破砕先スロット+1 (0=遷移なし)
     float mat_brkStrain = 0.0;
+    float mat_flip = 0.0;
 
     if (pc.materialCount > 0u) {
         matId  = min(matId, pc.materialCount - 1u);
@@ -154,6 +155,7 @@ void main() {
         mat_visc  = uintBitsToFloat(buffers[pc.materialsIdx].data[mbase + 9u]);
         mat_brk       = buffers[pc.materialsIdx].data[mbase + 12u];
         mat_brkStrain = uintBitsToFloat(buffers[pc.materialsIdx].data[mbase + 13u]);
+        mat_flip      = uintBitsToFloat(buffers[pc.materialsIdx].data[mbase + 14u]);
     } else {
         // materialCount==0: グローバルパラメータにフォールバック (Phase 0 互換)
         mat_mu    = pc.mu_lame;
@@ -233,7 +235,7 @@ void main() {
         // FLIP: v_p_old + (v_pic_new - v_pic_old) を PIC とブレンド
         // velWrd.xyz は前ステップ末尾で書いた v_p_old
         vec3 v_flip = velWrd.xyz + (vpic - vpic_old);
-        v_new = mix(vpic, v_flip, pc.flip_ratio);
+        v_new = mix(vpic, v_flip, mat_flip > 0.0 ? mat_flip : pc.flip_ratio);
     } else {
         // PIC (flip_ratio==0) または APIC (flip_ratio==-1)
         v_new = vpic;

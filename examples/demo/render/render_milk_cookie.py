@@ -21,6 +21,7 @@ ap.add_argument("--res", type=int, nargs=2, default=[1920, 1080])
 ap.add_argument("--samples", type=int, default=128)
 ap.add_argument("--close", action="store_true", help="液面のクローズアップ (既定はクッキーの落下も入る引き)")
 ap.add_argument("--jar", action="store_true", help="ガラスのジャーも描く (既定は液体と刃だけ)")
+ap.add_argument("--engine", choices=["cycles", "eevee"], default="cycles", help="eevee は高速 (確認・全コマ用)")
 ap.add_argument("--voxel", type=float, default=0.0, help="surface reconstruction voxel [m] (0 = 1.4 x particle spacing, auto)")
 a = ap.parse_args()
 os.makedirs(a.out, exist_ok=True)
@@ -30,6 +31,9 @@ CX, CZ, JAR_R, FLOOR_Y, RIM_Y, GLASS = 0.5, 0.5, 0.25, 0.05, 0.62, 0.012
 MILK_VOLUME = math.pi * JAR_R**2 * (0.33 - FLOOR_Y)  # 初期ミルクの体積から粒子間隔を逆算する
 
 sc = C.reset_scene(tuple(a.res), a.samples)
+if a.engine == "eevee":
+    sc.render.engine = "BLENDER_EEVEE"
+    sc.eevee.taa_render_samples = a.samples
 sc.view_settings.exposure = 0.0
 w = bpy.data.worlds.new("w")
 sc.world = w
@@ -38,9 +42,9 @@ w.node_tree.nodes["Background"].inputs["Color"].default_value = (0.012, 0.012, 0
 w.node_tree.nodes["Background"].inputs["Strength"].default_value = 1.0
 
 if a.close:
-    cam = C.camera(C.sim_to_blender((CX + 0.55, 0.95, CZ + 1.45)), C.sim_to_blender((CX, 0.2, CZ)), lens=58)
+    cam = C.camera(C.sim_to_blender((CX + 0.4, 1.45, CZ + 1.05)), C.sim_to_blender((CX, 0.25, CZ)), lens=50)
 else:
-    cam = C.camera(C.sim_to_blender((CX + 0.6, 0.75, CZ + 2.1)), C.sim_to_blender((CX, 0.5, CZ)), lens=40)
+    cam = C.camera(C.sim_to_blender((CX + 0.5, 1.6, CZ + 1.8)), C.sim_to_blender((CX, 0.4, CZ)), lens=40)
 cam.data.dof.use_dof = True
 cam.data.dof.focus_distance = 2.2
 cam.data.dof.aperture_fstop = 8.0
@@ -93,13 +97,48 @@ bm.free()
 
 jar.hide_render = not a.jar
 steel = C.material("steel", (0.75, 0.75, 0.78, 1), 0.18, Metallic=1.0)
-shaft_v, shaft_f = revolve([(0.014, FLOOR_Y), (0.014, 0.95), (0.0, 0.95)], 48, cx=0.0, cz=0.0)
-shaft = C.mesh_object("shaft", shaft_v, shaft_f, steel)
-shaft.location = C.sim_to_blender((CX, 0.0, CZ))  # 原点を軸に置かないと回転で軸が振れる
-BLADE = (0.17, 0.17, 0.008)  # 半長, 半高, 半厚 (demo_milk_cookie.cpp の BOX と同じ)
-blades = [C.box(f"blade{k}", (CX, 0.23, CZ), (BLADE[0], BLADE[1], BLADE[2]), steel) for k in range(2)]
-for o in [shaft, *blades]:
-    o.rotation_mode = "XYZ"
+MIX = {"slat": []}
+for line in open(f"{a.src}/mixer.txt"):
+    k, *v = line.split()
+    if k == "slat":
+        MIX["slat"].append(np.array(v, float))
+    else:
+        MIX[k] = np.array(v, float)
+
+
+def rotY(t):
+    c, s_ = math.cos(t), math.sin(t)
+    return np.array([[c, 0, s_], [0, 1, 0], [-s_, 0, c]])
+
+
+def rotZ(t):
+    c, s_ = math.cos(t), math.sin(t)
+    return np.array([[c, -s_, 0], [s_, c, 0], [0, 0, 1]])
+
+
+def mixer_mesh(angle):
+    """sim 座標のミキサー (傾いた軸 + 板の籠) の頂点・面。demo_milk_cookie.cpp が書いた mixer.txt の形状を同じ剛体変換で動かす。"""
+    O, tilt = MIX["origin"], MIX["tilt"][0]
+    r_sh, y0, y1 = MIX["shaft"]
+    R = rotZ(tilt) @ rotY(angle)
+    V, F = [], []
+    cube = np.array([[x, y, z] for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)], float)
+    cf = np.array([[0, 1, 3], [0, 3, 2], [4, 6, 7], [4, 7, 5], [0, 4, 5], [0, 5, 1], [2, 3, 7], [2, 7, 6], [0, 2, 6], [0, 6, 4], [1, 5, 7], [1, 7, 3]])
+    for sl in MIX["slat"]:
+        c, h, yaw = sl[0:3], sl[3:6], sl[6]
+        V.append(O + (R @ (rotY(yaw) @ (cube * h).T + c[:, None])).T)
+        F.append(cf + 8 * len(F))
+    n = 24
+    th = np.linspace(0, 2 * math.pi, n, endpoint=False)
+    ring = np.stack([r_sh * np.cos(th), np.zeros(n), r_sh * np.sin(th)], -1)
+    pts = np.concatenate([ring + [0, y0, 0], ring + [0, y1, 0]])
+    V.append(O + (R @ pts.T).T)
+    base = 8 * len(MIX["slat"])
+    for k in range(n):
+        k2 = (k + 1) % n
+        F.append(np.array([[base + k, base + k2, base + n + k2], [base + k, base + n + k2, base + n + k]]))
+    return np.concatenate(V).astype(np.float32), np.concatenate(F).astype(np.int32)
+
 
 # 液体: 混合率で 白いミルク -> コーヒー牛乳 -> クッキー に塗り分ける 1 つのマテリアル
 mat = bpy.data.materials.new("mix")
@@ -169,10 +208,10 @@ for f in range(a.frames[0], a.frames[1] + 1, a.step):
     ca = ob.data.color_attributes.new("cf", "FLOAT_COLOR", "POINT")
     ca.data.foreach_set("color", np.stack([cf, cf, cf, np.ones_like(cf)], -1).ravel())
     ang = angles.get(f, 0.0)
-    shaft.rotation_euler = (0, 0, -ang)
-    for k, b in enumerate(blades):
-        b.rotation_euler = (0, 0, -(ang + k * math.pi / 2))
+    mv, mf = mixer_mesh(ang)
+    mixer = C.mesh_object("mixer", mv, mf, steel, smooth=False)
     t1 = time.time()
     C.render_still(f"{a.out}/frame_{f:05d}.png")
     bpy.data.objects.remove(ob)
+    bpy.data.objects.remove(mixer)
     print(f"frame {f}: {len(pm)}+{len(pc)} particles -> {len(fa)} tris, mesh {t1 - t0:.1f}s render {time.time() - t1:.1f}s", flush=True)

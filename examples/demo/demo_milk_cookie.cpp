@@ -23,20 +23,24 @@ struct Args : public argparse::Args {
   float& fps             = kwarg("fps", "output frame rate").set_default(24.0f);
   float& spacing         = kwarg("spacing", "particle spacing [m] (0.004 = about 0.9M particles, 0.0018 = about 10M)").set_default(0.004f);
   float& cfl             = kwarg("cfl", "CFL number used to pick the substep count (APIC/FLIP aside, PIC is stable for the elastic cookie only below about 0.03 in c*dt/dx)").set_default(0.04f);
-  float& blade_speed     = kwarg("blade-speed", "blender blade angular speed [rad/s]").set_default(24.0f);
-  float& blade_start     = kwarg("blade-start", "time [s] at which the blade starts (ramps up over 1s)").set_default(0.6f);
+  float& blade_speed     = kwarg("blade-speed", "mixer angular speed [rad/s]").set_default(12.0f);
+  float& blade_start     = kwarg("blade-start", "time [s] at which the mixer starts").set_default(0.0f);
+  float& blade_ramp      = kwarg("blade-ramp", "time [s] over which the mixer speeds up (0 = full speed from the first frame)").set_default(0.0f);
+  float& tilt_deg        = kwarg("tilt", "mixer axis tilt from vertical [deg] (an inclined axis also mixes up and down)").set_default(20.0f);
+  float& milk_flip       = kwarg("milk-flip", "FLIP blend of the milk (0 = pure PIC: thick, larger = less numerical viscosity but noisier)").set_default(0.5f);
+  float& milk_visc       = kwarg("milk-visc", "milk viscosity [Pa s]").set_default(0.003f);
   float& milk_bulk       = kwarg("milk-bulk", "milk bulk modulus K [Pa] (larger = less compressible but more substeps)").set_default(4e4f);
   float& cookie_E        = kwarg("cookie-E", "cookie Young's modulus [Pa]").set_default(3e5f);
-  float& cookie_cohesion = kwarg("cookie-cohesion", "cookie Drucker-Prager cohesion [Pa] (holds the disc together; smaller = crumbles easier)").set_default(2e4f);
-  float& cookie_friction = kwarg("cookie-friction", "cookie Drucker-Prager M (tan of the friction angle)").set_default(0.8f);
-  int& cookies           = kwarg("cookies", "number of cookies").set_default(6);
+  float& cookie_cohesion = kwarg("cookie-cohesion", "cookie Drucker-Prager cohesion [Pa] (holds the disc together; smaller = crumbles easier)").set_default(1e5f);
+  float& cookie_friction = kwarg("cookie-friction", "cookie Drucker-Prager M (tan of the friction angle)").set_default(1.0f);
+  int& cookies           = kwarg("cookies", "number of cookies").set_default(4);
   float& fp_scale        = kwarg("fp-scale", "MPM fixed-point scale (0 = auto from the particle mass)").set_default(0.0f);
   float& drop_slowmo     = kwarg("drop-slowmo", "slow-motion factor while the cookies fall (the first --drop-seconds of simulated time)").set_default(4.0f);
   float& drop_seconds    = kwarg("drop-seconds", "simulated seconds that are played in slow motion").set_default(0.6f);
-  float& cookie_radius   = kwarg("cookie-radius", "cookie disc radius [m]").set_default(0.065f);
+  float& cookie_radius   = kwarg("cookie-radius", "cookie disc radius [m]").set_default(0.104f);
   float& cookie_thick    = kwarg("cookie-thickness", "cookie disc thickness [m] (needs several cells: a surface layer of about 2 cells is sheared by the shared grid velocity at the milk interface)").set_default(0.04f);
   float& cookie_density  = kwarg("cookie-density", "cookie density [kg/m^3] (denser than the milk so that the cookies sink to the blade)").set_default(2200.0f);
-  float& break_strain    = kwarg("break-strain", "plastic deformation per step above which a cookie particle turns into crumb (smaller = crumbles easier, 0 = never)").set_default(0.001f);
+  float& break_strain    = kwarg("break-strain", "plastic deformation per step above which a cookie particle turns into crumb (smaller = crumbles easier, 0 = never)").set_default(0.0006f);
   float& crumb_cohesion  = kwarg("crumb-cohesion", "Drucker-Prager cohesion [Pa] of the crumbs").set_default(500.0f);
   int& seed              = kwarg("seed", "random seed (cookie placement)").set_default(3);
 };
@@ -49,8 +53,19 @@ static constexpr float kRimY = 0.62f;      // ジャーの縁 (これより上�
 static constexpr float kMilkTop = 0.33f;   // ミルクの初期液面
 
 static constexpr float kShaftR = 0.014f;
-static constexpr float kBladeHalf[3] = {0.17f, 0.17f, 0.008f}; // 底から液面の上まで届く縦長のパドル (クッキーは液面に浮いて底の刃に届かない)
-static constexpr float kBladeY = 0.23f;
+// ミキサーは傾いた軸まわりに回る。ビーターは円周上に並べた薄い板の籠 (中は空洞、板の間は隙間)
+static const glm::vec3 kMixO(kCx - 0.02f, 0.21f, kCz);
+static constexpr int kSlats = 6;
+static constexpr float kCageR = 0.10f, kSlatHalf[3] = {0.008f, 0.11f, 0.04f}, kSlatPitch = 0.61f, kShaftTop = 0.75f;
+struct MixPart { glm::vec3 c, half; glm::quat q; };
+static std::vector<MixPart> slats() {
+  std::vector<MixPart> v;
+  for(int k = 0; k < kSlats; k++) {
+    const float phi = 6.2831853f * float(k) / float(kSlats);
+    v.push_back({glm::vec3(kCageR * std::cos(phi), 0.0f, kCageR * std::sin(phi)), glm::vec3(kSlatHalf[0], kSlatHalf[1], kSlatHalf[2]), glm::angleAxis(-phi + kSlatPitch, glm::vec3(0, 1, 0))});
+  }
+  return v;
+}
 
 static float matW(uint32_t id) {
   float f;
@@ -71,11 +86,17 @@ int main(int argc, char* argv[]) {
     // ── 粒子の初期配置 ─────────────────────────────────────────────────────
     std::vector<glm::vec4> pos, vel;
     // ミルク: ジャーの内側を液面まで格子状に満たす (壁・底から半粒子分空ける)。刃と軸の体積には入れない (初期の重なりで粒子が弾き出されるため)
+    const glm::quat qTilt = glm::angleAxis(glm::radians(a.tilt_deg), glm::vec3(0, 0, 1));
+    const auto parts      = slats();
     auto insideBlade = [&](float x, float y, float z) {
-      const float m = spacing, dx = x - kCx, dz = z - kCz;
-      if(std::hypot(dx, dz) < kShaftR + m) return true;
-      if(std::fabs(y - (kBladeY)) > kBladeHalf[1] + m) return false;
-      return (std::fabs(dx) < kBladeHalf[0] + m && std::fabs(dz) < kBladeHalf[2] + m) || (std::fabs(dz) < kBladeHalf[0] + m && std::fabs(dx) < kBladeHalf[2] + m);
+      const float m = spacing;
+      const glm::vec3 pl = glm::inverse(qTilt) * (glm::vec3(x, y, z) - kMixO);
+      if(std::hypot(pl.x, pl.z) < kShaftR + m && pl.y > kSlatHalf[1] - m) return true;
+      for(const auto& pt : parts) {
+        const glm::vec3 d = glm::inverse(pt.q) * (pl - pt.c);
+        if(std::fabs(d.x) < pt.half.x + m && std::fabs(d.y) < pt.half.y + m && std::fabs(d.z) < pt.half.z + m) return true;
+      }
+      return false;
     };
     for(float y = kFloorY + 0.5f * spacing; y < kMilkTop; y += spacing)
       for(float z = kCz - kJarR; z < kCz + kJarR; z += spacing)
@@ -91,8 +112,8 @@ int main(int argc, char* argv[]) {
     std::uniform_real_distribution<float> U(0.0f, 1.0f);
     const float cr = a.cookie_radius, ch = 0.5f * a.cookie_thick; // 半径, 半厚
     for(int i = 0; i < a.cookies; i++) {
-      const float ang = 2.3999632f * float(i); // 黄金角のらせん: 近い高さの隣同士が水平に離れ、初期に重ならない (重なると過圧縮で降伏する)
-      const float rad = 0.15f;
+      const float ang = 2.3999632f * float(i) - 0.45f; // 黄金角のらせん: 近い高さの隣同士が水平に離れ、初期に重ならない (重なると過圧縮で降伏する)
+      const float rad = std::max(0.0f, 0.235f - cr);
       const glm::vec3 c(kCx + rad * std::cos(ang), 0.38f + 0.06f * float(i), kCz + rad * std::sin(ang));
       const glm::quat q = glm::angleAxis(0.6f * (U(rng) - 0.5f), glm::normalize(glm::vec3(U(rng) - 0.5f, 0.2f, U(rng) - 0.5f) + glm::vec3(1e-3f)));
       for(float ly = -ch; ly < ch; ly += spacing)
@@ -108,6 +129,8 @@ int main(int argc, char* argv[]) {
     // ── 材料とサブステップ ──────────────────────────────────────────────────
     const float rhoMilk = 1030.0f, rhoCookie = a.cookie_density, nuCookie = 0.25f;
     MaterialParams milk = presetWater(rhoMilk, a.milk_bulk);
+    milk.viscosity      = a.milk_visc;
+    milk.flipOverride   = a.milk_flip;
     MaterialParams cookie = presetJelly(a.cookie_E, nuCookie, rhoCookie);
     // クッキーは Drucker-Prager (粘着力つき): Von Mises の弾性体は空気との境界の軽い格子点で自由落下でも発散した (実測)
     cookie.model      = uint32_t(MaterialModel::DRUCKER_PRAGER);
@@ -120,7 +143,7 @@ int main(int argc, char* argv[]) {
     const float cMax    = std::max(cMilk, cCookie) + vFlow;
     // 刃を 1 ブロックあたり 0.1rad 以下しか回さないよう、フレームをブロックに分けて刃の姿勢を更新する (落下区間は dt が小さいのでブロックも少ない)
     auto stepPlan = [&](float dtF, int& blocks, int& subPerBlock) {
-      blocks      = std::max(1, int(std::ceil(a.blade_speed * dtF / 0.1f)));
+      blocks      = std::max(1, int(std::ceil(a.blade_speed * dtF / 0.05f)));
       subPerBlock = (std::max(blocks, int(std::ceil(dtF * cMax / (a.cfl * cell)))) + blocks - 1) / blocks;
     };
     int blocks0, sub0;
@@ -139,7 +162,7 @@ int main(int argc, char* argv[]) {
     e.setFixedPointScale(fp);
     e.init(ctx.device, ctx.allocator, ctx.descriptorPool, ctx.commandPool, ctx.computeQueue, SHADER_DIR_STR);
     e.numSubsteps = sub0;
-    e.flip_ratio  = 0.0f; // PIC: APICは弾性体の自由落下でも発散し (サブステップを増やしても)、FLIPはミルクの体積が潰れる (実測)
+    e.flip_ratio  = a.milk_flip > 0.0f ? 0.5f : 0.0f; // 全体は PIC (APIC は弾性体が発散、FLIP は体積が潰れる (実測))。FLIP 混合はミルクだけ材料ごとに指定する
     e.addForce(GravityForce::FromDirection({0.0f, -1.0f, 0.0f}, 9.8f));
     // slot 2: 砕けた破片 (粘着力の低い DP)。cookie が降伏すると遷移する
     MaterialParams crumb = cookie;
@@ -148,6 +171,8 @@ int main(int argc, char* argv[]) {
       cookie.breakMaterial = 3u; // slot 2 + 1
       cookie.breakStrain   = a.break_strain;
     }
+    cookie.flipOverride = 1e-6f;
+    crumb.flipOverride  = 1e-6f;
     e.setMaterials({milk, cookie, crumb});
 
     // ジャーの SDF (内側が自由空間): 底面と円筒壁。縁より上は壁なし
@@ -176,12 +201,16 @@ int main(int argc, char* argv[]) {
       cols.addPlane({DOMAIN.x, DOMAIN.y * 0.5f, DOMAIN.z * 0.5f}, {-1, 0, 0}, 0.0f, 0.1f);
       cols.addPlane({DOMAIN.x * 0.5f, DOMAIN.y * 0.5f, 0.0f}, {0, 0, 1}, 0.0f, 0.1f);
       cols.addPlane({DOMAIN.x * 0.5f, DOMAIN.y * 0.5f, DOMAIN.z}, {0, 0, -1}, 0.0f, 0.1f);
-      // ブレンダー: 軸 (円柱) と底近くの十字の刃 (薄い BOX 2 枚)。Y 軸まわりに回転
-      const glm::vec3 w(0.0f, omega, 0.0f);
-      cols.addCylinder({kCx, 0.5f * (kFloorY + 0.95f), kCz}, kShaftR, 0.5f * (0.95f - kFloorY), 0.0f, 0.4f, {0, 0, 0}, glm::quat(1, 0, 0, 0), w);
-      for(int k = 0; k < 2; k++) {
-        const glm::quat q = glm::angleAxis(bladeAngle + float(k) * 1.5707963f, glm::vec3(0, 1, 0));
-        cols.addBox({kCx, kBladeY, kCz}, {kBladeHalf[0], kBladeHalf[1], kBladeHalf[2]}, 0.0f, 0.4f, {0, 0, 0}, q, w);
+      // ミキサー: 傾いた軸 (円柱) と、軸まわりに回る板の籠。各部の線速度は軸上の点 kMixO まわりの剛体回転から求める
+      const glm::quat qM = qTilt * glm::angleAxis(bladeAngle, glm::vec3(0, 1, 0));
+      const glm::vec3 w  = omega * (qTilt * glm::vec3(0, 1, 0));
+      auto vAt = [&](const glm::vec3& pw) { return glm::cross(w, pw - kMixO); };
+      const float shaftHh = 0.5f * (kShaftTop - kSlatHalf[1]);
+      const glm::vec3 sc  = kMixO + qM * glm::vec3(0.0f, kSlatHalf[1] + shaftHh, 0.0f);
+      cols.addCylinder(sc, kShaftR, shaftHh, 0.0f, 0.4f, vAt(sc), qM, w);
+      for(const auto& pt : parts) {
+        const glm::vec3 cw = kMixO + qM * pt.c;
+        cols.addBox(cw, pt.half, 0.0f, 0.4f, vAt(cw), qM * pt.q, w);
       }
       e.setColliders(cols);
     };
@@ -189,6 +218,11 @@ int main(int argc, char* argv[]) {
     const uint32_t N = e.liveParticleCount();
     std::vector<glm::vec4> mp, mv, cp, cv;
     float angle = 0.0f, simT = 0.0f;
+    if(FILE* mx = std::fopen((a.out + "/mixer.txt").c_str(), "w")) {
+      std::fprintf(mx, "origin %f %f %f\ntilt %f\nshaft %f %f %f\n", kMixO.x, kMixO.y, kMixO.z, glm::radians(a.tilt_deg), kShaftR, kSlatHalf[1], kShaftTop);
+      for(const auto& pt : parts) std::fprintf(mx, "slat %f %f %f %f %f %f %f\n", pt.c.x, pt.c.y, pt.c.z, pt.half.x, pt.half.y, pt.half.z, 2.0f * std::atan2(pt.q.y, pt.q.w));
+      std::fclose(mx);
+    }
     FILE* bladeLog = std::fopen((a.out + "/blade.txt").c_str(), "w");
     auto t0     = std::chrono::steady_clock::now();
     for(int f = 0; f <= a.frames; f++) {
@@ -199,7 +233,7 @@ int main(int argc, char* argv[]) {
         e.numSubsteps = sub;
         for(int b = 0; b < blocks; b++) {
           const float t     = simT + dtF * float(b) / float(blocks);
-          const float ramp  = std::clamp((t - a.blade_start) / 1.0f, 0.0f, 1.0f);
+          const float ramp  = a.blade_ramp > 0.0f ? std::clamp((t - a.blade_start) / a.blade_ramp, 0.0f, 1.0f) : (t >= a.blade_start ? 1.0f : 0.0f);
           const float omega = a.blade_speed * ramp;
           buildColliders(angle, omega);
           VkCommandBuffer cmd = ctx.beginCmd();

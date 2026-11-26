@@ -7,6 +7,9 @@
 #include "helpers/HeadlessCtx.h"
 
 #include <argparse/argparse.hpp>
+#include <algorithm>
+#include <unordered_map>
+#include <unordered_set>
 
 #include <chrono>
 #include <cmath>
@@ -27,7 +30,7 @@ struct Args : public argparse::Args {
   float& blade_start     = kwarg("blade-start", "time [s] at which the mixer starts").set_default(0.0f);
   float& blade_ramp      = kwarg("blade-ramp", "time [s] over which the mixer speeds up (0 = full speed from the first frame)").set_default(0.0f);
   float& tilt_deg        = kwarg("tilt", "mixer axis tilt from vertical [deg] (an inclined axis also mixes up and down)").set_default(20.0f);
-  float& milk_flip       = kwarg("milk-flip", "FLIP blend of the milk (0 = pure PIC: thick, larger = less numerical viscosity but noisier)").set_default(0.5f);
+  float& milk_flip       = kwarg("milk-flip", "FLIP blend of the milk (0 = pure PIC: thick, larger = less numerical viscosity but noisier)").set_default(0.8f);
   float& milk_visc       = kwarg("milk-visc", "milk viscosity [Pa s]").set_default(0.003f);
   float& milk_bulk       = kwarg("milk-bulk", "milk bulk modulus K [Pa] (larger = less compressible but more substeps)").set_default(4e4f);
   float& cookie_E        = kwarg("cookie-E", "cookie Young's modulus [Pa]").set_default(3e5f);
@@ -42,6 +45,10 @@ struct Args : public argparse::Args {
   float& cookie_density  = kwarg("cookie-density", "cookie density [kg/m^3] (denser than the milk so that the cookies sink to the blade)").set_default(2200.0f);
   float& break_strain    = kwarg("break-strain", "plastic deformation per step above which a cookie particle turns into crumb (smaller = crumbles easier, 0 = never)").set_default(0.0006f);
   float& crumb_cohesion  = kwarg("crumb-cohesion", "Drucker-Prager cohesion [Pa] of the crumbs").set_default(500.0f);
+  int& cookie_slots      = kwarg("cookie-slots", "1 = give every cookie its own material slot (tests whether separate ids stop cookies from fusing)").set_default(0);
+  float& crumb_density   = kwarg("crumb-density", "crumb density [kg/m^3] (0 = same as the cookie; wet biscuit sinks)").set_default(0.0f);
+  float& crumb_friction  = kwarg("crumb-friction", "crumb Drucker-Prager M (0 = same as the cookie)").set_default(0.0f);
+  float& mix_y           = kwarg("mix-y", "height of the mixer pivot [m]").set_default(0.21f);
   int& seed              = kwarg("seed", "random seed (cookie placement)").set_default(3);
 };
 
@@ -54,7 +61,7 @@ static constexpr float kMilkTop = 0.33f;   // ミルクの初期液面
 
 static constexpr float kShaftR = 0.014f;
 // ミキサーは傾いた軸まわりに回る。ビーターは円周上に並べた薄い板の籠 (中は空洞、板の間は隙間)
-static const glm::vec3 kMixO(kCx - 0.02f, 0.21f, kCz);
+static glm::vec3 kMixO(kCx - 0.02f, 0.21f, kCz);
 static constexpr int kSlats = 6;
 static constexpr float kCageR = 0.10f, kSlatHalf[3] = {0.008f, 0.11f, 0.04f}, kSlatPitch = 0.61f, kShaftTop = 0.75f;
 struct MixPart { glm::vec3 c, half; glm::quat q; };
@@ -73,8 +80,49 @@ static float matW(uint32_t id) {
   return f;
 }
 
+// 評価用: 破片の高さ分布と、固体 (クッキー+破片) の最大連結成分の割合 (癒着の指標)
+static void printStats(const std::vector<glm::vec4>& cp, const std::vector<glm::vec4>& mp, uint32_t crumbSlot, const std::vector<glm::vec4>& cv, float spacing) {
+  std::vector<float> ys;
+  for(size_t i = 0; i < cp.size(); i++) {
+    uint32_t id;
+    std::memcpy(&id, &cv[i].w, 4);
+    if(id == crumbSlot) ys.push_back(cp[i].y);
+  }
+  std::sort(ys.begin(), ys.end());
+  auto q = [&](float t) { return ys.empty() ? 0.0f : ys[size_t(t * float(ys.size() - 1))]; };
+  float top = 0.0f, maxY = 0.0f; // ミルク液面 (上位 2% の高さ) と比べる
+  { std::vector<float> my; for(auto& p : mp) my.push_back(p.y); std::sort(my.begin(), my.end()); top = my.empty() ? 0.0f : my[size_t(0.98f * float(my.size() - 1))]; maxY = my.empty() ? 0.0f : my.back(); }
+  // 連結成分: 3 セル幅の格子に粒子を入れ、26 近傍で flood fill
+  const float h = 3.0f * spacing;
+  const int n = int(1.0f / h) + 1;
+  std::unordered_map<int, int> cell;
+  auto key = [&](int x, int y, int z) { return (z * n + y) * n + x; };
+  for(auto& p : cp) cell[key(int(p.x / h), int(p.y / h), int(p.z / h))]++;
+  std::unordered_set<int> seen;
+  int best = 0;
+  for(auto& kv : cell) {
+    if(seen.count(kv.first)) continue;
+    int tot = 0;
+    std::vector<int> st{kv.first};
+    seen.insert(kv.first);
+    while(!st.empty()) {
+      const int k = st.back(); st.pop_back();
+      tot += cell[k];
+      const int x = k % n, y = (k / n) % n, z = k / (n * n);
+      for(int dz = -1; dz <= 1; dz++) for(int dy = -1; dy <= 1; dy++) for(int dx = -1; dx <= 1; dx++) {
+        const int kk = key(x + dx, y + dy, z + dz);
+        if(x + dx < 0 || y + dy < 0 || z + dz < 0 || !cell.count(kk) || seen.count(kk)) continue;
+        seen.insert(kk); st.push_back(kk);
+      }
+    }
+    best = std::max(best, tot);
+  }
+  std::printf("STAT crumbY p10 %.3f p50 %.3f p90 %.3f  milkTop %.3f  milkMax %.3f  largestSolid %.2f\n", q(0.1f), q(0.5f), q(0.9f), top, maxY, cp.empty() ? 0.0f : float(best) / float(cp.size()));
+}
+
 int main(int argc, char* argv[]) {
   auto a = argparse::parse<Args>(argc, argv);
+  kMixO.y = a.mix_y;
   try {
     const glm::vec3 DOMAIN(1.0f);
     const float spacing = a.spacing;
@@ -121,12 +169,13 @@ int main(int argc, char* argv[]) {
           for(float lx = -cr; lx < cr; lx += spacing)
             if(std::hypot(lx, lz) < cr) {
               pos.emplace_back(c + q * glm::vec3(lx, ly + 0.5f * spacing, lz), Vp);
-              vel.emplace_back(0.0f, 0.0f, 0.0f, matW(1u));
+              vel.emplace_back(0.0f, 0.0f, 0.0f, matW(a.cookie_slots ? 1u + uint32_t(i) : 1u));
             }
     }
     std::printf("particles: %zu (milk %zu, cookie %zu)  grid: %ux%ux%u  cell %.4f m\n", pos.size(), nMilk, pos.size() - nMilk, G.x, G.y, G.z, cell);
 
     // ── 材料とサブステップ ──────────────────────────────────────────────────
+    const uint32_t nCookieSlots = a.cookie_slots ? uint32_t(a.cookies) : 1u, crumbSlot = nCookieSlots + 1u;
     const float rhoMilk = 1030.0f, rhoCookie = a.cookie_density, nuCookie = 0.25f;
     MaterialParams milk = presetWater(rhoMilk, a.milk_bulk);
     milk.viscosity      = a.milk_visc;
@@ -164,16 +213,21 @@ int main(int argc, char* argv[]) {
     e.numSubsteps = sub0;
     e.flip_ratio  = a.milk_flip > 0.0f ? 0.5f : 0.0f; // 全体は PIC (APIC は弾性体が発散、FLIP は体積が潰れる (実測))。FLIP 混合はミルクだけ材料ごとに指定する
     e.addForce(GravityForce::FromDirection({0.0f, -1.0f, 0.0f}, 9.8f));
-    // slot 2: 砕けた破片 (粘着力の低い DP)。cookie が降伏すると遷移する
+    // 最後の slot: 砕けた破片 (粘着力の低い DP)。cookie が降伏すると遷移する
     MaterialParams crumb = cookie;
     crumb.q_cohesion     = a.crumb_cohesion;
+    if(a.crumb_density > 0.0f) crumb.rho0 = a.crumb_density;
+    if(a.crumb_friction > 0.0f) crumb.M_friction = a.crumb_friction;
     if(a.break_strain > 0.0f) {
-      cookie.breakMaterial = 3u; // slot 2 + 1
+      cookie.breakMaterial = crumbSlot + 1u;
       cookie.breakStrain   = a.break_strain;
     }
     cookie.flipOverride = 1e-6f;
     crumb.flipOverride  = 1e-6f;
-    e.setMaterials({milk, cookie, crumb});
+    std::vector<MaterialParams> mats{milk};
+    for(uint32_t k = 0; k < nCookieSlots; k++) mats.push_back(cookie);
+    mats.push_back(crumb);
+    e.setMaterials(mats);
 
     // ジャーの SDF (内側が自由空間): 底面と円筒壁。縁より上は壁なし
     LocalMeshSDF grid;
@@ -250,7 +304,7 @@ int main(int argc, char* argv[]) {
       for(uint32_t i = 0; i < N; i++) {
         uint32_t id;
         std::memcpy(&id, &vel[i].w, 4);
-        nCrumb += id == 2u;
+        nCrumb += id == crumbSlot;
         (id == 0u ? mp : cp).push_back(pos[i]);
         (id == 0u ? mv : cv).push_back(vel[i]);
       }
@@ -259,6 +313,7 @@ int main(int argc, char* argv[]) {
       writeNbp(path, mp, mv, glm::vec3(0.0f), DOMAIN, 4.0f);
       std::snprintf(path, sizeof path, "%s/cookie_%05d.nbp", a.out.c_str(), f);
       writeNbp(path, cp, cv, glm::vec3(0.0f), DOMAIN, 4.0f);
+      if(f % 12 == 0) printStats(cp, mp, crumbSlot, cv, spacing);
       std::printf("frame %d/%d  %.1fs elapsed  crumb %u/%zu\n", f, a.frames, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), nCrumb, cp.size());
       std::fprintf(bladeLog, "%d %.6f\n", f, angle);
       std::fflush(bladeLog);

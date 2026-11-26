@@ -89,6 +89,7 @@ void main() {
 
     vec3  vpic     = vec3(0.0);
     vec3  vpic_old = vec3(0.0);  // FLIP 用: グリッド物理前速度の加重和
+    float rhoAcc   = 0.0;        // Σ w*mass_i: 粒子位置の密度 (流体の体積保存補正に使う)
     mat3  vgrad = mat3(0.0);  // ∇v_p = Σ v_i ⊗ ∇w_ip
     mat3  B_new = mat3(0.0);  // APIC アフィン B_p = Σ w * v_i ⊗ (x_i - x_p)
     uint  totalCells = pc.hashCells;
@@ -117,6 +118,7 @@ void main() {
                        wx * wy * bspline2g(d.z)) / pc.cellSize;
 
         vec3 vi = readVec4(pc.gridMomIdx, nid).xyz;
+        rhoAcc += w * mass;
         vpic  += w * vi;
 #ifndef NO_DEFORMATION
         vgrad += outerProduct(vi, dw);
@@ -178,7 +180,10 @@ void main() {
     if (mat_model == MAT_FLUID) {
         // 弱圧縮流体: det(F) を保存してFをリセット
         float J = determinant(F_new);
-        J       = max(J, 1e-4);
+        // J は速度勾配の積分なので、粒子が FLIP 速度で動くと実際の密度からずれて粒子が潰れる。実密度 (格子質量の補間) が基準より高いときはそちらの J を使う
+        float h3 = pc.cellSize * pc.cellSize * pc.cellSize;
+        float Jd = pc.materialCount > 0u ? uintBitsToFloat(buffers[pc.materialsIdx].data[matId * 16u + 2u]) * h3 / max(rhoAcc, 1e-12) : 1.0;
+        J       = max(min(J, max(Jd, 0.8)), 1e-4);
         F_new   = pow(J, 1.0 / 3.0) * mat3(1.0);
         tau_new = fluidStressJ(J, mat_bulkK);
     } else if (mat_model == MAT_VON_MISES) {

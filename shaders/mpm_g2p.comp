@@ -143,6 +143,7 @@ void main() {
     uint  mat_brk = 0u;   // 破砕先スロット+1 (0=遷移なし)
     float mat_brkStrain = 0.0;
     float mat_flip = 0.0;
+    float mat_settle = 0.0;
 
     if (pc.materialCount > 0u) {
         matId  = min(matId, pc.materialCount - 1u);
@@ -158,6 +159,7 @@ void main() {
         mat_brk       = buffers[pc.materialsIdx].data[mbase + 12u];
         mat_brkStrain = uintBitsToFloat(buffers[pc.materialsIdx].data[mbase + 13u]);
         mat_flip      = uintBitsToFloat(buffers[pc.materialsIdx].data[mbase + 14u]);
+        mat_settle    = uintBitsToFloat(buffers[pc.materialsIdx].data[mbase + 15u]);
     } else {
         // materialCount==0: グローバルパラメータにフォールバック (Phase 0 互換)
         mat_mu    = pc.mu_lame;
@@ -252,6 +254,9 @@ void main() {
 #endif
 
     vec3 x_new = xp + pc.dt * v_new;
+#ifndef NO_DEFORMATION
+    x_new.y -= pc.dt * mat_settle;
+#endif
 
     // ── コライダー 粒子レベル境界補正 ────────────────────────────────────
     // mpm_grid_updateはグリッドノードのみ修正するため静止/低速コライダーでは粒子がsdf<0の内部に取り残される。G2Pで直接補正し弾性エネルギー蓄積(速度爆発の原因)も防ぐ。

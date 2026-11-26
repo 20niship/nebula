@@ -48,6 +48,8 @@ struct Args : public argparse::Args {
   int& cookie_slots      = kwarg("cookie-slots", "1 = give every cookie its own material slot (tests whether separate ids stop cookies from fusing)").set_default(0);
   float& crumb_density   = kwarg("crumb-density", "crumb density [kg/m^3] (0 = same as the cookie; wet biscuit sinks)").set_default(0.0f);
   float& crumb_friction  = kwarg("crumb-friction", "crumb Drucker-Prager M (0 = same as the cookie)").set_default(0.0f);
+  float& slat_pitch      = kwarg("slat-pitch", "pitch angle of the mixer slats [rad] (sign flips the pumping direction)").set_default(0.61f);
+  float& crumb_settle    = kwarg("crumb-settle", "crumb settling speed relative to the milk flow [m/s] (a single velocity field cannot make heavy crumbs sink)").set_default(0.04f);
   float& mix_y           = kwarg("mix-y", "height of the mixer pivot [m]").set_default(0.21f);
   int& seed              = kwarg("seed", "random seed (cookie placement)").set_default(3);
 };
@@ -62,8 +64,9 @@ static constexpr float kMilkTop = 0.33f;   // ミルクの初期液面
 static constexpr float kShaftR = 0.014f;
 // ミキサーは傾いた軸まわりに回る。ビーターは円周上に並べた薄い板の籠 (中は空洞、板の間は隙間)
 static glm::vec3 kMixO(kCx - 0.02f, 0.21f, kCz);
+static float kSlatPitch = 0.61f; // 板のピッチ角 [rad]: 符号で液を押し下げる/押し上げる向きが変わる
 static constexpr int kSlats = 6;
-static constexpr float kCageR = 0.10f, kSlatHalf[3] = {0.008f, 0.11f, 0.04f}, kSlatPitch = 0.61f, kShaftTop = 0.75f;
+static constexpr float kCageR = 0.10f, kSlatHalf[3] = {0.008f, 0.11f, 0.04f}, kShaftTop = 0.75f;
 struct MixPart { glm::vec3 c, half; glm::quat q; };
 static std::vector<MixPart> slats() {
   std::vector<MixPart> v;
@@ -123,6 +126,7 @@ static void printStats(const std::vector<glm::vec4>& cp, const std::vector<glm::
 int main(int argc, char* argv[]) {
   auto a = argparse::parse<Args>(argc, argv);
   kMixO.y = a.mix_y;
+  kSlatPitch = a.slat_pitch;
   try {
     const glm::vec3 DOMAIN(1.0f);
     const float spacing = a.spacing;
@@ -216,6 +220,7 @@ int main(int argc, char* argv[]) {
     // 最後の slot: 砕けた破片 (粘着力の低い DP)。cookie が降伏すると遷移する
     MaterialParams crumb = cookie;
     crumb.q_cohesion     = a.crumb_cohesion;
+    crumb.settleSpeed = a.crumb_settle;
     if(a.crumb_density > 0.0f) crumb.rho0 = a.crumb_density;
     if(a.crumb_friction > 0.0f) crumb.M_friction = a.crumb_friction;
     if(a.break_strain > 0.0f) {

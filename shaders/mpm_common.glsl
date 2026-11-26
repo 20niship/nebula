@@ -161,7 +161,7 @@ struct MaterialParams {
     float    pad0;         // 48
     float    pad1;         // 52
     float    pad2;         // 56
-    float    pad3;         // 60
+    float    settleSpeed;  // 60
 };
 
 // MoltenVK: buffers[] を直接関数で返せないため、materials バッファは

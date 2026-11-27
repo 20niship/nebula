@@ -29,10 +29,10 @@ struct MaterialParams {
   float hardening;  // 40 塑性硬化係数
   float xi;         // 44 MCC 軟化パラメータ
 
-  float pad0; // 48
-  float pad1; // 52
-  float pad2; // 56
-  float pad3; // 60
+  uint32_t breakMaterial; // 48 破砕先の材料スロット+1 (0=遷移なし)。DRUCKER_PRAGER が降伏した粒子の material id をこのスロットへ書き換える (粘着力の低い材料を指せば、壊れた粒子が粘着を失う)
+  float breakStrain;      // 52 破砕判定: 1ステップの塑性射影による F の変化量 (列ベクトル長の和) の閾値
+  float flipOverride; // 56 材料ごとの FLIP 混合率 (0=グローバルの flip_ratio を使う。純 PIC にしたい材料は 1e-6)
+  float settleSpeed;  // 60 格子の流れに対する沈降速度 [m/s] (下向き正)。単一速度場の混合では重い粒子が沈まないため、位置だけ流れからずらす
               // total: 64 bytes
 };
 static_assert(sizeof(MaterialParams) == 64, "MaterialParams must be 64 bytes");

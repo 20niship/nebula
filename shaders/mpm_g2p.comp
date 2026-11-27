@@ -89,6 +89,7 @@ void main() {
 
     vec3  vpic     = vec3(0.0);
     vec3  vpic_old = vec3(0.0);  // FLIP 用: グリッド物理前速度の加重和
+    float rhoAcc   = 0.0;        // Σ w*mass_i: 粒子位置の密度 (流体の体積保存補正に使う)
     mat3  vgrad = mat3(0.0);  // ∇v_p = Σ v_i ⊗ ∇w_ip
     mat3  B_new = mat3(0.0);  // APIC アフィン B_p = Σ w * v_i ⊗ (x_i - x_p)
     uint  totalCells = pc.hashCells;
@@ -117,6 +118,7 @@ void main() {
                        wx * wy * bspline2g(d.z)) / pc.cellSize;
 
         vec3 vi = readVec4(pc.gridMomIdx, nid).xyz;
+        rhoAcc += w * mass;
         vpic  += w * vi;
 #ifndef NO_DEFORMATION
         vgrad += outerProduct(vi, dw);
@@ -132,11 +134,16 @@ void main() {
     // ── per-particle material パラメータ読み込み ─────────────────────────
     // MoltenVK: buffers[] は main() でのみアクセス可（関数内不可）
     vec4 velWrd = readVec4(pc.velIdx, p);
+    float wOut  = velWrd.w; // 書き戻す material id (破砕遷移で書き換わる)
 #ifndef NO_DEFORMATION
     uint matId  = floatBitsToUint(velWrd.w);
 
     float mat_mu, mat_lam, mat_bulkK, mat_M, mat_qc, mat_qmax, mat_visc;
     uint  mat_model;
+    uint  mat_brk = 0u;   // 破砕先スロット+1 (0=遷移なし)
+    float mat_brkStrain = 0.0;
+    float mat_flip = 0.0;
+    float mat_settle = 0.0;
 
     if (pc.materialCount > 0u) {
         matId  = min(matId, pc.materialCount - 1u);
@@ -149,6 +156,10 @@ void main() {
         mat_qmax  = uintBitsToFloat(buffers[pc.materialsIdx].data[mbase + 6u]);
         mat_bulkK = uintBitsToFloat(buffers[pc.materialsIdx].data[mbase + 7u]);
         mat_visc  = uintBitsToFloat(buffers[pc.materialsIdx].data[mbase + 9u]);
+        mat_brk       = buffers[pc.materialsIdx].data[mbase + 12u];
+        mat_brkStrain = uintBitsToFloat(buffers[pc.materialsIdx].data[mbase + 13u]);
+        mat_flip      = uintBitsToFloat(buffers[pc.materialsIdx].data[mbase + 14u]);
+        mat_settle    = uintBitsToFloat(buffers[pc.materialsIdx].data[mbase + 15u]);
     } else {
         // materialCount==0: グローバルパラメータにフォールバック (Phase 0 互換)
         mat_mu    = pc.mu_lame;
@@ -171,7 +182,10 @@ void main() {
     if (mat_model == MAT_FLUID) {
         // 弱圧縮流体: det(F) を保存してFをリセット
         float J = determinant(F_new);
-        J       = max(J, 1e-4);
+        // J は速度勾配の積分なので、粒子が FLIP 速度で動くと実際の密度からずれて粒子が潰れる。実密度 (格子質量の補間) が基準より高いときはそちらの J を使う
+        float h3 = pc.cellSize * pc.cellSize * pc.cellSize;
+        float Jd = pc.materialCount > 0u ? uintBitsToFloat(buffers[pc.materialsIdx].data[matId * 16u + 2u]) * h3 / max(rhoAcc, 1e-12) : 1.0;
+        J       = max(min(J, max(Jd, 0.8)), 1e-4);
         F_new   = pow(J, 1.0 / 3.0) * mat3(1.0);
         tau_new = fluidStressJ(J, mat_bulkK);
     } else if (mat_model == MAT_VON_MISES) {
@@ -180,7 +194,15 @@ void main() {
         tau_new = henckyStressFromEigen(U_e, eps_e, mat_mu, mat_lam);
     } else if (mat_model == MAT_DRUCKER_PRAGER || mat_model == MAT_GRANULAR_POWDER) {
         mat3 U_e; vec3 eps_e;
+        mat3 F_pre = F_new;
         F_new   = projectDruckerPrager(F_new, mat_mu, mat_lam, mat_M, mat_qc, U_e, eps_e);
+        // 破砕遷移: 射影前後の対数特異値の差 (塑性ひずみの増分) が閾値を超えた粒子は破砕先材料へ切り替える。
+        // F の差で測ると、特異値が縮退した F=I で svd3 の符号 (反射) が揺れて静止粒子でも大きく変わるので使わない。
+        if (mat_brk > 0u) {
+            mat3 U_o; vec3 s_o; mat3 V_o;
+            svd3(F_pre, U_o, s_o, V_o);
+            if (length(log(max(abs(s_o), vec3(1e-6))) - eps_e) > mat_brkStrain) wOut = uintBitsToFloat(mat_brk - 1u);
+        }
         tau_new = henckyStressFromEigen(U_e, eps_e, mat_mu, mat_lam);
     } else if (mat_model == MAT_VISCOPLASTIC_MUD) {
         mat3 U_e; vec3 eps_e;
@@ -220,7 +242,7 @@ void main() {
         // FLIP: v_p_old + (v_pic_new - v_pic_old) を PIC とブレンド
         // velWrd.xyz は前ステップ末尾で書いた v_p_old
         vec3 v_flip = velWrd.xyz + (vpic - vpic_old);
-        v_new = mix(vpic, v_flip, pc.flip_ratio);
+        v_new = mix(vpic, v_flip, mat_flip > 0.0 ? mat_flip : pc.flip_ratio);
     } else {
         // PIC (flip_ratio==0) または APIC (flip_ratio==-1)
         v_new = vpic;
@@ -232,6 +254,9 @@ void main() {
 #endif
 
     vec3 x_new = xp + pc.dt * v_new;
+#ifndef NO_DEFORMATION
+    x_new.y -= pc.dt * mat_settle;
+#endif
 
     // ── コライダー 粒子レベル境界補正 ────────────────────────────────────
     // mpm_grid_updateはグリッドノードのみ修正するため静止/低速コライダーでは粒子がsdf<0の内部に取り残される。G2Pで直接補正し弾性エネルギー蓄積(速度爆発の原因)も防ぐ。
@@ -312,7 +337,7 @@ void main() {
 
     // ── 書き戻し ─────────────────────────────────────────────────────────
     writeVec4(pc.posIdx, p, vec4(x_new, Vp));
-    writeVec4(pc.velIdx, p, vec4(v_new, velWrd.w));  // w=material id を保持
+    writeVec4(pc.velIdx, p, vec4(v_new, wOut));  // w=material id (破砕遷移した粒子は新しい id)
 #ifndef NO_DEFORMATION
     writeMat3xyz(p, F_new, pc.F0Idx, pc.F1Idx, pc.F2Idx);
     writeStressW(p, tau_new);

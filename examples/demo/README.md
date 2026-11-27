@@ -8,6 +8,7 @@ nebula で時間をかけてシミュレーションし、結果を Blender (`bp
 | 1. 雪崩 | `demo_avalanche_mesh` | `MPMEngine` (Drucker-Prager) | 約 1070 万粒子 / 国土地理院 DEM 由来の地形 + 樹木 37 本 + 岩 16 個 | 密度場から数百万三角形の雪面メッシュを再構成 + DEM 地形メッシュ + 黒松メッシュ (Cycles) |
 | 2. 海岸の波 (issue #137) | `demo_seashore` | `FLIPEngine` (非圧縮 FLIP + 泡) | 既定 約 610 万粒子 (`--spacing 0.055` で約 1000 万) + 泡 最大 400 万 | 水面等値面 + 泡の小球インスタンス + 岩 usdc (Cycles, 横動画) |
 | 3. 回転する車の風洞 | `demo_car_wind` | `PyroEngine` (オイラー格子, 回転コライダー) | 既定 1024×256×512 格子 (風下×高さ×幅, セル 1.17 cm, 領域 12×3×6 m) / 全長 4.4 m の手続き生成スポーツカー | Q 基準の渦の等値面を速度で着色 + 車メッシュ (PyVista) |
+| 4. ミルクとクッキーの撹拌 | `demo_milk_cookie` | `MPMEngine` (流体 + Von Mises 固体の 2 材料, APIC) | 既定 約 90 万粒子 (`--spacing 0.0018` で約 1000 万) / 円筒ジャー + 回転する十字の刃 | ミルクとクッキーの合成密度の等値面 + クッキー混合率の頂点色 (Cycles) |
 
 ## 使い方
 
@@ -104,3 +105,20 @@ uv run car/render_car.py out/car --frames 0 480 --out out/car_png   # --vis q / 
 - DEM: `dem/fetch_dem.py` が国土地理院タイルを取得して `assets_local/dem.npy` に保存し、`dem/make_patch.py` が `assets_local/dem_patch.f32` を作る。
 - 樹木メッシュ: virtual-tokyo リポジトリの黒松 USD (`veg_kuromatsu_*`) を Blender の `wm.usd_import` で読む。場所は環境変数 `VT_ASSETS` (既定 `~/Desktop/programs/virtual-tokyo/assets/modules`)。
 - どちらもリポジトリには置かない (`assets_local/` は `.gitignore`)。
+
+### ミルクとクッキーの撹拌 (Houdini 21 の MPM Cookies を参考)
+
+円筒ジャーのミルク (弱圧縮流体) にクッキー (Von Mises 脆性固体) を投入し、底の十字の刃で撹拌する。クッキーは降伏して崩れ、渦に巻き込まれて混ざる。
+
+```bash
+cd examples/demo
+../../build/examples/demo/demo_milk_cookie --out out/milk_cookie                       # 既定 (約 90 万粒子, 12 秒)
+../../build/examples/demo/demo_milk_cookie --out out/milk_cookie --spacing 0.0018     # 約 1000 万粒子 (サブステップは CFL から自動)
+uv run python render/render_milk_cookie.py out/milk_cookie --frames 0 288 --out out/milk_cookie_png
+```
+
+- `.nbp` は材料 id を持たないので、フレームごとに `milk_*.nbp` と `cookie_*.nbp` に分けて書く。`blade.txt` は刃の回転角 (レンダリング用)。
+- 粒子が軽いと P2G の固定小数点で運動量が丸められ、PIC/APIC では重力が積算されない。固定小数点スケールは粒子質量から自動で決める (`--fp-scale` で上書き)。
+- FLIP は弱圧縮流体の体積が潰れるので使わず APIC にしている。
+- 刃は 1 ブロック 0.1 rad 以下になるようフレームを分けて姿勢を更新する。サブステップ数は音速と刃の速度から CFL で決まる (`--cfl`)。
+- ガラスのジャーは `--jar` を付けたときだけ描く (既定は液体と刃のみ)。

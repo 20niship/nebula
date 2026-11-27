@@ -28,7 +28,7 @@ def reset_scene(res=(1920, 1080), samples=128, engine="CYCLES"):
             continue
     for d in prefs.devices:
         d.use = d.type != "CPU"
-    sc.cycles.device = "GPU" if backend != "NONE" else "CPU"
+    sc.cycles.device = "GPU" if backend != "NONE" and not os.environ.get("RENDER_CPU") else "CPU"
     return sc
 
 

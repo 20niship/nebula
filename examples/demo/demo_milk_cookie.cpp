@@ -26,7 +26,7 @@ struct Args : public argparse::Args {
   float& fps             = kwarg("fps", "output frame rate").set_default(24.0f);
   float& spacing         = kwarg("spacing", "particle spacing [m] (0.004 = about 0.9M particles, 0.0018 = about 10M)").set_default(0.004f);
   float& cfl             = kwarg("cfl", "CFL number used to pick the substep count (APIC/FLIP aside, PIC is stable for the elastic cookie only below about 0.03 in c*dt/dx)").set_default(0.04f);
-  float& blade_speed     = kwarg("blade-speed", "mixer angular speed [rad/s]").set_default(12.0f);
+  float& blade_speed     = kwarg("blade-speed", "mixer angular speed [rad/s]").set_default(8.0f);
   float& blade_start     = kwarg("blade-start", "time [s] at which the mixer starts").set_default(0.0f);
   float& blade_ramp      = kwarg("blade-ramp", "time [s] over which the mixer speeds up (0 = full speed from the first frame)").set_default(0.0f);
   float& tilt_deg        = kwarg("tilt", "mixer axis tilt from vertical [deg] (an inclined axis also mixes up and down)").set_default(20.0f);
@@ -50,6 +50,9 @@ struct Args : public argparse::Args {
   float& crumb_friction  = kwarg("crumb-friction", "crumb Drucker-Prager M (0 = same as the cookie)").set_default(0.0f);
   float& slat_pitch      = kwarg("slat-pitch", "pitch angle of the mixer slats [rad] (sign flips the pumping direction)").set_default(0.61f);
   float& crumb_settle    = kwarg("crumb-settle", "crumb settling speed relative to the milk flow [m/s] (a single velocity field cannot make heavy crumbs sink)").set_default(0.04f);
+  float& cage_r          = kwarg("cage-r", "mixer cage radius [m] (the jar radius is 0.25)").set_default(0.17f);
+  int& slats             = kwarg("slats", "number of slats on the mixer cage").set_default(8);
+  float& slat_h          = kwarg("slat-h", "slat half height [m]").set_default(0.08f);
   float& mix_y           = kwarg("mix-y", "height of the mixer pivot [m]").set_default(0.21f);
   int& seed              = kwarg("seed", "random seed (cookie placement)").set_default(3);
 };
@@ -65,8 +68,10 @@ static constexpr float kShaftR = 0.014f;
 // ミキサーは傾いた軸まわりに回る。ビーターは円周上に並べた薄い板の籠 (中は空洞、板の間は隙間)
 static glm::vec3 kMixO(kCx - 0.02f, 0.21f, kCz);
 static float kSlatPitch = 0.61f; // 板のピッチ角 [rad]: 符号で液を押し下げる/押し上げる向きが変わる
-static constexpr int kSlats = 6;
-static constexpr float kCageR = 0.10f, kSlatHalf[3] = {0.008f, 0.11f, 0.04f}, kShaftTop = 0.75f;
+static int kSlats = 6;
+static float kCageR = 0.10f;
+static float kSlatHalf[3] = {0.008f, 0.11f, 0.04f}; // y は --slat-h で上書き
+static constexpr float kShaftTop = 0.75f;
 struct MixPart { glm::vec3 c, half; glm::quat q; };
 static std::vector<MixPart> slats() {
   std::vector<MixPart> v;
@@ -127,6 +132,9 @@ int main(int argc, char* argv[]) {
   auto a = argparse::parse<Args>(argc, argv);
   kMixO.y = a.mix_y;
   kSlatPitch = a.slat_pitch;
+  kCageR     = a.cage_r;
+  kSlatHalf[1] = a.slat_h;
+  kSlats     = a.slats;
   try {
     const glm::vec3 DOMAIN(1.0f);
     const float spacing = a.spacing;
@@ -140,6 +148,17 @@ int main(int argc, char* argv[]) {
     // ミルク: ジャーの内側を液面まで格子状に満たす (壁・底から半粒子分空ける)。刃と軸の体積には入れない (初期の重なりで粒子が弾き出されるため)
     const glm::quat qTilt = glm::angleAxis(glm::radians(a.tilt_deg), glm::vec3(0, 0, 1));
     const auto parts      = slats();
+    { // 籠がジャー壁に当たらないか: 回転させた板の角の最大半径
+      float reach = 0.0f;
+      for(int k = 0; k < 64; k++)
+        for(const auto& pt : parts)
+          for(int c = 0; c < 8; c++) {
+            const glm::vec3 corner((c & 1 ? 1 : -1) * pt.half.x, (c & 2 ? 1 : -1) * pt.half.y, (c & 4 ? 1 : -1) * pt.half.z);
+            const glm::vec3 w = kMixO + qTilt * (glm::angleAxis(6.2831853f * float(k) / 64.0f, glm::vec3(0, 1, 0)) * (pt.c + pt.q * corner));
+            reach = std::max(reach, std::hypot(w.x - kCx, w.z - kCz));
+          }
+      std::printf("mixer reach %.3f m (jar radius %.3f)\n", reach, kJarR);
+    }
     auto insideBlade = [&](float x, float y, float z) {
       const float m = spacing;
       const glm::vec3 pl = glm::inverse(qTilt) * (glm::vec3(x, y, z) - kMixO);
